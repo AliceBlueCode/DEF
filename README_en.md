@@ -37,6 +37,22 @@ All judgment and responsibility regarding creative content, publication, and usa
 
 -----
 
+## Screenshots
+
+### Chat Mode
+![Chat](docs/images/chat.png)
+
+### Session Mode
+![Session](docs/images/session.png)
+
+### Episode Mode
+![Episode](docs/images/episode.png)
+
+### Character
+![Character](docs/images/character.png)
+
+-----
+
 ## Key Features
 
 - **3-Modality Integration:** Text, voice, and image work together as a continuous creative experience

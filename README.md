@@ -37,6 +37,22 @@ DEF(kari)がツールとして担う責任はこの**境界を守る仕組みの
 
 -----
 
+## スクリーンショット
+
+### チャットモード
+![Chat](docs/images/chat.png)
+
+### セッションモード
+![Session](docs/images/session.png)
+
+### エピソードモード
+![Episode](docs/images/episode.png)
+
+### キャラクター
+![Character](docs/images/character.png)
+
+-----
+
 ## 主な特徴
 
 - **3モダリティの統合:** テキスト・音声・画像が一つの対話として連続して動く
