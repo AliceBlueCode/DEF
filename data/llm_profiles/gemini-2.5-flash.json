@@ -1,0 +1,8 @@
+{
+  "gemini-2.5-flash": {
+    "native_language": "ja",
+    "nsfw_tolerance": "sfw",
+    "model_type": "chat",
+    "max_tokens": 4096
+  }
+}

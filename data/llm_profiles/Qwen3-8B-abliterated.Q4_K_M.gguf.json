@@ -1,0 +1,19 @@
+{
+  "Qwen3-8B-abliterated.Q4_K_M.gguf": {
+    "native_language": "en",
+    "nsfw_tolerance": "nsfw",
+    "model_type": "chat",
+    "max_tokens": 512,
+    "quirks": {
+      "json_capable": false,
+      "appends_meta_text": true,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false
+    },
+    "generation_params": {
+      "temperature": 0.8,
+      "top_p": 0.9,
+      "repetition_penalty": 1.3
+    }
+  }
+}

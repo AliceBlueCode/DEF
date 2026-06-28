@@ -1,0 +1,14 @@
+{
+  "gpt-4o-mini": {
+    "native_language": "en",
+    "nsfw_tolerance": "sfw",
+    "model_type": "chat",
+    "max_tokens": 1024,
+    "quirks": {
+      "json_capable": true,
+      "appends_meta_text": true,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false
+    }
+  }
+}

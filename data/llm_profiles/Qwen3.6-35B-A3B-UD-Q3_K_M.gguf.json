@@ -1,0 +1,13 @@
+{
+  "Qwen3.6-35B-A3B-UD-Q3_K_M.gguf": {
+    "native_language": "ja",
+    "nsfw_tolerance": "sfw",
+    "model_type": "chat",
+    "max_tokens": 4096,
+    "generation_params": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1
+    }
+  }
+}

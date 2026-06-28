@@ -1,0 +1,154 @@
+# DEF(kari) .gitignore
+
+# ============================================================
+# PRIVATE / NSFW DATA
+# ============================================================
+# NSFW characters, episodes, thoughts, private session history
+data/private/*
+# Exception: sample private character
+!data/private/characters/
+data/private/characters/*
+!data/private/characters/character_MyLocalLLM_001/
+# Exception: directory structure (.gitkeep)
+!data/private/episodes/
+data/private/episodes/*
+!data/private/episodes/.gitkeep
+!data/private/episode_prompts/
+data/private/episode_prompts/*
+!data/private/episode_prompts/.gitkeep
+!data/private/session_history/
+data/private/session_history/*
+!data/private/session_history/.gitkeep
+!data/private/session_rules/
+data/private/session_rules/*
+!data/private/session_rules/.gitkeep
+!data/private/action_directives/
+data/private/action_directives/*
+!data/private/action_directives/.gitkeep
+!data/private/thoughts/
+data/private/thoughts/*
+!data/private/thoughts/.gitkeep
+
+# Encrypted API keys & secret key material
+data/api_keys.enc.json
+data/api_keys.key
+data/secret.key
+
+# User settings (machine-specific)
+data/mvp_settings.json
+
+# Session history (even public-character sessions are user-specific)
+data/public/session_history/
+
+# Public characters excluded from release (dev/test only)
+data/public/characters/character_aoi_001/
+data/public/characters/character_elizabeth_001/
+data/public/characters/character_kirishime_001/
+data/public/characters/character_kuroda_shoichi_001/
+data/public/characters/character_luna_001/
+data/public/characters/character_miyase_toru_001/
+data/public/characters/character_my_local_llm_001/
+data/public/characters/character_tachibana_ren_001/
+data/public/characters/character_touka_001/
+
+# PID files (backend process tracking)
+data/*.pid
+
+# Service / model cache JSON (auto-generated)
+data/api_services.json
+data/llm_services.json
+data/civitai_models.json
+data/civitai_ecosystem_map.json
+
+# Legacy top-level data dirs (migrated into data/)
+/public/
+/private/
+
+# ============================================================
+# ENVIRONMENT & SECRETS
+# ============================================================
+.env
+
+# ============================================================
+# GENERATED ASSETS (audio / images)
+# ============================================================
+assets/
+def_kari/static/
+static/
+
+# ============================================================
+# PYTHON
+# ============================================================
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ============================================================
+# VIRTUAL ENVIRONMENTS & VENDORED TOOLS
+# ============================================================
+venv/
+poc/venv/
+ggufconv/
+
+# ============================================================
+# POC (development prototype, not for public)
+# ============================================================
+poc/
+
+# ============================================================
+# BACKUP / SCRATCH
+# ============================================================
+bak/
+
+# ============================================================
+# EXTERNAL TOOL DIRS
+# ============================================================
+llamacpp_tools/
+
+# ============================================================
+# LOCAL MODEL FILES (large binaries)
+# ============================================================
+models/
+
+# ============================================================
+# ROOT DOCUMENTS (internal, not for public)
+# ============================================================
+/DEF_*.md
+/TODO.md
+/_start_tgw.bat
+
+# ============================================================
+# CLAUDE CODE / IDE / OS
+# ============================================================
+.claude/
+.vscode/
+.idea/
+.pytest_cache/
+Thumbs.db
+.DS_Store
+
+# ============================================================
+# PID FILES (top-level, if any)
+# ============================================================
+pid/
+
+# ============================================================
+# LOG FILES
+# ============================================================
+*.log
+
+# ============================================================
+# DO INCLUDE (explicit)
+# ============================================================
+# data/public/                   -- public characters, session rules, episode prompts, action directives
+# locales/                       -- i18n locale files
+# def_kari/                      -- application source code
+# docs/                          -- documentation (if exists)
+# *.md (root)                    -- project documentation
+# LICENSE HEADER.txt             -- license header
+# .env.example                   -- environment template
+!.env.example

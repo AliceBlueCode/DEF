@@ -1,0 +1,5 @@
+translation:
+  deepl:
+    api_key: ""
+    formality: default
+  provider: deepl

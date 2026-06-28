@@ -1,0 +1,6 @@
+{
+  "hf.co/mradermacher/DeepSeek-R1-Distill-Qwen-7B-Uncensored-i1-GGUF:Q6_K": {
+    "native_language": "en",
+    "nsfw_tolerance": "nsfw"
+  }
+}

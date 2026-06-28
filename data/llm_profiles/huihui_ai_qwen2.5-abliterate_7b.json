@@ -1,0 +1,6 @@
+{
+  "huihui_ai/qwen2.5-abliterate:7b": {
+    "native_language": "ja",
+    "nsfw_tolerance": "hentai"
+  }
+}

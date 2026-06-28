@@ -1,0 +1,8 @@
+{
+  "claude-sonnet-4-6": {
+    "native_language": "ja",
+    "nsfw_tolerance": "sfw",
+    "model_type": "chat",
+    "max_tokens": 1024
+  }
+}

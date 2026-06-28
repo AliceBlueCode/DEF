@@ -1,0 +1,14 @@
+{
+  "Berghof-NSFW-7B.i1-Q6_K.gguf": {
+    "native_language": "ja",
+    "nsfw_tolerance": "nsfw",
+    "model_type": "novel",
+    "max_tokens": 256,
+    "quirks": {
+      "json_capable": false,
+      "appends_meta_text": true,
+      "outputs_url_in_prompt": true,
+      "emotion_in_text": true
+    }
+  }
+}

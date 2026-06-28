@@ -1,0 +1,6 @@
+{
+  "lightchatassistant-4x7b-q6k:latest": {
+    "native_language": "ja",
+    "nsfw_tolerance": "hentai"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "neutral": ["neutral_expression", "looking_at_viewer"],
+  "happy": ["smile", "looking_at_viewer", "open_mouth"],
+  "sad": ["tears", "looking_down", "closed_eyes"],
+  "angry": ["angry", "frown", "clenched_teeth"],
+  "surprised": ["surprised", "wide_eyes", "open_mouth"],
+  "scared": ["scared", "trembling", "wide_eyes"],
+  "disgusted": ["disgusted", "frown", "looking_away"],
+  "excited": ["excited", "smile", "sparkling_eyes", "blush"],
+  "tender": ["gentle_smile", "soft_expression", "half-closed_eyes"],
+  "thoughtful": ["thinking", "looking_away", "hand_on_chin"],
+  "embarrassed": ["blush", "looking_away", "nervous"],
+  "tired": ["tired", "half-closed_eyes", "yawning"]
+}
