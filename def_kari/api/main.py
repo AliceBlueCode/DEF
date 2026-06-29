@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from def_kari.api.routes import chat, characters, settings, tts, episode
+from def_kari.api.routes import chat, characters, settings, tts, episode, session
 
 app = FastAPI(
     title="DEF(kari) API",
@@ -64,6 +64,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
 app.include_router(episode.router, prefix="/api/episode", tags=["episode"])
+app.include_router(session.router, prefix="/api/session", tags=["session"])
 
 
 @app.get("/api/health")

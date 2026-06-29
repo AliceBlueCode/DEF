@@ -45,3 +45,13 @@ def get_character_icon(character_id: str):
         if os.path.exists(icon):
             return FileResponse(icon, media_type="image/png")
     return {"error": "Icon not found"}
+
+
+@router.get("/{character_id}/standing")
+def get_character_standing(character_id: str):
+    d = _find_char_dir(character_id)
+    if d:
+        standing = os.path.join(d, "standing.png")
+        if os.path.exists(standing):
+            return FileResponse(standing, media_type="image/png")
+    return {"error": "Standing image not found"}
