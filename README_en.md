@@ -122,3 +122,16 @@ See `CONTRIBUTING.md`.
 ## Terms of Use
 
 See `TERMS.md`. This software is intended for **users aged 18 and above only**.
+
+-----
+
+## Credits
+
+DEF(kari) was designed, implemented, and documented with the collaboration of:
+
+- **Design philosophy, basic design, discussion:** [ChatGPT](https://chatgpt.com/) (OpenAI)
+- **Implementation, documentation, testing:** [Claude](https://claude.ai/) (Anthropic)
+- **Design review:** [Gemini](https://gemini.google.com/) (Google)
+- **Consultation, implementation witness:** [Copilot](https://copilot.microsoft.com/) (Microsoft)
+
+This project was built through AI-driven development. All design decisions and final responsibility belong to the author (AliceBlueCode).

@@ -122,3 +122,16 @@ Copyright (C) 2026 AliceBlueCode
 ## 利用規約
 
 `TERMS.md`を参照してください。本ソフトウェアは**18歳以上の方のみ**が利用できます。
+
+-----
+
+## クレジット
+
+DEF(kari)の設計・実装・ドキュメントは、以下の協力のもとに制作されました。
+
+- **設計思想・基本設計・議論:** [ChatGPT](https://chatgpt.com/) (OpenAI)
+- **実装・ドキュメント・テスト:** [Claude](https://claude.ai/) (Anthropic)
+- **設計レビュー:** [Gemini](https://gemini.google.com/) (Google)
+- **相談・立会い:** [Copilot](https://copilot.microsoft.com/) (Microsoft)
+
+本プロジェクトはAI駆動開発によって制作されています。設計判断と最終的な責任はすべて作者（AliceBlueCode）に帰属します。
