@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>DEF(kari) — Multimodal AI Creative Platform</title>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; margin: 0; padding: 40px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { color: #ffffff; font-size: 2em; }
+    h2 { color: #9db4ff; margin-top: 30px; }
+    .tagline { color: #a0a0c0; font-style: italic; font-size: 1.1em; margin-bottom: 30px; }
+    p { line-height: 1.7; color: #c0c0d0; }
+    a { color: #6c9bff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .btn { display: inline-block; background: #4a6cf7; color: #fff; padding: 12px 30px; border-radius: 6px; font-size: 1.1em; margin: 10px 5px; }
+    .btn:hover { background: #3a5ce7; text-decoration: none; }
+    ul { line-height: 2; }
+    table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+    th, td { border: 1px solid #333; padding: 8px 12px; text-align: left; }
+    th { background: #2a2a4e; }
+    .note { background: #2a2a3e; border-left: 3px solid #6c9bff; padding: 15px; margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎭 DEF(kari)</h1>
+    <p class="tagline">Dialogue × Emotion × Fable<br>With your characters, for years to come, wherever you go.</p>
+
+    <p>DEF(kari) is a local-first AI creative platform that integrates text, voice, and image generation.</p>
+
+    <p>Rather than entrusting your creative content to cloud service terms and content policies, DEF(kari) provides the foundation for generating and sustaining the characters and stories you desire, in your own environment, with your own hands.</p>
+
+    <p>
+      <a href="https://github.com/AliceBlueCode/DEF" target="_blank" class="btn">GitHub Repository</a>
+    </p>
+
+    <h2>Key Features</h2>
+    <ul>
+      <li><strong>3-Modality Integration</strong> — Text, voice, and image as a continuous creative experience</li>
+      <li><strong>3 Modes</strong> — Chat / Session / Episode</li>
+      <li><strong>Character Persistence</strong> — Resume from where you left off</li>
+      <li><strong>Local-First</strong> — LLM, TTS, T2I all run locally</li>
+      <li><strong>Adapter Pattern</strong> — 4 LLM, 4 TTS, 4 T2I backends</li>
+      <li><strong>Zoning</strong> — Public / Private data separation</li>
+    </ul>
+
+    <h2>Supported Backends</h2>
+    <table>
+      <tr><th>Type</th><th>Backends</th></tr>
+      <tr><td>LLM</td><td>Text Generation WebUI / Ollama / OpenAI / Gemini / Anthropic Claude</td></tr>
+      <tr><td>TTS</td><td>VOICEVOX / Kokoro TTS / Irodori-TTS / Gemini TTS</td></tr>
+      <tr><td>T2I</td><td>A1111 / ComfyUI / Hugging Face Inference / Civitai</td></tr>
+    </table>
+
+    <div class="note">
+      <strong>Note:</strong> DEF(kari) is designed to run on your local machine, not as a Hugging Face Space application. Visit the GitHub repository for installation and documentation.
+    </div>
+
+    <h2>Tech Stack</h2>
+    <p>Python / Streamlit / AGPL v3</p>
+
+    <p style="margin-top: 40px; color: #606080; font-size: 0.9em;">Copyright (C) 2026 AliceBlueCode</p>
+  </div>
+</body>
+</html>

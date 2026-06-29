@@ -44,7 +44,26 @@ from def_kari.workers.runner import start_worker
 from def_kari.ui.sidebar import render_sidebar
 from def_kari.ui.chat_panel import render_chat_panel
 
-st.set_page_config(page_title="DEF(kari) MVP", layout="wide")
+st.set_page_config(page_title="DEF(kari)", layout="wide")
+
+st.markdown("""
+<style>
+    [data-testid="stHeader"] { display: none !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    .stDeployButton { display: none !important; }
+    #MainMenu { visibility: hidden; }
+    header { visibility: hidden; }
+    .block-container { padding-top: 0rem !important; margin-top: 0rem !important; }
+    [data-testid="stAppViewContainer"] > div:first-child { padding-top: 0 !important; }
+    [data-testid="stMainBlockContainer"] { padding-top: 0 !important; }
+    .stTabs { margin-top: -2rem !important; }
+    [data-testid="stHorizontalBlock"] button { white-space: nowrap !important; }
+    [data-testid="stSidebar"] { padding-top: 0 !important; }
+    [data-testid="stSidebar"] > div { padding-top: 0 !important; margin-top: 0 !important; }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.5rem !important; }
+    section[data-testid="stSidebar"] > div { margin-top: -4rem !important; }
+</style>
+""", unsafe_allow_html=True)
 
 _ACTION_DIRECTIVES_DIRS = [
     os.path.join(os.path.dirname(__file__), "..", "data", "public", "action_directives"),
@@ -359,7 +378,6 @@ st.markdown(
     </style>""",
     unsafe_allow_html=True,
 )
-st.markdown(f"## {_t('app_title')}")
 
 tab_character, tab_chat, tab_session, tab_episode, tab_thought, tab_settings, tab_thinking = st.tabs([
     _t("tab_character"), _t("tab_chat"), _t("tab_session"), _t("tab_episode"), _t("tab_thought"), _t("tab_settings"), _t("tab_debug"),
@@ -2199,7 +2217,7 @@ with tab_episode:
         else:
             _init_marker = None
 
-        c_save, c_ai, c_chsc, _c_sp, c_del = st.columns([2, 2, 3, 1, 2])
+        c_save, c_ai, c_ch, c_sc, c_del = st.columns(5)
         with c_save:
             if st.button("💾 Save" if _ui_lang == "en" else "💾 保存", key="ep_save"):
                 if not ep_title:
@@ -2250,38 +2268,36 @@ with tab_episode:
                     st.session_state[f"ep_candidates_{_ek}"] = _candidates
                     st.session_state[f"ep_draft_ver_{_ek}"] = _draft_ver + 1
                     st.rerun()
-        with c_chsc:
-            _cch, _csc = st.columns(2)
-            with _cch:
-                if st.button("New Ch" if _ui_lang == "en" else "新章", key="ep_ch_end"):
-                    _new_ch = _cur_ch + 1
-                    _marker = f"\n--- Chapter {_new_ch} ---\n--- Scene 1 ---\n"
-                    if _init_marker and not ep_body.strip():
-                        _new_body = _init_marker
-                    else:
-                        _new_body = ep_body + _marker
-                    _ep_data = dict(cur_ep)
-                    _ep_data["title"] = ep_title or "Untitled"
-                    _ep_data["body"] = _new_body
-                    _save_episode(_ep_data)
-                    st.session_state.episode_selected_id = _ep_data["title"]
-                    st.session_state[f"ep_body_ver_{_ek}"] = _body_ver + 1
-                    st.rerun()
-            with _csc:
-                if st.button("New Sc" if _ui_lang == "en" else "新場面", key="ep_sc_end"):
-                    _new_sc = _cur_sc + 1
-                    if _init_marker and not ep_body.strip():
-                        _new_body = _init_marker
-                    else:
-                        _marker = f"\n--- Scene {_new_sc} ---\n"
-                        _new_body = ep_body + _marker
-                    _ep_data = dict(cur_ep)
-                    _ep_data["title"] = ep_title or "Untitled"
-                    _ep_data["body"] = _new_body
-                    _save_episode(_ep_data)
-                    st.session_state.episode_selected_id = _ep_data["title"]
-                    st.session_state[f"ep_body_ver_{_ek}"] = _body_ver + 1
-                    st.rerun()
+        with c_ch:
+            if st.button("New Ch" if _ui_lang == "en" else "新章", key="ep_ch_end"):
+                _new_ch = _cur_ch + 1
+                _marker = f"\n--- Chapter {_new_ch} ---\n--- Scene 1 ---\n"
+                if _init_marker and not ep_body.strip():
+                    _new_body = _init_marker
+                else:
+                    _new_body = ep_body + _marker
+                _ep_data = dict(cur_ep)
+                _ep_data["title"] = ep_title or "Untitled"
+                _ep_data["body"] = _new_body
+                _save_episode(_ep_data)
+                st.session_state.episode_selected_id = _ep_data["title"]
+                st.session_state[f"ep_body_ver_{_ek}"] = _body_ver + 1
+                st.rerun()
+        with c_sc:
+            if st.button("New Sc" if _ui_lang == "en" else "新場面", key="ep_sc_end"):
+                _new_sc = _cur_sc + 1
+                if _init_marker and not ep_body.strip():
+                    _new_body = _init_marker
+                else:
+                    _marker = f"\n--- Scene {_new_sc} ---\n"
+                    _new_body = ep_body + _marker
+                _ep_data = dict(cur_ep)
+                _ep_data["title"] = ep_title or "Untitled"
+                _ep_data["body"] = _new_body
+                _save_episode(_ep_data)
+                st.session_state.episode_selected_id = _ep_data["title"]
+                st.session_state[f"ep_body_ver_{_ek}"] = _body_ver + 1
+                st.rerun()
 
         with c_del:
             if cur_ep.get("title") and st.button("🗑 Delete" if _ui_lang == "en" else "🗑 削除", key="ep_delete"):
@@ -3136,14 +3152,12 @@ with tab_settings:
     st.subheader("Chat Mode" if _ui_lang == "en" else "チャットモード")
     st.checkbox(
         _t("char_greeting"),
-        value=st.session_state.get("character_greeting", True),
         key="character_greeting",
     )
     st.number_input(
         "Max undo history" if _ui_lang == "en" else "元に戻す(undo)の最大保持件数",
         min_value=1,
         max_value=10,
-        value=st.session_state.get("undo_max_history", 5),
         key="undo_max_history",
     )
 
@@ -3183,15 +3197,15 @@ with tab_settings:
     st.subheader("Episode Mode" if _ui_lang == "en" else "エピソードモード")
     st.slider(
         "Candidates" if _ui_lang == "en" else "生成候補数",
-        min_value=1, max_value=5, value=st.session_state.get("episode_candidate_count", 3),
+        min_value=1, max_value=5,
         key="episode_candidate_count",
     )
     st.caption("Illustration Size" if _ui_lang == "en" else "挿絵サイズ")
     col_ew, col_eh = st.columns(2)
     with col_ew:
-        st.number_input("Width" if _ui_lang == "en" else "幅", min_value=128, max_value=2048, step=64, value=st.session_state.get("episode_t2i_width", 1216), key="episode_t2i_width")
+        st.number_input("Width" if _ui_lang == "en" else "幅", min_value=128, max_value=2048, step=64, key="episode_t2i_width")
     with col_eh:
-        st.number_input("Height" if _ui_lang == "en" else "高さ", min_value=128, max_value=2048, step=64, value=st.session_state.get("episode_t2i_height", 832), key="episode_t2i_height")
+        st.number_input("Height" if _ui_lang == "en" else "高さ", min_value=128, max_value=2048, step=64, key="episode_t2i_height")
 
     st.divider()
     st.subheader(_t("settings_apikey"))

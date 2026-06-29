@@ -32,7 +32,6 @@ def render_sidebar() -> None:
             "mask": _t("sidebar_safety_mask"),
         }
 
-        st.header(_t("app_title"))
 
         with st.expander(_t("sidebar_rating"), expanded=False):
             st.caption(_t("sidebar_rating_desc"))
@@ -159,3 +158,6 @@ def render_sidebar() -> None:
                 st.warning("⚡ vram_lock保持中 (T2I実行中)")
             else:
                 st.caption("✅ vram_lock: 解放中")
+
+        st.divider()
+        st.caption("DEF(kari) v1.0.0")

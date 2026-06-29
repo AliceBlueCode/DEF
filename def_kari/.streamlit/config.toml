@@ -1,2 +1,5 @@
 [server]
 enableStaticServing = true
+
+[ui]
+hideTopBar = true
