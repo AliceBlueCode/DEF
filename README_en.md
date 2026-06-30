@@ -3,6 +3,8 @@
 > **Dialogue × Emotion × Fable**
 > With your characters, for years to come, wherever you go.
 
+[日本語版READMEはこちら »](README.md) | [繁體中文版 »](README_zh-TW.md) | [简体中文版 »](README_zh-CN.md) | [한국어 README »](README_ko.md) | [README en Español »](README_es.md)
+
 -----
 
 ## What is DEF(kari)?
