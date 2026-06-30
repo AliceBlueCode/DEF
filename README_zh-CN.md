@@ -1,9 +1,9 @@
 # DEF(kari) — 多模态 AI 创作平台
 
+[日本語版README はこちら »](README.md) | [English README »](README_en.md) | [繁體中文版 »](README_zh-TW.md) | [한국어 README »](README_ko.md) | [README en Español »](README_es.md)
+
 > **Dialogue × Emotion × Fable**
 > 与你的角色，无论多少年，无论在何处，一起前行。
-
-[日本語版README はこちら »](README.md) | [English README »](README_en.md) | [繁體中文版 »](README_zh-TW.md) | [한국어 README »](README_ko.md) | [README en Español »](README_es.md)
 
 -----
 
