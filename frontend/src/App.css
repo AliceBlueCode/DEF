@@ -499,6 +499,96 @@
   color: #666;
 }
 
+.plot-editor {
+  background: #16213e;
+  color: #c0c0d0;
+  border: none;
+  border-bottom: 1px solid #333;
+  padding: 8px 16px;
+  font-size: 0.85em;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.episode-candidates {
+  width: 320px;
+  border-left: 1px solid #333;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.episode-candidates h3 {
+  color: #9db4ff;
+  font-size: 0.9em;
+  margin-bottom: 12px;
+}
+
+.candidate-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.candidate-tab {
+  background: #2a2a4e;
+  color: #c0c0d0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
+.candidate-tab.active {
+  background: #4a6cf7;
+  color: #fff;
+  border-color: #4a6cf7;
+}
+
+.candidate-text {
+  flex: 1;
+  background: #16213e;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 10px;
+  font-size: 0.85em;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.candidate-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.candidate-actions button {
+  flex: 1;
+  background: #2a2a4e;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px;
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
+.candidate-actions button:hover { background: #333; }
+
+.candidate-empty {
+  color: #666;
+  font-size: 0.85em;
+}
+
+.episode-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .message {
   max-width: 70%;
   display: flex;

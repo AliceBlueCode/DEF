@@ -18,6 +18,10 @@ export default function EpisodeTab({ backend }: Props) {
   const [episode, setEpisode] = useState<Episode | null>(null)
   const [body, setBody] = useState('')
   const [newTitle, setNewTitle] = useState('')
+  const [plot, setPlot] = useState('')
+  const [candidates, setCandidates] = useState<string[]>([])
+  const [activeCandidate, setActiveCandidate] = useState(0)
+  const [generating, setGenerating] = useState(false)
 
   const loadList = () => {
     fetch('/api/episode/')
@@ -28,19 +32,21 @@ export default function EpisodeTab({ backend }: Props) {
   useEffect(() => { loadList() }, [])
 
   useEffect(() => {
-    if (!selectedTitle) { setEpisode(null); setBody(''); return }
+    setCandidates([])
+    if (!selectedTitle) { setEpisode(null); setBody(''); setPlot(''); return }
     fetch(`/api/episode/${encodeURIComponent(selectedTitle)}`)
       .then(r => r.json())
       .then(data => {
         if (data.episode) {
           setEpisode(data.episode)
           setBody(data.episode.body || '')
+          setPlot(data.episode.plot || '')
         }
       })
   }, [selectedTitle])
 
   const saveEpisode = async () => {
-    const ep = { ...(episode || {}), title: selectedTitle || newTitle, body }
+    const ep = { ...(episode || {}), title: selectedTitle || newTitle, body, plot }
     await fetch('/api/episode/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -80,7 +86,6 @@ export default function EpisodeTab({ backend }: Props) {
   }
 
   const insertMarker = (type: 'chapter' | 'scene') => {
-    const lines = body.split('\n')
     if (type === 'chapter') {
       const chCount = (body.match(/--- Chapter \d+ ---/g) || []).length
       const marker = `\n--- Chapter ${chCount + 1} ---\n--- Scene 1 ---\n`
@@ -89,6 +94,35 @@ export default function EpisodeTab({ backend }: Props) {
       const scCount = (body.match(/--- Scene \d+ ---/g) || []).length
       setBody(body + `\n--- Scene ${scCount + 1} ---\n`)
     }
+  }
+
+  const generateCandidates = async () => {
+    setGenerating(true)
+    setCandidates([])
+    try {
+      const res = await fetch('/api/episode/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          body,
+          plot,
+          backend,
+          candidate_count: 3,
+        }),
+      })
+      const data = await res.json()
+      setCandidates(data.candidates || [])
+      setActiveCandidate(0)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const appendCandidate = (text: string) => {
+    setBody(prev => (prev ? `${prev}\n${text}` : text))
+    setCandidates([])
   }
 
   return (
@@ -124,11 +158,21 @@ export default function EpisodeTab({ backend }: Props) {
               <h2>{selectedTitle}</h2>
               <div className="episode-actions">
                 <button onClick={saveEpisode}>💾 保存</button>
+                <button onClick={generateCandidates} disabled={generating}>
+                  {generating ? '✍ 生成中...' : '✍ 生成'}
+                </button>
                 <button onClick={() => insertMarker('chapter')}>新章</button>
                 <button onClick={() => insertMarker('scene')}>新場面</button>
                 <button className="delete-btn" onClick={deleteEpisode}>🗑 削除</button>
               </div>
             </div>
+            <textarea
+              className="plot-editor"
+              value={plot}
+              onChange={e => setPlot(e.target.value)}
+              placeholder="プロット設定（任意）..."
+              rows={2}
+            />
             <textarea
               className="episode-editor"
               value={body}
@@ -142,6 +186,42 @@ export default function EpisodeTab({ backend }: Props) {
           </div>
         )}
       </div>
+
+      {selectedTitle && (
+        <div className="episode-candidates">
+          <h3>AI候補</h3>
+          {candidates.length > 0 ? (
+            <>
+              <div className="candidate-tabs">
+                {candidates.map((_, i) => (
+                  <button
+                    key={i}
+                    className={`candidate-tab ${activeCandidate === i ? 'active' : ''}`}
+                    onClick={() => setActiveCandidate(i)}
+                  >
+                    #{i + 1}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="candidate-text"
+                value={candidates[activeCandidate] || ''}
+                onChange={e => {
+                  const next = [...candidates]
+                  next[activeCandidate] = e.target.value
+                  setCandidates(next)
+                }}
+              />
+              <div className="candidate-actions">
+                <button onClick={() => appendCandidate(candidates[activeCandidate])}>⬇ 本文に追加</button>
+                <button onClick={() => setCandidates([])}>🗑 クリア</button>
+              </div>
+            </>
+          ) : (
+            <p className="candidate-empty">「生成」で候補が表示されます。</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
