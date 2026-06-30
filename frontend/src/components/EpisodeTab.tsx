@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 
 type EpisodeItem = { title: string; file: string }
 type Episode = {
@@ -7,12 +7,29 @@ type Episode = {
   plot?: string
   [key: string]: unknown
 }
+type MediaItem = { type: 'image'; prompt: string; url: string }
 
 type Props = {
   backend: string
+  t2iBackend: string
 }
 
-export default function EpisodeTab({ backend }: Props) {
+function splitScenes(body: string): { label: string; text: string }[] {
+  const segments = body.split(/(--- Scene \d+ ---)/)
+  const scenes: { label: string; text: string }[] = []
+  let label = ''
+  for (const seg of segments) {
+    if (/^--- Scene \d+ ---$/.test(seg)) {
+      label = seg.trim()
+    } else if (seg.trim()) {
+      const clean = seg.replace(/--- Chapter \d+ ---/g, '').trim()
+      if (clean) scenes.push({ label: label || 'Scene', text: clean })
+    }
+  }
+  return scenes
+}
+
+export default function EpisodeTab({ backend, t2iBackend }: Props) {
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([])
   const [selectedTitle, setSelectedTitle] = useState('')
   const [episode, setEpisode] = useState<Episode | null>(null)
@@ -22,6 +39,15 @@ export default function EpisodeTab({ backend }: Props) {
   const [candidates, setCandidates] = useState<string[]>([])
   const [activeCandidate, setActiveCandidate] = useState(0)
   const [generating, setGenerating] = useState(false)
+  const [selectedSceneIdx, setSelectedSceneIdx] = useState(0)
+  const [generatingImage, setGeneratingImage] = useState(false)
+  const [media, setMedia] = useState<MediaItem[]>([])
+  const [imageError, setImageError] = useState('')
+
+  const scenes = useMemo(() => splitScenes(body), [body])
+  const currentSceneText = scenes.length > 0
+    ? scenes[scenes.length - 1].text
+    : body.replace(/--- (?:Chapter|Scene) \d+ ---/g, '').trim()
 
   const loadList = () => {
     fetch('/api/episode/')
@@ -33,6 +59,7 @@ export default function EpisodeTab({ backend }: Props) {
 
   useEffect(() => {
     setCandidates([])
+    setMedia([])
     if (!selectedTitle) { setEpisode(null); setBody(''); setPlot(''); return }
     fetch(`/api/episode/${encodeURIComponent(selectedTitle)}`)
       .then(r => r.json())
@@ -125,6 +152,34 @@ export default function EpisodeTab({ backend }: Props) {
     setCandidates([])
   }
 
+  const generateImage = async (sceneText: string) => {
+    if (!sceneText) return
+    setGeneratingImage(true)
+    setImageError('')
+    try {
+      const res = await fetch('/api/episode/t2i', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene_text: sceneText,
+          plot,
+          llm_backend: backend,
+          t2i_backend: t2iBackend,
+        }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        setImageError(data.error)
+        return
+      }
+      setMedia(prev => [...prev, { type: 'image', prompt: data.prompt, url: data.image_url }])
+    } catch (e) {
+      setImageError(String(e))
+    } finally {
+      setGeneratingImage(false)
+    }
+  }
+
   return (
     <div className="tab-content episode-tab">
       <div className="episode-sidebar">
@@ -179,6 +234,47 @@ export default function EpisodeTab({ backend }: Props) {
               onChange={e => setBody(e.target.value)}
               placeholder="ここに物語を書きましょう..."
             />
+
+            <div className="episode-illustration-bar">
+              <button
+                onClick={() => generateImage(currentSceneText)}
+                disabled={generatingImage || !currentSceneText}
+              >
+                🎨 現挿絵
+              </button>
+              {scenes.length > 0 && (
+                <>
+                  <select
+                    value={selectedSceneIdx}
+                    onChange={e => setSelectedSceneIdx(Number(e.target.value))}
+                  >
+                    {scenes.map((s, i) => (
+                      <option key={i} value={i}>{s.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => generateImage(scenes[selectedSceneIdx]?.text || '')}
+                    disabled={generatingImage}
+                  >
+                    🎨 選択挿絵
+                  </button>
+                </>
+              )}
+              {generatingImage && <span className="generating-label">生成中...</span>}
+            </div>
+
+            {imageError && <p className="image-error">⚠ {imageError}</p>}
+
+            {media.length > 0 && (
+              <div className="episode-media">
+                {media.map((m, i) => (
+                  <div key={i} className="media-item">
+                    <p className="media-prompt">Prompt: {m.prompt.slice(0, 200)}</p>
+                    <img src={m.url} alt="" />
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         ) : (
           <div className="episode-empty">

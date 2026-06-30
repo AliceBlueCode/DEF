@@ -9,23 +9,26 @@ type BackendInfo = {
 type Props = {
   llmBackend: string
   onLlmBackendChange: (b: string) => void
+  t2iBackend: string
+  onT2iBackendChange: (b: string) => void
+  ttsBackend: string
+  onTtsBackendChange: (b: string) => void
 }
 
-export default function SettingsTab({ llmBackend, onLlmBackendChange }: Props) {
+export default function SettingsTab({
+  llmBackend, onLlmBackendChange,
+  t2iBackend, onT2iBackendChange,
+  ttsBackend, onTtsBackendChange,
+}: Props) {
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
   const [t2iBackends, setT2iBackends] = useState<BackendInfo | null>(null)
-  const [ttsBackend, setTtsBackend] = useState('voicevox')
-  const [t2iBackend, setT2iBackend] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/backends')
       .then(r => r.json())
       .then(data => {
         if (data.llm) setLlmBackends(data.llm)
-        if (data.t2i) {
-          setT2iBackends(data.t2i)
-          setT2iBackend(data.t2i.default)
-        }
+        if (data.t2i) setT2iBackends(data.t2i)
       })
   }, [])
 
@@ -46,7 +49,7 @@ export default function SettingsTab({ llmBackend, onLlmBackendChange }: Props) {
 
       <div className="settings-section">
         <h3>TTS バックエンド</h3>
-        <select value={ttsBackend} onChange={e => setTtsBackend(e.target.value)}>
+        <select value={ttsBackend} onChange={e => onTtsBackendChange(e.target.value)}>
           <option value="voicevox">VOICEVOX (ローカル)</option>
           <option value="kokoro">Kokoro TTS (ローカル)</option>
           <option value="irodori">Irodori-TTS (ローカル)</option>
@@ -57,7 +60,7 @@ export default function SettingsTab({ llmBackend, onLlmBackendChange }: Props) {
       <div className="settings-section">
         <h3>T2I バックエンド</h3>
         {t2iBackends && (
-          <select value={t2iBackend} onChange={e => setT2iBackend(e.target.value)}>
+          <select value={t2iBackend} onChange={e => onT2iBackendChange(e.target.value)}>
             {t2iBackends.backends.map(b => (
               <option key={b} value={b}>{t2iBackends.labels[b] || b}</option>
             ))}

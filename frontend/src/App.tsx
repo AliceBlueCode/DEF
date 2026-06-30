@@ -23,11 +23,17 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'settings', label: '設定', icon: '⚙️' },
 ]
 
+const LS_KEY_LLM = 'def_llm_backend'
+const LS_KEY_T2I = 'def_t2i_backend'
+const LS_KEY_TTS = 'def_tts_backend'
+
 function App() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedChar, setSelectedChar] = useState('')
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
-  const [selectedBackend, setSelectedBackend] = useState('')
+  const [selectedBackend, setSelectedBackend] = useState(() => localStorage.getItem(LS_KEY_LLM) || '')
+  const [selectedT2iBackend, setSelectedT2iBackend] = useState(() => localStorage.getItem(LS_KEY_T2I) || '')
+  const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'voicevox')
   const [activeTab, setActiveTab] = useState<TabId>('chat')
 
   useEffect(() => {
@@ -42,10 +48,25 @@ function App() {
       .then(data => {
         if (data.llm) {
           setLlmBackends(data.llm)
-          setSelectedBackend(data.llm.default)
+          setSelectedBackend(prev => prev || data.llm.default)
+        }
+        if (data.t2i) {
+          setSelectedT2iBackend(prev => prev || data.t2i.default)
         }
       })
   }, [])
+
+  useEffect(() => {
+    if (selectedBackend) localStorage.setItem(LS_KEY_LLM, selectedBackend)
+  }, [selectedBackend])
+
+  useEffect(() => {
+    if (selectedT2iBackend) localStorage.setItem(LS_KEY_T2I, selectedT2iBackend)
+  }, [selectedT2iBackend])
+
+  useEffect(() => {
+    if (selectedTtsBackend) localStorage.setItem(LS_KEY_TTS, selectedTtsBackend)
+  }, [selectedTtsBackend])
 
   return (
     <div className="app">
@@ -85,10 +106,17 @@ function App() {
         <SessionTab characters={characters} backend={selectedBackend} />
       )}
       {activeTab === 'episode' && (
-        <EpisodeTab backend={selectedBackend} />
+        <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} />
       )}
       {activeTab === 'settings' && (
-        <SettingsTab llmBackend={selectedBackend} onLlmBackendChange={setSelectedBackend} />
+        <SettingsTab
+          llmBackend={selectedBackend}
+          onLlmBackendChange={setSelectedBackend}
+          t2iBackend={selectedT2iBackend}
+          onT2iBackendChange={setSelectedT2iBackend}
+          ttsBackend={selectedTtsBackend}
+          onTtsBackendChange={setSelectedTtsBackend}
+        />
       )}
     </div>
   )
