@@ -3,7 +3,7 @@
 > **Dialogue × Emotion × Fable**
 > 與你的角色，無論多少年，無論在何處，一起前行。
 
-[日本語版README はこちら »](README.md) | [English README »](README_en.md)
+[日本語版README はこちら »](README.md) | [English README »](README_en.md) | [简体中文版 »](README_zh-CN.md) | [한국어 README »](README_ko.md) | [README en Español »](README_es.md)
 
 -----
 
