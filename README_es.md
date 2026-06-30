@@ -2,7 +2,7 @@
 
 [日本語版README はこちら »](README.md) | [English README »](README_en.md) | [繁體中文版 »](README_zh-TW.md) | [简体中文版 »](README_zh-CN.md) | [한국어 README »](README_ko.md)
 
-> **Dialogue × Emotion × Fable**
+> **Dialogue × Emotion × Fable**\
 > Con tus personajes, durante años, en cualquier lugar.
 
 -----
