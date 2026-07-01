@@ -30,6 +30,7 @@ const LS_KEY_LLM = 'def_llm_backend'
 const LS_KEY_T2I = 'def_t2i_backend'
 const LS_KEY_TTS = 'def_tts_backend'
 const LS_KEY_CANDIDATES = 'def_candidate_count'
+const LS_KEY_THEME = 'def_theme'
 
 function App() {
   const [characters, setCharacters] = useState<Character[]>([])
@@ -40,6 +41,17 @@ function App() {
   const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'voicevox')
   const [candidateCount, setCandidateCount] = useState(() => Number(localStorage.getItem(LS_KEY_CANDIDATES)) || 3)
   const [activeTab, setActiveTab] = useState<TabId>('chat')
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'dark'
+  )
+
+  const toggleTheme = () => {
+    setTheme(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark'
+      localStorage.setItem(LS_KEY_THEME, next)
+      return next
+    })
+  }
 
   useEffect(() => {
     fetch('/api/characters/')
@@ -78,38 +90,31 @@ function App() {
   }, [candidateCount])
 
   return (
-    <div className="app">
-      <header className="header">
-        <h1>DEF(kari)</h1>
-        <select value={selectedChar} onChange={e => setSelectedChar(e.target.value)}>
-          {characters.map(c => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        {llmBackends && (
-          <span className="backend-label">
-            {llmBackends.labels[selectedBackend] || selectedBackend}
-          </span>
-        )}
-      </header>
-
-      <div className="tabs">
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            className={`tab ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
-      </div>
-
+    <div className={`app${theme === 'light' ? ' light-mode' : ''}`}>
       <div className="main-layout">
         <Sidebar />
         <div className="main-content">
+          <div className="tabs">
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                className={`tab ${activeTab === tab.id ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
+            <div className="header-backends">
+              <span>{llmBackends?.labels[selectedBackend] || selectedBackend}</span>
+              <span className="header-sep">×</span>
+              <span>{selectedT2iBackend || '—'}</span>
+              <span className="header-sep">×</span>
+              <span>{selectedTtsBackend || '—'}</span>
+            </div>
+          </div>
+
           {activeTab === 'chat' && (
-            <ChatTab characters={characters} selectedChar={selectedChar} backend={selectedBackend} />
+            <ChatTab characters={characters} selectedChar={selectedChar} onCharChange={setSelectedChar} backend={selectedBackend} />
           )}
           {activeTab === 'character' && (
             <CharacterTab selectedChar={selectedChar} />
@@ -131,6 +136,8 @@ function App() {
               onTtsBackendChange={setSelectedTtsBackend}
               candidateCount={candidateCount}
               onCandidateCountChange={setCandidateCount}
+              theme={theme}
+              onThemeToggle={toggleTheme}
             />
           )}
         </div>

@@ -11,10 +11,11 @@ type Message = {
 type Props = {
   characters: Character[]
   selectedChar: string
+  onCharChange: (id: string) => void
   backend: string
 }
 
-export default function ChatTab({ characters, selectedChar, backend }: Props) {
+export default function ChatTab({ characters, selectedChar, onCharChange, backend }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -83,6 +84,11 @@ export default function ChatTab({ characters, selectedChar, backend }: Props) {
 
   return (
     <div className="tab-content chat-tab">
+      <div className="chat-char-bar">
+        <select value={selectedChar} onChange={e => onCharChange(e.target.value)}>
+          {characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
       <div className="chat-area">
         {messages.map((m, i) => (
           <div key={i} className={`message ${m.role}`}>

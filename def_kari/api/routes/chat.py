@@ -10,6 +10,9 @@ from def_kari.llm.client import generate_structured_reply
 router = APIRouter()
 
 _last_debug: dict = {}
+_force_rating: dict = {"enabled": False, "tag": "nsfw"}
+
+_FORCE_RATING_TAGS = ["nsfw", "hentai", "violence", "gore", "extreme", "sfw"]
 
 
 class ChatRequest(BaseModel):
@@ -46,7 +49,7 @@ def chat(req: ChatRequest):
     if not model:
         model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
 
-    global _last_debug
+    global _last_debug, _force_rating
     try:
         result = generate_structured_reply(
             user_text=req.message,
@@ -63,12 +66,18 @@ def chat(req: ChatRequest):
     if result.get("success") and result.get("result"):
         parsed = result["result"]
         raw = attempts[-1]["raw"] if attempts else ""
+        tags = parsed.get("tags", [])
+        if _force_rating["enabled"]:
+            forced = _force_rating["tag"]
+            if forced not in tags:
+                tags = [forced]
+            _force_rating["enabled"] = False
         _last_debug = {
             "success": True,
             "text": parsed.get("dialogue", ""),
             "emotion": parsed.get("emotion", "neutral"),
             "image_prompt_en": parsed.get("image_prompt_en", ""),
-            "tags": parsed.get("tags", []),
+            "tags": tags,
             "raw": raw,
             "attempts": attempts,
             "character_id": req.character_id,
@@ -78,7 +87,7 @@ def chat(req: ChatRequest):
             text=parsed.get("dialogue", ""),
             emotion=parsed.get("emotion", "neutral"),
             image_prompt_en=parsed.get("image_prompt_en", ""),
-            tags=parsed.get("tags", []),
+            tags=tags,
             raw=raw,
         )
 
@@ -97,3 +106,30 @@ def chat(req: ChatRequest):
 @router.get("/debug")
 def get_last_debug():
     return _last_debug
+
+
+@router.get("/force-rating")
+def get_force_rating():
+    return _force_rating
+
+
+class ForceRatingRequest(BaseModel):
+    enabled: bool
+    tag: str = "nsfw"
+
+
+@router.post("/force-rating")
+def set_force_rating(req: ForceRatingRequest):
+    global _force_rating
+    if req.tag not in _FORCE_RATING_TAGS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"invalid tag: {req.tag}")
+    _force_rating = {"enabled": req.enabled, "tag": req.tag}
+    return _force_rating
+
+
+@router.get("/vram-lock")
+def get_vram_lock_status():
+    from def_kari.resources.vram_lock import get_vram_lock
+    locked = get_vram_lock().locked()
+    return {"locked": locked}

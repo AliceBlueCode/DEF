@@ -17,6 +17,8 @@ type Props = {
   onTtsBackendChange: (b: string) => void
   candidateCount: number
   onCandidateCountChange: (n: number) => void
+  theme: 'dark' | 'light'
+  onThemeToggle: () => void
 }
 
 const LANG_OPTIONS = [
@@ -71,6 +73,7 @@ export default function SettingsTab({
   t2iBackend, onT2iBackendChange,
   ttsBackend, onTtsBackendChange,
   candidateCount, onCandidateCountChange,
+  theme, onThemeToggle,
 }: Props) {
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
   const [t2iBackends, setT2iBackends] = useState<BackendInfo | null>(null)
@@ -201,6 +204,26 @@ export default function SettingsTab({
 
       <div className="settings-divider" />
 
+      {/* ── チャット設定 ── */}
+      <div className="settings-section">
+        <h3>チャット設定</h3>
+        <div className="settings-row">
+          <label>キャラ挨拶</label>
+          <Toggle checked={get('character_greeting', true)} onChange={v => set('character_greeting', v)} />
+        </div>
+        <div className="settings-row">
+          <label>Undo 件数</label>
+          <input
+            type="number" min={1} max={10}
+            className="settings-number"
+            value={get('undo_max_history', 5)}
+            onChange={e => set('undo_max_history', Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="settings-divider" />
+
       {/* ── セッション設定 ── */}
       <div className="settings-section">
         <h3>セッション設定</h3>
@@ -249,6 +272,16 @@ export default function SettingsTab({
           >
             {SIZE_PRESETS.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
           </select>
+        </div>
+      </div>
+
+      <div className="settings-divider" />
+
+      <div className="settings-section">
+        <h3>表示設定</h3>
+        <div className="settings-row">
+          <label>ダークモード</label>
+          <Toggle checked={theme === 'dark'} onChange={onThemeToggle} />
         </div>
       </div>
 

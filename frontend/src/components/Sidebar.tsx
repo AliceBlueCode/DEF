@@ -1,17 +1,22 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Toggle from './Toggle'
+import RatingDialog from './RatingDialog'
 
 const SEXUAL_PRESETS: Record<string, string[]> = {
   general: ['general'],
-  nsfw:    ['general', 'nsfw'],
-  hentai:  ['general', 'nsfw', 'hentai'],
+  sfw:     ['general', 'sfw'],
+  nsfw:    ['general', 'sfw', 'nsfw'],
+  hentai:  ['general', 'sfw', 'nsfw', 'hentai'],
 }
 
 const VIOLENCE_PRESETS: Record<string, string[]> = {
   general:  ['general'],
   violence: ['general', 'violence'],
+  gore:     ['general', 'violence', 'gore'],
   extreme:  ['general', 'violence', 'gore', 'extreme'],
 }
+
+const FORCE_RATING_TAGS = ['nsfw', 'hentai', 'violence', 'gore', 'extreme', 'sfw']
 
 function toPresetKey(val: unknown, presets: Record<string, string[]>): string {
   const arr = Array.isArray(val) ? [...val].sort() : ['general']
@@ -23,11 +28,33 @@ function toPresetKey(val: unknown, presets: Record<string, string[]>): string {
 
 export default function Sidebar() {
   const [settings, setSettings] = useState<Record<string, unknown>>({})
+  const [vramLocked, setVramLocked] = useState(false)
+  const [forceEnabled, setForceEnabled] = useState(false)
+  const [forceTag, setForceTag] = useState('nsfw')
+  const [showRating, setShowRating] = useState(false)
+  const vramTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     fetch('/api/settings/')
       .then(r => r.json())
       .then(data => setSettings(data.settings || {}))
+
+    fetch('/api/chat/force-rating')
+      .then(r => r.json())
+      .then(data => {
+        setForceEnabled(data.enabled ?? false)
+        setForceTag(data.tag ?? 'nsfw')
+      })
+
+    const pollVram = () => {
+      fetch('/api/chat/vram-lock')
+        .then(r => r.json())
+        .then(data => setVramLocked(data.locked ?? false))
+        .catch(() => {})
+    }
+    pollVram()
+    vramTimerRef.current = setInterval(pollVram, 3000)
+    return () => { if (vramTimerRef.current) clearInterval(vramTimerRef.current) }
   }, [])
 
   const get = useCallback(<T,>(key: string, def: T): T =>
@@ -42,37 +69,38 @@ export default function Sidebar() {
     })
   }, [])
 
+  const updateForceRating = (enabled: boolean, tag: string) => {
+    fetch('/api/chat/force-rating', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, tag }),
+    })
+  }
+
+  const handleForceEnabled = (v: boolean) => {
+    setForceEnabled(v)
+    updateForceRating(v, forceTag)
+  }
+
+  const handleForceTag = (tag: string) => {
+    setForceTag(tag)
+    updateForceRating(forceEnabled, tag)
+  }
+
+  const sexualKey = toPresetKey(get('allowed_rating_sexual', ['general']), SEXUAL_PRESETS)
+  const violenceKey = toPresetKey(get('allowed_rating_violence', ['general']), VIOLENCE_PRESETS)
+
+  const handleSexual = (key: string) => set('allowed_rating_sexual', SEXUAL_PRESETS[key])
+  const handleViolence = (key: string) => set('allowed_rating_violence', VIOLENCE_PRESETS[key])
+
   return (
     <aside className="sidebar">
 
       <div className="sidebar-section">
-        <h4>チャット設定</h4>
-        <div className="sidebar-row">
-          <span>キャラ挨拶</span>
-          <Toggle checked={get('character_greeting', true)} onChange={v => set('character_greeting', v)} />
-        </div>
-        <div className="sidebar-row">
-          <span>TTS 有効</span>
-          <Toggle checked={get('tts_enabled', true)} onChange={v => set('tts_enabled', v)} />
-        </div>
-        <div className="sidebar-row">
-          <span>ユーザー TTS</span>
-          <Toggle checked={get('tts_human_enabled', false)} onChange={v => set('tts_human_enabled', v)} />
-        </div>
-        <div className="sidebar-row">
-          <span>Undo 件数</span>
-          <input
-            type="number" min={1} max={10}
-            className="sidebar-number"
-            value={get('undo_max_history', 5)}
-            onChange={e => set('undo_max_history', Number(e.target.value))}
-          />
-        </div>
-      </div>
-
-      <div className="sidebar-section">
-        <h4>安全設定</h4>
-        <div className="sidebar-col">
+        <button className="rating-open-btn" onClick={() => setShowRating(true)}>
+          🚫 レーティング設定
+        </button>
+        <div className="sidebar-col" style={{ marginTop: 6 }}>
           <span>安全レベル</span>
           <select
             className="sidebar-select"
@@ -84,32 +112,54 @@ export default function Sidebar() {
             <option value="mask">マスク</option>
           </select>
         </div>
-        <div className="sidebar-col">
-          <span>性的コンテンツ</span>
-          <select
-            className="sidebar-select"
-            value={toPresetKey(get('allowed_rating_sexual', ['general']), SEXUAL_PRESETS)}
-            onChange={e => set('allowed_rating_sexual', SEXUAL_PRESETS[e.target.value])}
-          >
-            <option value="general">全年齢</option>
-            <option value="nsfw">R-15相当</option>
-            <option value="hentai">R-18相当</option>
-          </select>
+      </div>
+
+      <div className="sidebar-section">
+        <h4>チャット設定</h4>
+        <div className="sidebar-row">
+          <span>TTS 有効</span>
+          <Toggle checked={get('tts_enabled', true)} onChange={v => set('tts_enabled', v)} />
         </div>
-        <div className="sidebar-col">
-          <span>暴力コンテンツ</span>
-          <select
-            className="sidebar-select"
-            value={toPresetKey(get('allowed_rating_violence', ['general']), VIOLENCE_PRESETS)}
-            onChange={e => set('allowed_rating_violence', VIOLENCE_PRESETS[e.target.value])}
-          >
-            <option value="general">全年齢</option>
-            <option value="violence">一般暴力</option>
-            <option value="extreme">過激</option>
-          </select>
+        <div className="sidebar-row">
+          <span>ユーザー TTS</span>
+          <Toggle checked={get('tts_human_enabled', false)} onChange={v => set('tts_human_enabled', v)} />
+        </div>
+        <div className="sidebar-row">
+          <span>次の発言を強制</span>
+          <Toggle checked={forceEnabled} onChange={handleForceEnabled} />
+        </div>
+        {forceEnabled && (
+          <div className="sidebar-col">
+            <span>強制タグ</span>
+            <select
+              className="sidebar-select"
+              value={forceTag}
+              onChange={e => handleForceTag(e.target.value)}
+            >
+              {FORCE_RATING_TAGS.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+
+      <div className="sidebar-section">
+        <div className={`vram-status ${vramLocked ? 'vram-locked' : 'vram-free'}`}>
+          {vramLocked ? '⚡ vram_lock 保持中' : '✅ vram_lock 解放中'}
         </div>
       </div>
 
+      {showRating && (
+        <RatingDialog
+          sexualKey={sexualKey}
+          violenceKey={violenceKey}
+          onChangeSexual={handleSexual}
+          onChangeViolence={handleViolence}
+          onClose={() => setShowRating(false)}
+        />
+      )}
     </aside>
   )
 }
