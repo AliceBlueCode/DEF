@@ -1,22 +1,27 @@
 import { useState, useEffect } from 'react'
 
+type ApiService = {
+  id: string
+  label: string
+  env_var?: string
+  help?: string
+}
+
 type Props = {
   onClose: () => void
 }
 
-const API_SERVICES: { id: string; label: string }[] = [
-  { id: 'gemini', label: 'Gemini API' },
-  { id: 'openai', label: 'OpenAI API' },
-  { id: 'anthropic', label: 'Anthropic API' },
-]
-
 export default function ApiKeyDialog({ onClose }: Props) {
+  const [services, setServices] = useState<ApiService[]>([])
   const [keyStatus, setKeyStatus] = useState<Record<string, boolean>>({})
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({})
   const [keySaving, setKeySaving] = useState<Record<string, boolean>>({})
   const [keyMsg, setKeyMsg] = useState<Record<string, string>>({})
 
   useEffect(() => {
+    fetch('/api/settings/api-services')
+      .then(r => r.json())
+      .then(data => setServices(data.services || []))
     loadKeyStatus()
   }, [])
 
@@ -58,14 +63,21 @@ export default function ApiKeyDialog({ onClose }: Props) {
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
         <div className="dialog-body">
-          {API_SERVICES.map(({ id, label }) => (
+          <p className="dialog-desc">
+            外部API連携で使用するAPIキーを暗号化して保存します。環境変数が設定されている場合はそちらが優先されます。
+          </p>
+          {services.map(({ id, label, env_var, help }) => (
             <div key={id} className="api-key-row">
               <div className="api-key-header">
-                <span className="api-key-label">{label}</span>
+                <div>
+                  <span className="api-key-label">{label}</span>
+                  {env_var && <span className="api-key-envvar">{env_var}</span>}
+                </div>
                 <span className={`api-key-status ${keyStatus[id] ? 'set' : 'unset'}`}>
                   {keyStatus[id] ? '✓ 設定済み' : '○ 未設定'}
                 </span>
               </div>
+              {help && <p className="api-key-help">{help}</p>}
               <div className="api-key-controls">
                 <input
                   type="password"

@@ -337,6 +337,25 @@
   margin: 6px 0 0;
 }
 
+.api-key-envvar {
+  font-size: 0.75em;
+  font-family: monospace;
+  color: #666;
+  margin-left: 8px;
+}
+
+.api-key-help {
+  font-size: 0.8em;
+  color: #888;
+  margin: 0 0 6px;
+}
+
+.dialog-desc {
+  font-size: 0.85em;
+  color: #888;
+  margin: 0 0 4px;
+}
+
 /* Generation settings */
 .gen-setting-row {
   display: flex;
