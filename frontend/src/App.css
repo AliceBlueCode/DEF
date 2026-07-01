@@ -190,6 +190,120 @@
   font-size: 0.85em;
 }
 
+/* API key management */
+.api-keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.api-key-row {
+  background: #1e1e3a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.api-key-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.api-key-label {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: #c0c0e0;
+}
+
+.api-key-status {
+  font-size: 0.8em;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.api-key-status.set {
+  color: #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.api-key-status.unset {
+  color: #888;
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.api-key-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.api-key-input {
+  flex: 1;
+  background: #2a2a4e;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 0.85em;
+  font-family: monospace;
+}
+
+.api-key-input:focus {
+  outline: none;
+  border-color: #9db4ff;
+}
+
+.api-key-msg {
+  font-size: 0.8em;
+  color: #9db4ff;
+  margin: 6px 0 0;
+}
+
+/* Generation settings */
+.gen-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.gen-setting-row label {
+  font-size: 0.9em;
+  color: #c0c0e0;
+  min-width: 160px;
+}
+
+.candidate-count-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.count-btn {
+  width: 36px;
+  height: 36px;
+  background: #2a2a4e;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #c0c0e0;
+  cursor: pointer;
+  font-size: 0.9em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.count-btn:hover {
+  background: #3a3a6e;
+}
+
+.count-btn.active {
+  background: #4a4a9e;
+  border-color: #9db4ff;
+  color: #fff;
+}
+
 .session-tab {
   overflow: hidden;
   display: flex;

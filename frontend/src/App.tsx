@@ -26,6 +26,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
 const LS_KEY_LLM = 'def_llm_backend'
 const LS_KEY_T2I = 'def_t2i_backend'
 const LS_KEY_TTS = 'def_tts_backend'
+const LS_KEY_CANDIDATES = 'def_candidate_count'
 
 function App() {
   const [characters, setCharacters] = useState<Character[]>([])
@@ -34,6 +35,7 @@ function App() {
   const [selectedBackend, setSelectedBackend] = useState(() => localStorage.getItem(LS_KEY_LLM) || '')
   const [selectedT2iBackend, setSelectedT2iBackend] = useState(() => localStorage.getItem(LS_KEY_T2I) || '')
   const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'voicevox')
+  const [candidateCount, setCandidateCount] = useState(() => Number(localStorage.getItem(LS_KEY_CANDIDATES)) || 3)
   const [activeTab, setActiveTab] = useState<TabId>('chat')
 
   useEffect(() => {
@@ -67,6 +69,10 @@ function App() {
   useEffect(() => {
     if (selectedTtsBackend) localStorage.setItem(LS_KEY_TTS, selectedTtsBackend)
   }, [selectedTtsBackend])
+
+  useEffect(() => {
+    localStorage.setItem(LS_KEY_CANDIDATES, String(candidateCount))
+  }, [candidateCount])
 
   return (
     <div className="app">
@@ -106,7 +112,7 @@ function App() {
         <SessionTab characters={characters} backend={selectedBackend} />
       )}
       {activeTab === 'episode' && (
-        <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} />
+        <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
       )}
       {activeTab === 'settings' && (
         <SettingsTab
@@ -116,6 +122,8 @@ function App() {
           onT2iBackendChange={setSelectedT2iBackend}
           ttsBackend={selectedTtsBackend}
           onTtsBackendChange={setSelectedTtsBackend}
+          candidateCount={candidateCount}
+          onCandidateCountChange={setCandidateCount}
         />
       )}
     </div>

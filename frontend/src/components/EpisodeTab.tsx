@@ -12,6 +12,7 @@ type MediaItem = { type: 'image'; prompt: string; url: string }
 type Props = {
   backend: string
   t2iBackend: string
+  candidateCount: number
 }
 
 function splitScenes(body: string): { label: string; text: string }[] {
@@ -29,7 +30,7 @@ function splitScenes(body: string): { label: string; text: string }[] {
   return scenes
 }
 
-export default function EpisodeTab({ backend, t2iBackend }: Props) {
+export default function EpisodeTab({ backend, t2iBackend, candidateCount }: Props) {
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([])
   const [selectedTitle, setSelectedTitle] = useState('')
   const [episode, setEpisode] = useState<Episode | null>(null)
@@ -134,7 +135,7 @@ export default function EpisodeTab({ backend, t2iBackend }: Props) {
           body,
           plot,
           backend,
-          candidate_count: 3,
+          candidate_count: candidateCount,
         }),
       })
       const data = await res.json()
