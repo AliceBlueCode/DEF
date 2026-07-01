@@ -4,6 +4,7 @@ import CharacterTab from './components/CharacterTab'
 import SessionTab from './components/SessionTab'
 import EpisodeTab from './components/EpisodeTab'
 import SettingsTab from './components/SettingsTab'
+import DebugTab from './components/DebugTab'
 import './App.css'
 
 type Character = { id: string; name: string }
@@ -13,7 +14,7 @@ type BackendInfo = {
   default: string
 }
 
-type TabId = 'character' | 'chat' | 'session' | 'episode' | 'settings'
+type TabId = 'character' | 'chat' | 'session' | 'episode' | 'settings' | 'debug'
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'character', label: 'キャラクター', icon: '👤' },
@@ -21,6 +22,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'session', label: 'セッション', icon: '🎭' },
   { id: 'episode', label: 'エピソード', icon: '📖' },
   { id: 'settings', label: '設定', icon: '⚙️' },
+  { id: 'debug', label: 'デバッグ', icon: '🐛' },
 ]
 
 const LS_KEY_LLM = 'def_llm_backend'
@@ -114,6 +116,7 @@ function App() {
       {activeTab === 'episode' && (
         <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
       )}
+      {activeTab === 'debug' && <DebugTab />}
       {activeTab === 'settings' && (
         <SettingsTab
           llmBackend={selectedBackend}

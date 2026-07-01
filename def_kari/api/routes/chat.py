@@ -9,6 +9,8 @@ from def_kari.llm.client import generate_structured_reply
 
 router = APIRouter()
 
+_last_debug: dict = {}
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -44,6 +46,7 @@ def chat(req: ChatRequest):
     if not model:
         model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
 
+    global _last_debug
     try:
         result = generate_structured_reply(
             user_text=req.message,
@@ -53,11 +56,24 @@ def chat(req: ChatRequest):
             backend=backend_id,
         )
     except Exception as e:
+        _last_debug = {"error": str(e), "success": False, "attempts": []}
         return ChatResponse(text=str(e), raw=str(e))
 
+    attempts = result.get("attempts", [])
     if result.get("success") and result.get("result"):
         parsed = result["result"]
-        raw = result["attempts"][-1]["raw"] if result.get("attempts") else ""
+        raw = attempts[-1]["raw"] if attempts else ""
+        _last_debug = {
+            "success": True,
+            "text": parsed.get("dialogue", ""),
+            "emotion": parsed.get("emotion", "neutral"),
+            "image_prompt_en": parsed.get("image_prompt_en", ""),
+            "tags": parsed.get("tags", []),
+            "raw": raw,
+            "attempts": attempts,
+            "character_id": req.character_id,
+            "backend": backend_id,
+        }
         return ChatResponse(
             text=parsed.get("dialogue", ""),
             emotion=parsed.get("emotion", "neutral"),
@@ -66,9 +82,18 @@ def chat(req: ChatRequest):
             raw=raw,
         )
 
-    attempts = result.get("attempts", [])
-    errors = "; ".join(
-        e for a in attempts for e in a.get("errors", [])
-    )
+    errors = "; ".join(e for a in attempts for e in a.get("errors", []))
     raw = attempts[-1]["raw"] if attempts else ""
+    _last_debug = {
+        "success": False,
+        "raw": raw,
+        "attempts": attempts,
+        "character_id": req.character_id,
+        "backend": backend_id,
+    }
     return ChatResponse(text=f"(generation failed: {errors})" if errors else "(generation failed)", raw=raw)
+
+
+@router.get("/debug")
+def get_last_debug():
+    return _last_debug
