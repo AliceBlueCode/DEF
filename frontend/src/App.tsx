@@ -5,6 +5,7 @@ import SessionTab from './components/SessionTab'
 import EpisodeTab from './components/EpisodeTab'
 import SettingsTab from './components/SettingsTab'
 import DebugTab from './components/DebugTab'
+import Sidebar from './components/Sidebar'
 import './App.css'
 
 type Character = { id: string; name: string }
@@ -104,31 +105,36 @@ function App() {
         ))}
       </div>
 
-      {activeTab === 'chat' && (
-        <ChatTab characters={characters} selectedChar={selectedChar} backend={selectedBackend} />
-      )}
-      {activeTab === 'character' && (
-        <CharacterTab selectedChar={selectedChar} />
-      )}
-      {activeTab === 'session' && (
-        <SessionTab characters={characters} backend={selectedBackend} />
-      )}
-      {activeTab === 'episode' && (
-        <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
-      )}
-      {activeTab === 'debug' && <DebugTab />}
-      {activeTab === 'settings' && (
-        <SettingsTab
-          llmBackend={selectedBackend}
-          onLlmBackendChange={setSelectedBackend}
-          t2iBackend={selectedT2iBackend}
-          onT2iBackendChange={setSelectedT2iBackend}
-          ttsBackend={selectedTtsBackend}
-          onTtsBackendChange={setSelectedTtsBackend}
-          candidateCount={candidateCount}
-          onCandidateCountChange={setCandidateCount}
-        />
-      )}
+      <div className="main-layout">
+        <Sidebar />
+        <div className="main-content">
+          {activeTab === 'chat' && (
+            <ChatTab characters={characters} selectedChar={selectedChar} backend={selectedBackend} />
+          )}
+          {activeTab === 'character' && (
+            <CharacterTab selectedChar={selectedChar} />
+          )}
+          {activeTab === 'session' && (
+            <SessionTab characters={characters} backend={selectedBackend} />
+          )}
+          {activeTab === 'episode' && (
+            <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
+          )}
+          {activeTab === 'debug' && <DebugTab />}
+          {activeTab === 'settings' && (
+            <SettingsTab
+              llmBackend={selectedBackend}
+              onLlmBackendChange={setSelectedBackend}
+              t2iBackend={selectedT2iBackend}
+              onT2iBackendChange={setSelectedT2iBackend}
+              ttsBackend={selectedTtsBackend}
+              onTtsBackendChange={setSelectedTtsBackend}
+              candidateCount={candidateCount}
+              onCandidateCountChange={setCandidateCount}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }
