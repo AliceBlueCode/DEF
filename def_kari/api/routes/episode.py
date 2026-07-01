@@ -75,23 +75,26 @@ class GenerateRequest(BaseModel):
     backend: str = DEFAULT_LLM_BACKEND
     model: str = ""
     candidate_count: int = 3
-    user_language: str = "ja"
+    user_language: str | None = None
 
 
 @router.post("/generate")
 def generate_candidates(req: GenerateRequest):
+    from def_kari.settings import load_settings
+    user_language = req.user_language or load_settings().get("user_language", "ja")
+
     sys_prompt = req.plot
     if not sys_prompt:
         sys_prompt = (
             "Continue the story naturally. Maintain the tone, style, and world-building. "
             "Do not repeat the given text. Write only new content."
-        ) if req.user_language == "en" else (
+        ) if user_language == "en" else (
             "与えられた物語の続きを、文体や世界観を保ったまま自然に書き続けてください。"
             "与えられたテキストを繰り返してはいけません。新しい展開のみを書いてください。"
         )
 
     user_content = req.body or (
-        "No text yet. Start the story." if req.user_language == "en"
+        "No text yet. Start the story." if user_language == "en"
         else "(まだ本文はありません。物語の冒頭を書き始めてください。)"
     )
     messages = [
@@ -132,12 +135,17 @@ class T2IRequest(BaseModel):
     llm_model: str = ""
     t2i_backend: str = DEFAULT_T2I_BACKEND
     t2i_model: str = ""
-    width: int = 1216
-    height: int = 832
+    width: int | None = None
+    height: int | None = None
 
 
 @router.post("/t2i")
 def generate_episode_image(req: T2IRequest):
+    from def_kari.settings import load_settings
+    _saved = load_settings()
+    width = req.width or _saved.get("episode_t2i_width", 1216)
+    height = req.height or _saved.get("episode_t2i_height", 832)
+
     t2i_sys = (
         "You are an image prompt generator. Given a scene from a story, generate a concise English image prompt "
         "suitable for AI image generation (Stable Diffusion style). Output ONLY the prompt, no explanation."
@@ -166,8 +174,8 @@ def generate_episode_image(req: T2IRequest):
         from def_kari.workers._t2i_generate import generate_image
         img_path = generate_image(
             prompt=img_prompt,
-            width=req.width,
-            height=req.height,
+            width=width,
+            height=height,
             model_name=req.t2i_model,
             backend=req.t2i_backend,
         )

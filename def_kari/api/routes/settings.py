@@ -41,11 +41,15 @@ class SaveSettingsRequest(BaseModel):
 
 @router.post("/")
 def update_settings(req: SaveSettingsRequest):
-    class FakeState(dict):
-        def __getattr__(self, key):
-            return self.get(key)
-    state = FakeState(req.settings)
-    save_settings(state)
+    from def_kari.settings import PERSISTED_KEYS, DATA_DIR, SETTINGS_PATH
+    import json as _j
+    existing = load_settings()
+    for k, v in req.settings.items():
+        if k in PERSISTED_KEYS:
+            existing[k] = v
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+        _j.dump(existing, f, ensure_ascii=False, indent=2)
     return {"status": "ok"}
 
 

@@ -383,47 +383,110 @@
 .apikey-list-status.set   { color: #4caf50; }
 .apikey-list-status.unset { color: #555; }
 
-/* Generation settings */
-.gen-setting-row {
+/* Settings rows */
+.settings-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
-.gen-setting-row label {
-  font-size: 0.9em;
+.settings-row label {
+  font-size: 0.88em;
   color: #c0c0e0;
-  min-width: 160px;
+  min-width: 150px;
+  flex-shrink: 0;
 }
 
-.candidate-count-controls {
+.settings-row select {
+  background: #2a2a4e;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 0.88em;
+  flex: 1;
+}
+
+.settings-number {
+  background: #2a2a4e;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 0.88em;
+  width: 72px;
+  text-align: center;
+}
+
+.settings-divider {
+  border: none;
+  border-top: 1px solid #2a2a4a;
+  margin: 8px 0 16px;
+}
+
+/* Count buttons (candidate, session actions) */
+.count-buttons {
   display: flex;
   gap: 4px;
 }
 
 .count-btn {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   background: #2a2a4e;
   border: 1px solid #444;
   border-radius: 4px;
   color: #c0c0e0;
   cursor: pointer;
-  font-size: 0.9em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 0.88em;
   padding: 0;
 }
 
-.count-btn:hover {
-  background: #3a3a6e;
+.count-btn:hover  { background: #3a3a6e; }
+.count-btn.active { background: #4a4a9e; border-color: #9db4ff; color: #fff; }
+
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
 }
 
-.count-btn.active {
-  background: #4a4a9e;
-  border-color: #9db4ff;
-  color: #fff;
+.toggle-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  width: 40px;
+  height: 22px;
+  background: #333;
+  border-radius: 11px;
+  position: relative;
+  transition: background 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: #4a6adf;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: left 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-track .toggle-thumb {
+  left: 21px;
 }
 
 .session-tab {
