@@ -28,6 +28,40 @@ const LANG_OPTIONS = [
   { value: 'de', label: 'Deutsch' },
 ]
 
+const C2_OPTIONS = [
+  { value: 'none',    label: '利用しない' },
+  { value: 'argos',   label: 'Argos Translate (オフライン)' },
+  { value: 'library', label: 'Google翻訳 (無料)' },
+  { value: 'deepl',   label: 'DeepL API' },
+  { value: 'llm',     label: 'LLM翻訳' },
+]
+
+const SAFETY_LEVELS = [
+  { value: 'off',  label: 'オフ（フィルター無効）' },
+  { value: 'warn', label: '警告（デフォルト）' },
+  { value: 'mask', label: 'マスク（ブロック）' },
+]
+
+const SEXUAL_PRESETS: Record<string, string[]> = {
+  general: ['general'],
+  nsfw:    ['general', 'nsfw'],
+  hentai:  ['general', 'nsfw', 'hentai'],
+}
+
+const VIOLENCE_PRESETS: Record<string, string[]> = {
+  general:  ['general'],
+  violence: ['general', 'violence'],
+  extreme:  ['general', 'violence', 'gore', 'extreme'],
+}
+
+function toPresetKey(val: unknown, presets: Record<string, string[]>): string {
+  const arr = Array.isArray(val) ? [...val].sort() : ['general']
+  for (const [k, v] of Object.entries(presets)) {
+    if (JSON.stringify([...v].sort()) === JSON.stringify(arr)) return k
+  }
+  return Object.keys(presets)[0]
+}
+
 const T2I_TRIGGER_OPTIONS = [
   { value: 'end',      label: '各サイクル末（演出先行型）' },
   { value: 'start',    label: '各サイクル頭（状況先行型）' },
@@ -177,6 +211,14 @@ export default function SettingsTab({
           <Toggle checked={get('character_greeting', true)} onChange={v => set('character_greeting', v)} />
         </div>
         <div className="settings-row">
+          <label>TTS 有効</label>
+          <Toggle checked={get('tts_enabled', true)} onChange={v => set('tts_enabled', v)} />
+        </div>
+        <div className="settings-row">
+          <label>ユーザー発言 TTS</label>
+          <Toggle checked={get('tts_human_enabled', false)} onChange={v => set('tts_human_enabled', v)} />
+        </div>
+        <div className="settings-row">
           <label>Undo 最大件数</label>
           <input
             type="number" min={1} max={10}
@@ -207,6 +249,47 @@ export default function SettingsTab({
         <div className="settings-row">
           <label>感情タグ</label>
           <Toggle checked={get('emotion_tag_enabled', true)} onChange={v => set('emotion_tag_enabled', v)} />
+        </div>
+        <div className="settings-row">
+          <label>翻訳方式 (C2)</label>
+          <select value={get('c2_method', 'none')} onChange={e => set('c2_method', e.target.value)}>
+            {C2_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="settings-divider" />
+
+      {/* ── 安全設定 ── */}
+      <div className="settings-section">
+        <h3>安全設定</h3>
+        <div className="settings-row">
+          <label>安全レベル</label>
+          <select value={get('safety_level', 'warn')} onChange={e => set('safety_level', e.target.value)}>
+            {SAFETY_LEVELS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div className="settings-row">
+          <label>性的コンテンツ</label>
+          <select
+            value={toPresetKey(get('allowed_rating_sexual', ['general']), SEXUAL_PRESETS)}
+            onChange={e => set('allowed_rating_sexual', SEXUAL_PRESETS[e.target.value])}
+          >
+            <option value="general">全年齢</option>
+            <option value="nsfw">R-15相当</option>
+            <option value="hentai">R-18相当</option>
+          </select>
+        </div>
+        <div className="settings-row">
+          <label>暴力コンテンツ</label>
+          <select
+            value={toPresetKey(get('allowed_rating_violence', ['general']), VIOLENCE_PRESETS)}
+            onChange={e => set('allowed_rating_violence', VIOLENCE_PRESETS[e.target.value])}
+          >
+            <option value="general">全年齢</option>
+            <option value="violence">一般暴力</option>
+            <option value="extreme">過激</option>
+          </select>
         </div>
       </div>
 
