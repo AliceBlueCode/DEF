@@ -330,6 +330,8 @@
 .apikey-list {
   display: flex;
   flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .apikey-list-row {
