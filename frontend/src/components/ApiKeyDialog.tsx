@@ -14,14 +14,19 @@ type Props = {
 export default function ApiKeyDialog({ onClose }: Props) {
   const [services, setServices] = useState<ApiService[]>([])
   const [keyStatus, setKeyStatus] = useState<Record<string, boolean>>({})
-  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({})
-  const [keySaving, setKeySaving] = useState<Record<string, boolean>>({})
-  const [keyMsg, setKeyMsg] = useState<Record<string, string>>({})
+  const [selectedId, setSelectedId] = useState('')
+  const [keyInput, setKeyInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/api-services')
       .then(r => r.json())
-      .then(data => setServices(data.services || []))
+      .then(data => {
+        const svcs: ApiService[] = data.services || []
+        setServices(svcs)
+        if (svcs.length > 0) setSelectedId(svcs[0].id)
+      })
     loadKeyStatus()
   }, [])
 
@@ -31,76 +36,108 @@ export default function ApiKeyDialog({ onClose }: Props) {
       .then(setKeyStatus)
   }
 
-  const saveKey = async (service: string) => {
-    const val = keyInputs[service]?.trim()
-    if (!val) return
-    setKeySaving(prev => ({ ...prev, [service]: true }))
-    await fetch(`/api/settings/api-keys/${service}`, {
+  const showMsg = (text: string) => {
+    setMsg(text)
+    setTimeout(() => setMsg(''), 2000)
+  }
+
+  const saveKey = async () => {
+    const val = keyInput.trim()
+    if (!val || !selectedId) return
+    setSaving(true)
+    await fetch(`/api/settings/api-keys/${selectedId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: val }),
     })
-    setKeyInputs(prev => ({ ...prev, [service]: '' }))
-    setKeyMsg(prev => ({ ...prev, [service]: '保存しました' }))
-    setTimeout(() => setKeyMsg(prev => ({ ...prev, [service]: '' })), 2000)
-    setKeySaving(prev => ({ ...prev, [service]: false }))
+    setKeyInput('')
+    showMsg('保存しました')
+    setSaving(false)
     loadKeyStatus()
   }
 
-  const deleteKey = async (service: string) => {
-    if (!confirm(`${service} の APIキーを削除しますか？`)) return
-    await fetch(`/api/settings/api-keys/${service}`, { method: 'DELETE' })
-    setKeyMsg(prev => ({ ...prev, [service]: '削除しました' }))
-    setTimeout(() => setKeyMsg(prev => ({ ...prev, [service]: '' })), 2000)
+  const deleteKey = async () => {
+    if (!selectedId || !keyStatus[selectedId]) return
+    const svc = services.find(s => s.id === selectedId)
+    if (!confirm(`${svc?.label ?? selectedId} のAPIキーを削除しますか？`)) return
+    await fetch(`/api/settings/api-keys/${selectedId}`, { method: 'DELETE' })
+    showMsg('削除しました')
     loadKeyStatus()
   }
+
+  const selectRow = (id: string) => {
+    setSelectedId(id)
+    setKeyInput('')
+    setMsg('')
+  }
+
+  const selectedSvc = services.find(s => s.id === selectedId)
 
   return (
     <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="dialog">
+      <div className="dialog apikey-dialog">
         <div className="dialog-header">
-          <h3>APIキー管理</h3>
+          <h3>🔑 APIキー管理</h3>
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
-        <div className="dialog-body">
-          <p className="dialog-desc">
-            外部API連携で使用するAPIキーを暗号化して保存します。環境変数が設定されている場合はそちらが優先されます。
-          </p>
-          {services.map(({ id, label, env_var, help }) => (
-            <div key={id} className="api-key-row">
-              <div className="api-key-header">
-                <div>
-                  <span className="api-key-label">{label}</span>
-                  {env_var && <span className="api-key-envvar">{env_var}</span>}
-                </div>
-                <span className={`api-key-status ${keyStatus[id] ? 'set' : 'unset'}`}>
-                  {keyStatus[id] ? '✓ 設定済み' : '○ 未設定'}
-                </span>
-              </div>
-              {help && <p className="api-key-help">{help}</p>}
-              <div className="api-key-controls">
-                <input
-                  type="password"
-                  className="api-key-input"
-                  placeholder={keyStatus[id] ? '変更する場合は入力...' : 'APIキーを入力...'}
-                  value={keyInputs[id] || ''}
-                  onChange={e => setKeyInputs(prev => ({ ...prev, [id]: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && saveKey(id)}
-                />
-                <button
-                  onClick={() => saveKey(id)}
-                  disabled={!keyInputs[id]?.trim() || keySaving[id]}
-                >
-                  保存
-                </button>
-                {keyStatus[id] && (
-                  <button className="delete-btn" onClick={() => deleteKey(id)}>削除</button>
-                )}
-              </div>
-              {keyMsg[id] && <p className="api-key-msg">{keyMsg[id]}</p>}
+
+        <div className="apikey-input-area">
+          <select
+            className="apikey-service-select"
+            value={selectedId}
+            onChange={e => selectRow(e.target.value)}
+          >
+            {services.map(s => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+          <input
+            type="password"
+            className="apikey-value-input"
+            placeholder={keyStatus[selectedId] ? '変更する場合は入力...' : 'APIキーを入力...'}
+            value={keyInput}
+            onChange={e => setKeyInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && saveKey()}
+          />
+          <button onClick={saveKey} disabled={!keyInput.trim() || saving}>
+            登録
+          </button>
+          <button
+            className="delete-btn"
+            onClick={deleteKey}
+            disabled={!keyStatus[selectedId]}
+          >
+            削除
+          </button>
+        </div>
+
+        {(msg || selectedSvc?.help) && (
+          <div className="apikey-hint-area">
+            {msg
+              ? <span className="apikey-msg">{msg}</span>
+              : <span className="apikey-help">{selectedSvc?.help}</span>
+            }
+          </div>
+        )}
+
+        <div className="apikey-list-header">設定済みキー一覧</div>
+        <div className="apikey-list">
+          {services.map(({ id, label, env_var }) => (
+            <div
+              key={id}
+              className={`apikey-list-row ${selectedId === id ? 'selected' : ''}`}
+              onClick={() => selectRow(id)}
+            >
+              <span className={`apikey-dot ${keyStatus[id] ? 'set' : 'unset'}`}>●</span>
+              <span className="apikey-list-label">{label}</span>
+              {env_var && <span className="apikey-list-envvar">{env_var}</span>}
+              <span className={`apikey-list-status ${keyStatus[id] ? 'set' : 'unset'}`}>
+                {keyStatus[id] ? '✓' : '未設定'}
+              </span>
             </div>
           ))}
         </div>
+
         <div className="dialog-footer">
           <button onClick={onClose}>閉じる</button>
         </div>

@@ -206,7 +206,7 @@
   border-color: #9db4ff;
 }
 
-/* Dialog */
+/* Dialog base */
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -221,8 +221,8 @@
   background: #1e1e3a;
   border: 1px solid #444;
   border-radius: 10px;
-  width: 480px;
-  max-width: 90vw;
+  width: 560px;
+  max-width: 92vw;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -232,14 +232,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 12px 16px;
   border-bottom: 1px solid #333;
 }
 
 .dialog-header h3 {
   margin: 0;
   color: #9db4ff;
-  font-size: 1em;
+  font-size: 0.95em;
 }
 
 .dialog-close {
@@ -257,64 +257,37 @@
   color: #e0e0e0;
 }
 
-.dialog-body {
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
 .dialog-footer {
-  padding: 12px 20px;
+  padding: 10px 16px;
   border-top: 1px solid #333;
   display: flex;
   justify-content: flex-end;
 }
 
-/* API key rows (used inside dialog) */
-.api-key-row {
-  background: #16213e;
-  border: 1px solid #333;
-  border-radius: 6px;
-  padding: 12px;
+/* APIキーダイアログ固有 */
+.apikey-dialog {
+  /* dialog base overrides */
 }
 
-.api-key-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.api-key-label {
-  font-size: 0.9em;
-  font-weight: 600;
-  color: #c0c0e0;
-}
-
-.api-key-status {
-  font-size: 0.8em;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.api-key-status.set {
-  color: #4caf50;
-  background: rgba(76, 175, 80, 0.1);
-}
-
-.api-key-status.unset {
-  color: #888;
-  background: rgba(128, 128, 128, 0.1);
-}
-
-.api-key-controls {
+.apikey-input-area {
   display: flex;
   gap: 6px;
   align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a4a;
 }
 
-.api-key-input {
+.apikey-service-select {
+  background: #2a2a4e;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 0.85em;
+  flex-shrink: 0;
+}
+
+.apikey-value-input {
   flex: 1;
   background: #2a2a4e;
   color: #e0e0e0;
@@ -326,35 +299,87 @@
   min-width: 0;
 }
 
-.api-key-input:focus {
+.apikey-value-input:focus {
   outline: none;
   border-color: #9db4ff;
 }
 
-.api-key-msg {
+.apikey-hint-area {
+  padding: 4px 16px 6px;
+  min-height: 20px;
+}
+
+.apikey-msg {
   font-size: 0.8em;
   color: #9db4ff;
-  margin: 6px 0 0;
 }
 
-.api-key-envvar {
-  font-size: 0.75em;
-  font-family: monospace;
-  color: #666;
-  margin-left: 8px;
-}
-
-.api-key-help {
+.apikey-help {
   font-size: 0.8em;
-  color: #888;
-  margin: 0 0 6px;
+  color: #666;
 }
 
-.dialog-desc {
-  font-size: 0.85em;
-  color: #888;
-  margin: 0 0 4px;
+.apikey-list-header {
+  font-size: 0.75em;
+  color: #666;
+  padding: 6px 16px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
+
+.apikey-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.apikey-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+}
+
+.apikey-list-row:hover {
+  background: #252545;
+}
+
+.apikey-list-row.selected {
+  background: #252550;
+  border-left-color: #9db4ff;
+}
+
+.apikey-dot {
+  font-size: 0.6em;
+  flex-shrink: 0;
+}
+
+.apikey-dot.set   { color: #4caf50; }
+.apikey-dot.unset { color: #555; }
+
+.apikey-list-label {
+  font-size: 0.88em;
+  color: #c0c0e0;
+  flex-shrink: 0;
+  width: 140px;
+}
+
+.apikey-list-envvar {
+  font-size: 0.78em;
+  font-family: monospace;
+  color: #555;
+  flex: 1;
+}
+
+.apikey-list-status {
+  font-size: 0.8em;
+  flex-shrink: 0;
+}
+
+.apikey-list-status.set   { color: #4caf50; }
+.apikey-list-status.unset { color: #555; }
 
 /* Generation settings */
 .gen-setting-row {
