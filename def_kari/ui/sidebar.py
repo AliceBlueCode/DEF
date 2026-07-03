@@ -160,4 +160,5 @@ def render_sidebar() -> None:
                 st.caption("✅ vram_lock: 解放中")
 
         st.divider()
-        st.caption("DEF(kari) v1.0.0")
+        from def_kari import __version__
+        st.caption(f"DEF(kari) v{__version__}")
