@@ -1,4 +1,4 @@
-# DEF Glossary v1.0.0
+﻿# DEF Glossary v2.0.0
 
 ## Overview
 

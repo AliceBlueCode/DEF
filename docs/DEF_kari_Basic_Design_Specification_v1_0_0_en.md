@@ -1,6 +1,6 @@
 # Multimodal AI Creative Platform "DEF(kari)"
 
-## Basic Design Specification Version 1.0.0
+## Basic Design Specification Version 2.0.0
 
 |**Item**|**Details**|
 |------|------------------------------------------------------------------|

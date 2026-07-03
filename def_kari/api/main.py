@@ -12,9 +12,11 @@ from fastapi.staticfiles import StaticFiles
 
 from def_kari.api.routes import chat, characters, settings, tts, episode, session
 
+from def_kari import __version__
+
 app = FastAPI(
     title="DEF(kari) API",
-    version="1.0.0",
+    version=__version__,
     description="Multimodal AI Creative Platform API",
 )
 
@@ -69,4 +71,4 @@ app.include_router(session.router, prefix="/api/session", tags=["session"])
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": __version__}
