@@ -1,4 +1,6 @@
-# DEF(kari) — Multimodal AI Creative Platform
+# DEF(kari) — Persistent Character Platform
+
+**[日本語 README »](README.md) | [繁體中文 »](README_zh-TW.md) | [简体中文 »](README_zh-CN.md) | [한국어 README »](README_ko.md) | [README en Español »](README_es.md)**
 
 > **Dialogue × Emotion × Fable**
 > With your characters, for years to come, wherever you go.
@@ -7,9 +9,54 @@
 
 ## What is DEF(kari)?
 
-DEF(kari) is a local-first AI creative platform that integrates text, voice, and image generation.
+DEF(kari) is a local-first Persistent Character Platform that brings characters to enduring existence.
+
+**The protagonist is not AI. It's the character.**
+AI is designed as the means to express that character.
 
 Rather than entrusting your creative content to the terms of service and content policies of cloud services, DEF(kari) provides **the foundation for generating and sustaining the characters and stories you desire, in your own environment, with your own hands.**
+
+-----
+
+## Character Persistence
+
+In DEF(kari), characters are not merely chat history.
+
+Characters retain:
+
+- Memory
+- Personality
+- Emotions
+- Relationships
+- Episodes
+- Generated images and voice
+
+and continue as the same presence after restart, even across different environments.
+
+That's why —
+You can continue yesterday's conversation.
+They remember what happened last year.
+You can walk through the story together.
+And no matter how many years pass, you can meet again.
+
+-----
+
+## Three Experiences
+
+### Chat — Build a relationship with your character
+
+AI companion, lover, counselor, or assistant.
+Through one-on-one dialogue, you accumulate shared time with your character.
+
+### Session — Watch and join the world your characters live in
+
+Enjoy discussions, debates, role-play, and improv among multiple characters.
+You can be an observer, or join the conversation as a participant.
+
+### TRPG — Evolve Session into a game
+
+GMs, player characters, and NPCs share the same Character Persistence, enabling long-term campaigns.
+The relationships built in past adventures carry directly into the next story.
 
 -----
 
