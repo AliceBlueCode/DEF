@@ -55,7 +55,9 @@ const T2I_FORMAT_OPTIONS = [
 
 const SIZE_PRESETS = [
   { label: '512×512',   w: 512,  h: 512 },
+  { label: '512×768',   w: 512,  h: 768 },
   { label: '768×512',   w: 768,  h: 512 },
+  { label: '768×1024',  w: 768,  h: 1024 },
   { label: '1024×576',  w: 1024, h: 576 },
   { label: '1216×832',  w: 1216, h: 832 },
   { label: '832×1216',  w: 832,  h: 1216 },
@@ -65,6 +67,10 @@ const SIZE_PRESETS = [
 function sizeLabel(w: number, h: number) {
   const p = SIZE_PRESETS.find(p => p.w === w && p.h === h)
   return p ? p.label : `${w}×${h}`
+}
+
+function llmModelKey(backend: string): string {
+  return backend === 'textgen_webui' ? 'tgw_autoload_model' : `llm_ext_model_${backend}`
 }
 
 
@@ -77,10 +83,18 @@ export default function SettingsTab({
 }: Props) {
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
   const [t2iBackends, setT2iBackends] = useState<BackendInfo | null>(null)
+  const [llmModels, setLlmModels] = useState<string[]>([])
+  const [t2iModels, setT2iModels] = useState<string[]>([])
+  const [t2iWorkflows, setT2iWorkflows] = useState<string[]>([])
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false)
   const [appSettings, setAppSettings] = useState<Record<string, unknown>>({})
+  const [appVersion, setAppVersion] = useState('')
 
   useEffect(() => {
+    fetch('/api/settings/version')
+      .then(r => r.json())
+      .then(data => setAppVersion(data.version || ''))
+      .catch(() => {})
     fetch('/api/settings/backends')
       .then(r => r.json())
       .then(data => {
@@ -91,6 +105,28 @@ export default function SettingsTab({
       .then(r => r.json())
       .then(data => setAppSettings(data.settings || {}))
   }, [])
+
+  useEffect(() => {
+    if (!llmBackend) return
+    setLlmModels([])
+    fetch(`/api/settings/llm-models?backend=${encodeURIComponent(llmBackend)}`)
+      .then(r => r.json())
+      .then(data => setLlmModels(data.models || []))
+      .catch(() => {})
+  }, [llmBackend])
+
+  useEffect(() => {
+    if (!t2iBackend) return
+    setT2iModels([])
+    setT2iWorkflows([])
+    fetch(`/api/settings/t2i-models?backend=${encodeURIComponent(t2iBackend)}`)
+      .then(r => r.json())
+      .then(data => {
+        setT2iModels(data.models || [])
+        setT2iWorkflows(data.workflows || [])
+      })
+      .catch(() => {})
+  }, [t2iBackend])
 
   const get = useCallback(<T,>(key: string, def: T): T => {
     return (key in appSettings ? appSettings[key] : def) as T
@@ -114,11 +150,13 @@ export default function SettingsTab({
     })
   }
 
+  const modelKey = llmModelKey(llmBackend)
+
   return (
     <div className="tab-content settings-tab">
       <h2>設定</h2>
 
-      {/* ── バックエンド ── */}
+      {/* ── LLM バックエンド ── */}
       <div className="settings-section">
         <h3>LLM バックエンド</h3>
         {llmBackends && (
@@ -127,6 +165,17 @@ export default function SettingsTab({
               <option key={b} value={b}>{llmBackends.labels[b] || b}</option>
             ))}
           </select>
+        )}
+        {llmModels.length > 0 && (
+          <div className="settings-row" style={{ marginTop: 8 }}>
+            <label>モデル</label>
+            <select
+              value={get(modelKey, llmModels[0])}
+              onChange={e => set(modelKey, e.target.value)}
+            >
+              {llmModels.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
         )}
       </div>
 
@@ -140,6 +189,7 @@ export default function SettingsTab({
         </select>
       </div>
 
+      {/* ── T2I バックエンド ── */}
       <div className="settings-section">
         <h3>T2I バックエンド</h3>
         {t2iBackends && (
@@ -148,6 +198,28 @@ export default function SettingsTab({
               <option key={b} value={b}>{t2iBackends.labels[b] || b}</option>
             ))}
           </select>
+        )}
+        {t2iModels.length > 0 && (
+          <div className="settings-row" style={{ marginTop: 8 }}>
+            <label>モデル</label>
+            <select
+              value={get('t2i_model', t2iModels[0])}
+              onChange={e => set('t2i_model', e.target.value)}
+            >
+              {t2iModels.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+        )}
+        {t2iWorkflows.length > 0 && (
+          <div className="settings-row" style={{ marginTop: 8 }}>
+            <label>ワークフロー</label>
+            <select
+              value={get('comfyui_workflow', t2iWorkflows[0])}
+              onChange={e => set('comfyui_workflow', e.target.value)}
+            >
+              {t2iWorkflows.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </div>
         )}
       </div>
 
@@ -170,8 +242,6 @@ export default function SettingsTab({
           </select>
         </div>
       </div>
-
-      <div className="settings-divider" />
 
       <div className="settings-divider" />
 
@@ -198,6 +268,18 @@ export default function SettingsTab({
           <label>翻訳方式 (C2)</label>
           <select value={get('c2_method', 'none')} onChange={e => set('c2_method', e.target.value)}>
             {C2_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div className="settings-row">
+          <label>チャット挿絵サイズ</label>
+          <select
+            value={sizeLabel(get('t2i_width', 512), get('t2i_height', 768))}
+            onChange={e => {
+              const p = SIZE_PRESETS.find(p => p.label === e.target.value)
+              if (p) setSize('t2i_width', 't2i_height', p.w, p.h)
+            }}
+          >
+            {SIZE_PRESETS.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
           </select>
         </div>
       </div>
@@ -245,6 +327,18 @@ export default function SettingsTab({
             onChange={e => set('session_repeat_penalty_count', Number(e.target.value))}
           />
         </div>
+        <div className="settings-row">
+          <label>セッション挿絵サイズ</label>
+          <select
+            value={sizeLabel(get('session_t2i_width', 512), get('session_t2i_height', 512))}
+            onChange={e => {
+              const p = SIZE_PRESETS.find(p => p.label === e.target.value)
+              if (p) setSize('session_t2i_width', 'session_t2i_height', p.w, p.h)
+            }}
+          >
+            {SIZE_PRESETS.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="settings-divider" />
@@ -288,7 +382,7 @@ export default function SettingsTab({
       <div className="settings-divider" />
 
       <div className="settings-section">
-        <p className="version-info">DEF(kari) v1.0.0</p>
+        <p className="version-info">{appVersion ? `DEF(kari) v${appVersion}` : 'DEF(kari)'}</p>
       </div>
 
       {showApiKeyDialog && <ApiKeyDialog onClose={() => setShowApiKeyDialog(false)} />}

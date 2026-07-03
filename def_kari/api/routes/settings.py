@@ -30,6 +30,12 @@ def _env_map() -> dict[str, str]:
     return {s["id"]: s.get("env_var", f"{s['id'].upper()}_API_KEY") for s in _load_api_services()}
 
 
+@router.get("/version")
+def get_version():
+    from def_kari import __version__
+    return {"version": __version__}
+
+
 @router.get("/")
 def get_settings():
     return {"settings": load_settings()}
@@ -67,6 +73,43 @@ def get_backends():
             "default": DEFAULT_T2I_BACKEND,
         },
     }
+
+
+@router.get("/llm-models")
+def get_llm_models(backend: str = ""):
+    if not backend or backend not in LLM_BACKENDS:
+        return {"models": [], "default": ""}
+    try:
+        models = LLM_BACKENDS[backend]["list_models"]() or []
+    except Exception:
+        models = []
+    return {"models": models, "default": LLM_BACKENDS[backend].get("default_model", "")}
+
+
+@router.get("/t2i-models")
+def get_t2i_models(backend: str = ""):
+    models: list[str] = []
+    workflows: list[str] = []
+    if backend == "a1111":
+        try:
+            from def_kari.workers._t2i_generate import list_a1111_models
+            models = list_a1111_models() or []
+        except Exception:
+            pass
+    elif backend == "comfyui":
+        try:
+            from def_kari.workers._t2i_generate import list_comfyui_models, list_comfyui_workflows
+            models = list_comfyui_models() or []
+            workflows = list_comfyui_workflows() or []
+        except Exception:
+            pass
+    elif backend == "huggingface":
+        models = [
+            "black-forest-labs/FLUX.1-schnell",
+            "stabilityai/stable-diffusion-xl-base-1.0",
+            "stabilityai/stable-diffusion-2-1",
+        ]
+    return {"models": models, "workflows": workflows}
 
 
 @router.get("/api-services")

@@ -29,6 +29,7 @@ PERSISTED_KEYS = [
     "llm_ext_model_openai",
     "llm_ext_model_gemini",
     "llm_ext_model_anthropic",
+    "llm_ext_model_ollama",
     "status_poll_sec",
     "session_actions_per_turn",
     "session_action_directive_set",
