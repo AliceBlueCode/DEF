@@ -17,7 +17,7 @@ from def_kari import __version__
 app = FastAPI(
     title="DEF(kari) API",
     version=__version__,
-    description="Multimodal AI Creative Platform API",
+    description="DEF(kari) — Persistent Character Platform",
 )
 
 app.add_middleware(
