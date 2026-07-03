@@ -2,7 +2,7 @@
 
 **[日本語 README »](README.md) | [繁體中文 »](README_zh-TW.md) | [简体中文 »](README_zh-CN.md) | [한국어 README »](README_ko.md) | [README en Español »](README_es.md)**
 
-> **Dialogue × Emotion × Fable**
+> **Dialogue × Emotion × Fable**\
 > With your characters, for years to come, wherever you go.
 
 -----
