@@ -1,13 +1,14 @@
 """OllamaAdapter: Ollama(ローカル)— フォールバック"""
 
 import json as _json
+import os
 
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 
-MODEL = "huihui_ai/qwen2.5-abliterate:7b"
+MODEL = os.environ.get("OLLAMA_DEFAULT_MODEL", "huihui_ai/qwen2.5-abliterate:7b")
 
 
 def chat(

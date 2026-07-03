@@ -152,7 +152,7 @@ def _civitai_generate(
 
 
 HF_INFERENCE_URL = "https://router.huggingface.co"
-HF_DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell"
+HF_DEFAULT_MODEL = os.environ.get("HF_DEFAULT_MODEL", "black-forest-labs/FLUX.1-schnell")
 
 
 def _get_hf_token() -> str:

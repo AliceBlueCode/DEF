@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from def_kari.api.routes import chat, characters, settings, tts, episode, session
+from def_kari.api.routes import chat, characters, settings, tts, novel, session
 
 from def_kari import __version__
 
@@ -44,10 +44,36 @@ if os.path.exists(_env_path):
                 os.environ.setdefault(k.strip(), v.strip())
 
 # Load encrypted API keys into environment
-_KEY_MAP = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+_KEY_MAP = {
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "deepl": "DEEPL_API_KEY",
+    "civitai": "CIVITAI_API_TOKEN",
+    "huggingface": "HF_TOKEN",
+}
 try:
-    from def_kari.secrets_store import get_api_key as _get_key, STORE_PATH as _SP, KEY_PATH as _KP
+    from def_kari.secrets_store import get_api_key as _get_key, set_api_key as _set_key, STORE_PATH as _SP, KEY_PATH as _KP
     print(f"[API] secrets_store: store={_SP} exists={_SP.exists()}, key={_KP} exists={_KP.exists()}")
+
+    # Migrate plain-text keys from mvp_settings.json → secrets_store (one-time)
+    _MIGRATE_MAP = {"deepl_api_key": "deepl", "civitai_api_token": "civitai"}
+    try:
+        from def_kari.settings import load_settings as _load_s, SETTINGS_PATH as _SP2
+        import json as _json
+        _plain = _load_s()
+        _migrated = False
+        for _plain_key, _svc in _MIGRATE_MAP.items():
+            _v = _plain.pop(_plain_key, None)
+            if _v and not _get_key(_svc):
+                _set_key(_svc, _v)
+                print(f"[API] migrated {_plain_key} → secrets_store:{_svc}")
+                _migrated = True
+        if _migrated:
+            _SP2.write_text(_json.dumps(_plain, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as _me:
+        print(f"[API] migration warning: {_me}")
+
     for _svc, _env in _KEY_MAP.items():
         _val = _get_key(_svc)
         if _val:
@@ -65,7 +91,7 @@ app.include_router(characters.router, prefix="/api/characters", tags=["character
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
-app.include_router(episode.router, prefix="/api/episode", tags=["episode"])
+app.include_router(novel.router, prefix="/api/novel", tags=["novel"])
 app.include_router(session.router, prefix="/api/session", tags=["session"])
 
 

@@ -1,4 +1,4 @@
-"""Episode API routes."""
+"""Novel API routes."""
 
 import os
 import re
@@ -15,26 +15,26 @@ from def_kari.config import DEFAULT_T2I_BACKEND
 
 router = APIRouter()
 
-_EPISODES_DIR = Path(__file__).parent.parent.parent.parent / "data" / "private" / "episodes"
+_NOVELS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "private" / "novels"
 
 _SAFE_NAME_RE = re.compile(r'[^\w\-　-鿿゠-ヿ぀-ゟ]+')
 
 
 def _safe_path(title: str) -> Path | None:
     safe_name = _SAFE_NAME_RE.sub("_", title).strip("_") or "untitled"
-    path = (_EPISODES_DIR / f"{safe_name}.json").resolve()
-    if not str(path).startswith(str(_EPISODES_DIR.resolve())):
+    path = (_NOVELS_DIR / f"{safe_name}.json").resolve()
+    if not str(path).startswith(str(_NOVELS_DIR.resolve())):
         return None
     return path
 
 
 @router.get("/")
-def list_episodes():
-    if not _EPISODES_DIR.is_dir():
-        return {"episodes": []}
+def list_novels():
+    if not _NOVELS_DIR.is_dir():
+        return {"novels": []}
     episodes = []
-    for f in sorted(_EPISODES_DIR.iterdir()):
-        if f.suffix != ".json":
+    for f in sorted(_NOVELS_DIR.iterdir()):
+        if not f.suffix == ".json":
             continue
         try:
             ep = _json.loads(f.read_text(encoding="utf-8"))
@@ -42,37 +42,37 @@ def list_episodes():
             episodes.append({"title": ep["title"], "file": f.name})
         except (_json.JSONDecodeError, OSError):
             pass
-    return {"episodes": episodes}
+    return {"novels": episodes}
 
 
 @router.get("/{title}")
-def get_episode(title: str):
+def get_novel(title: str):
     path = _safe_path(title)
     if path is None or not path.exists():
-        return {"error": "Episode not found"}
-    return {"episode": _json.loads(path.read_text(encoding="utf-8"))}
+        return {"error": "Novel not found"}
+    return {"novel": _json.loads(path.read_text(encoding="utf-8"))}
 
 
-class SaveEpisodeRequest(BaseModel):
-    episode: dict
+class SaveNovelRequest(BaseModel):
+    novel: dict
 
 
 @router.post("/")
-def save_episode(req: SaveEpisodeRequest):
-    _EPISODES_DIR.mkdir(parents=True, exist_ok=True)
-    title = req.episode.get("title", "untitled")
+def save_novel(req: SaveNovelRequest):
+    _NOVELS_DIR.mkdir(parents=True, exist_ok=True)
+    title = req.novel.get("title", "untitled")
     path = _safe_path(title)
     if path is None:
         return {"error": "Invalid title"}
-    path.write_text(_json.dumps(req.episode, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(_json.dumps(req.novel, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"status": "ok", "title": title}
 
 
 @router.delete("/{title}")
-def delete_episode(title: str):
+def delete_novel(title: str):
     path = _safe_path(title)
     if path is None or not path.exists():
-        return {"error": "Episode not found"}
+        return {"error": "Novel not found"}
     path.unlink()
     return {"status": "ok"}
 
@@ -191,11 +191,11 @@ def generate_episode_image(req: T2IRequest):
         return {"error": f"image generation failed: {e}", "prompt": img_prompt}
 
     filename = os.path.basename(img_path)
-    return {"prompt": img_prompt, "image_url": f"/api/episode/image/{filename}"}
+    return {"prompt": img_prompt, "image_url": f"/api/novel/image/{filename}"}
 
 
 @router.get("/image/{filename}")
-def get_episode_image(filename: str):
+def get_novel_image(filename: str):
     from def_kari.workers._t2i_generate import ASSET_DIR
     path = (ASSET_DIR / filename).resolve()
     if not str(path).startswith(str(ASSET_DIR.resolve())) or not path.exists():

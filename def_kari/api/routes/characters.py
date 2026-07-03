@@ -1,22 +1,28 @@
 """Character API routes."""
 
 import os
+import re
+from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 from def_kari.characters import load_profiles, get_character, list_character_choices
 
 router = APIRouter()
 
+_BASE = Path(__file__).parent.parent.parent.parent
 _CHAR_DIRS = [
-    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "..", "data", "public", "characters"),
-    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "..", "data", "private", "characters"),
+    _BASE / "data" / "public" / "characters",
+    _BASE / "data" / "private" / "characters",
 ]
+_SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 
 
-def _find_char_dir(character_id: str) -> str | None:
+def _find_char_dir(character_id: str) -> Path | None:
+    if not _SAFE_ID_RE.match(character_id):
+        return None
     for d in _CHAR_DIRS:
-        p = os.path.join(d, character_id)
-        if os.path.isdir(p):
+        p = d / character_id
+        if p.is_dir():
             return p
     return None
 
@@ -41,9 +47,9 @@ def get_character_detail(character_id: str):
 def get_character_icon(character_id: str):
     d = _find_char_dir(character_id)
     if d:
-        icon = os.path.join(d, "icon.png")
-        if os.path.exists(icon):
-            return FileResponse(icon, media_type="image/png")
+        icon = d / "icon.png"
+        if icon.exists():
+            return FileResponse(str(icon), media_type="image/png")
     return {"error": "Icon not found"}
 
 
@@ -51,7 +57,7 @@ def get_character_icon(character_id: str):
 def get_character_standing(character_id: str):
     d = _find_char_dir(character_id)
     if d:
-        standing = os.path.join(d, "standing.png")
-        if os.path.exists(standing):
-            return FileResponse(standing, media_type="image/png")
+        standing = d / "standing.png"
+        if standing.exists():
+            return FileResponse(str(standing), media_type="image/png")
     return {"error": "Standing image not found"}

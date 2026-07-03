@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import ChatTab from './components/ChatTab'
 import CharacterTab from './components/CharacterTab'
 import SessionTab from './components/SessionTab'
-import EpisodeTab from './components/EpisodeTab'
+import NovelTab from './components/NovelTab'
 import SettingsTab from './components/SettingsTab'
 import DebugTab from './components/DebugTab'
 import Sidebar from './components/Sidebar'
@@ -15,13 +15,13 @@ type BackendInfo = {
   default: string
 }
 
-type TabId = 'character' | 'chat' | 'session' | 'episode' | 'settings' | 'debug'
+type TabId = 'character' | 'chat' | 'session' | 'novel' | 'settings' | 'debug'
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'character', label: 'キャラクター', icon: '👤' },
   { id: 'chat', label: 'チャット', icon: '💬' },
   { id: 'session', label: 'セッション', icon: '🎭' },
-  { id: 'episode', label: 'エピソード', icon: '📖' },
+  { id: 'novel', label: 'ノベル', icon: '📖' },
   { id: 'settings', label: '設定', icon: '⚙️' },
   { id: 'debug', label: 'デバッグ', icon: '🐛' },
 ]
@@ -122,8 +122,8 @@ function App() {
           {activeTab === 'session' && (
             <SessionTab characters={characters} backend={selectedBackend} />
           )}
-          {activeTab === 'episode' && (
-            <EpisodeTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
+          {activeTab === 'novel' && (
+            <NovelTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
           )}
           {activeTab === 'debug' && <DebugTab />}
           {activeTab === 'settings' && (

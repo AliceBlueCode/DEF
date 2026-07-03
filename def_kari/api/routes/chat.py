@@ -1,7 +1,13 @@
 """Chat API routes."""
 
-from fastapi import APIRouter
+import os
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+def _debug_guard():
+    if os.environ.get("DEF_DEBUG_ENDPOINTS", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail="Not found")
 
 from def_kari.characters import load_profiles, get_character
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
@@ -110,6 +116,7 @@ def get_last_debug():
 
 @router.get("/force-rating")
 def get_force_rating():
+    _debug_guard()
     return _force_rating
 
 
@@ -120,9 +127,9 @@ class ForceRatingRequest(BaseModel):
 
 @router.post("/force-rating")
 def set_force_rating(req: ForceRatingRequest):
+    _debug_guard()
     global _force_rating
     if req.tag not in _FORCE_RATING_TAGS:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"invalid tag: {req.tag}")
     _force_rating = {"enabled": req.enabled, "tag": req.tag}
     return _force_rating

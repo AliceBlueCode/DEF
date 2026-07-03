@@ -1,7 +1,8 @@
 """Session API routes."""
 
 import random
-import time
+import secrets
+from collections import OrderedDict
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -12,7 +13,8 @@ from def_kari.llm.client import generate_structured_reply
 
 router = APIRouter()
 
-_sessions: dict[str, dict] = {}
+_MAX_SESSIONS = 100
+_sessions: OrderedDict[str, dict] = OrderedDict()
 
 
 class SessionStartRequest(BaseModel):
@@ -34,7 +36,7 @@ class SessionHumanMessage(BaseModel):
 
 @router.post("/start")
 def start_session(req: SessionStartRequest):
-    session_id = f"session_{int(time.time())}"
+    session_id = secrets.token_urlsafe(16)
     initiative = random.sample(req.character_ids, len(req.character_ids))
     profiles = load_profiles()
     name_map = {}
@@ -42,6 +44,8 @@ def start_session(req: SessionStartRequest):
         char = get_character(cid, profiles)
         name_map[cid] = char.get("name", cid) if char else cid
 
+    if len(_sessions) >= _MAX_SESSIONS:
+        _sessions.popitem(last=False)
     _sessions[session_id] = {
         "id": session_id,
         "initiative": initiative,
