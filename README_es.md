@@ -1,6 +1,6 @@
-# DEF(kari) — Plataforma Creativa de IA Multimodal
+# DEF(kari) — Persistent Character Platform
 
-[日本語版README はこちら »](README.md) | [English README »](README_en.md) | [繁體中文版 »](README_zh-TW.md) | [简体中文版 »](README_zh-CN.md) | [한국어 README »](README_ko.md)
+**[日本語 README »](README.md) | [English README »](README_en.md) | [繁體中文 »](README_zh-TW.md) | [简体中文 »](README_zh-CN.md) | [한국어 README »](README_ko.md)**
 
 > **Dialogue × Emotion × Fable**\
 > Con tus personajes, durante años, en cualquier lugar.
@@ -9,9 +9,54 @@
 
 ## ¿Qué es DEF(kari)?
 
-DEF(kari) es una plataforma creativa de IA local-first que integra generación de texto, voz e imagen.
+DEF(kari) es una Persistent Character Platform local-first que hace realidad la existencia duradera de los personajes.
+
+**El protagonista no es la IA. Es el personaje.**
+La IA está diseñada como el medio para expresar ese personaje.
 
 En lugar de confiar tu contenido creativo a los términos de servicio y políticas de contenido de servicios en la nube, DEF(kari) proporciona **la base para generar y mantener los personajes e historias que deseas, en tu propio entorno, con tus propias manos.**
+
+-----
+
+## Persistencia de personajes
+
+En DEF(kari), los personajes no son simplemente un historial de chat.
+
+Los personajes conservan:
+
+- Memorias
+- Personalidad
+- Emociones
+- Relaciones
+- Episodios
+- Imágenes y voz generadas
+
+y continúan como la misma presencia tras el reinicio, incluso en entornos diferentes.
+
+Por eso —
+Puedes continuar la conversación de ayer.
+Recuerdan lo que pasó el año pasado.
+Pueden recorrer juntos la historia.
+Y sin importar cuántos años pasen, pueden volver a encontrarse.
+
+-----
+
+## Tres experiencias
+
+### Chat — Construye una relación con tu personaje
+
+Amigo IA, amante, consejero o asistente.
+A través del diálogo uno a uno, acumulas tiempo compartido con tu personaje.
+
+### Session — Observa y únete al mundo donde viven tus personajes
+
+Disfruta de discusiones, debates, juego de roles e improvisación entre múltiples personajes.
+Puedes ser espectador o unirte como participante en la conversación.
+
+### TRPG — Evoluciona Session en un juego
+
+GMs, personajes de jugador y NPCs comparten la misma Persistencia de personajes, permitiendo campañas a largo plazo.
+Las relaciones construidas en aventuras pasadas se conectan directamente a la siguiente historia.
 
 -----
 
