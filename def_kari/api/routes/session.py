@@ -1,5 +1,6 @@
 """Session API routes."""
 
+import os
 import random
 import secrets
 from collections import OrderedDict
@@ -13,7 +14,7 @@ from def_kari.llm.client import generate_structured_reply
 
 router = APIRouter()
 
-_MAX_SESSIONS = 100
+_MAX_SESSIONS = int(os.environ.get("DEF_MAX_SESSIONS", "1000"))
 _sessions: OrderedDict[str, dict] = OrderedDict()
 
 
