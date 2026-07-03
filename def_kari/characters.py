@@ -100,6 +100,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         persona = f"{persona}\n口調: {speech_style}"
 
     appearance_tags = vr.get("appearance_tags") or vr.get("features") or ""
+    image_name_tags = vr.get("image_name_tags", "")
 
     dmc = bp.get("default_model_config", {})
 
@@ -108,6 +109,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "name_reading": bp.get("name_reading", {}),
         "player_type": bp.get("player_type", "ai"),
         "appearance_tags": appearance_tags,
+        "image_name_tags": image_name_tags,
         "persona_description": persona,
         "speech_style": speech_style,
         "voicevox_speaker_id": dmc.get("voicevox_speaker_id"),

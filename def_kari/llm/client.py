@@ -190,6 +190,18 @@ def _ensure_appearance_tags(parsed: dict, appearance_tags: str) -> dict:
     return parsed
 
 
+def _prepend_name_tags(parsed: dict, image_name_tags: str) -> dict:
+    """モデルがキャラクターを知っている場合の名前トリガーワードをプロンプト先頭に挿入する。"""
+    if not image_name_tags:
+        return parsed
+    name_tags = [t.strip() for t in image_name_tags.split(",") if t.strip()]
+    existing = [t.strip() for t in parsed.get("image_prompt_en", "").split(",") if t.strip()]
+    prepend = [t for t in name_tags if t not in existing]
+    if prepend:
+        parsed["image_prompt_en"] = ", ".join(prepend + existing)
+    return parsed
+
+
 def _call_llm(
     user_text: str,
     history: list[dict] | None = None,
@@ -248,6 +260,7 @@ def generate_structured_reply(
     """F-14のフォールバックチェーン(4段構成)を実行し、最終結果と各段階のログを返す。"""
     character = character or {}
     appearance_tags = character.get("appearance_tags", "")
+    image_name_tags = character.get("image_name_tags", "")
     quirks = quirks or {}
     attempts = []
 
@@ -271,14 +284,14 @@ def generate_structured_reply(
     ok, parsed, errors = _try_parse_and_validate(raw)
     attempts.append({"stage": "LLMリクエスト", "raw": raw, "errors": errors})
     if ok:
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     # 段1: 自動補正後の再パース
     fixed = _autofix(raw)
     ok, parsed, errors = _try_parse_and_validate(fixed)
     attempts.append({"stage": "段1. 自動補正後の再パース", "raw": fixed, "errors": errors})
     if ok:
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     # 段2: 補正パターン変更による再パース
     fallback_extract = re.sub(r"^[^{]*", "", raw, count=1)
@@ -287,7 +300,7 @@ def generate_structured_reply(
     ok, parsed, errors = _try_parse_and_validate(fallback_extract)
     attempts.append({"stage": "段2. 補正パターン変更による再パース", "raw": fallback_extract, "errors": errors})
     if ok:
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     # 段3: プレーンテキスト形式からの抽出
     plain_result = _try_parse_plain_format(raw)
@@ -295,7 +308,7 @@ def generate_structured_reply(
         ok, parsed, errors = plain_result
         attempts.append({"stage": "段3. プレーンテキスト形式からの抽出", "raw": raw, "errors": errors})
         if ok:
-            return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+            return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
     else:
         attempts.append({"stage": "段3. プレーンテキスト形式からの抽出", "raw": raw, "errors": ["プレーンテキスト形式に該当せず"]})
 
@@ -308,7 +321,7 @@ def generate_structured_reply(
             emotion = _estimate_emotion(dialogue)
         parsed = {"dialogue": dialogue, "emotion": emotion, "image_prompt_en": "", "tags": []}
         attempts.append({"stage": "段4. 生テキストをdialogueとして使用(最終安全網)", "raw": final_raw, "errors": []})
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     return {"success": False, "result": None, "attempts": attempts}
 
