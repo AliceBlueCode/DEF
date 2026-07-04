@@ -3,6 +3,7 @@
     "native_language": "ja",
     "nsfw_tolerance": "sfw",
     "model_type": "chat",
+    "context_length": 1048576,
     "max_tokens": 4096
   }
 }

@@ -1,6 +1,15 @@
 {
   "hf.co/mradermacher/DeepSeek-R1-Distill-Qwen-7B-Uncensored-i1-GGUF:Q6_K": {
     "native_language": "en",
-    "nsfw_tolerance": "nsfw"
+    "nsfw_tolerance": "nsfw",
+    "model_type": "chat",
+    "context_length": 128000,
+    "max_tokens": 2048,
+    "notes": "DeepSeek-R1 distill (Qwen7Bベース)。<think>...</think> タグで chain-of-thought を出力する。タグが閉じていない場合もある。英語で推論するため、日本語指示の遵守が弱い。",
+    "quirks": {
+      "json_capable": false,
+      "appends_meta_text": true,
+      "leaks_thinking": true
+    }
   }
 }

@@ -3,12 +3,15 @@
     "native_language": "en",
     "nsfw_tolerance": "nsfw",
     "model_type": "chat",
-    "max_tokens": 512,
+    "context_length": 32768,
+    "max_tokens": 2048,
+    "notes": "Qwen3系。/think トークンで推論モードを有効化できる。英語で内部推論してから回答する傾向があり、推論内容が dialogue フィールドに漏れる場合がある。",
     "quirks": {
       "json_capable": false,
       "appends_meta_text": true,
       "outputs_url_in_prompt": false,
-      "emotion_in_text": false
+      "emotion_in_text": false,
+      "leaks_thinking": true
     },
     "generation_params": {
       "temperature": 0.8,

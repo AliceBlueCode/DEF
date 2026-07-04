@@ -243,7 +243,14 @@ def _call_llm(
         options = LIGHTWEIGHT_OPTIONS
     else:
         from def_kari.models.registry import get_llm_profile
-        _profile = get_llm_profile(model)
+        _resolved_model = model
+        if not _resolved_model and backend == "textgen_webui":
+            try:
+                from def_kari.llm.adapters import tgw as _tgw
+                _resolved_model = _tgw.get_current_model()
+            except Exception:
+                pass
+        _profile = get_llm_profile(_resolved_model)
         _mt = _profile.get("max_tokens", 512)
         _gen_params = _profile.get("generation_params", {})
         print(f"[LLM] model={model!r}, profile_max_tokens={_mt}, gen_params={_gen_params}")
@@ -420,13 +427,31 @@ _PLAIN_IMAGE_PROMPT_RE = re.compile(r"image_prompt_en\s*[:=]\s*(.+)", re.IGNOREC
 _PLAIN_TAGS_RE = re.compile(r"tags\s*[:=]\s*\[([^\]]*)\]", re.IGNORECASE)
 
 
+_PLAIN_DIALOGUE_FIELD_RE = re.compile(
+    r'["\']?dialogues?["\']?\s*:\s*["\']?(.*?)(?=\s*\n\s*["\']?(?:emotion|image_prompt|tags|safety_tags)["\']?\s*:|\Z)',
+    re.DOTALL | re.IGNORECASE,
+)
+_PLAIN_EMOTION_FIELD_RE = re.compile(
+    r'["\']?emotions?["\']?\s*:\s*["\']?([\w_]+)["\']?',
+    re.IGNORECASE,
+)
+
+
 def _try_parse_plain_format(raw: str):
     m_img = _PLAIN_IMAGE_PROMPT_RE.search(raw)
-    if not m_img and "<|im_end|>" not in raw:
+    m_dlg = _PLAIN_DIALOGUE_FIELD_RE.search(raw)
+    if not m_img and "<|im_end|>" not in raw and not m_dlg:
         return None
 
-    dialogue = raw.split("<|im_end|>")[0].strip() if "<|im_end|>" in raw else raw.strip()
+    if m_dlg:
+        dialogue = m_dlg.group(1).strip().strip('"').strip("'")
+    elif "<|im_end|>" in raw:
+        dialogue = raw.split("<|im_end|>")[0].strip()
+    else:
+        dialogue = raw.strip()
     image_prompt_en = m_img.group(1).strip().strip('"').strip("'") if m_img else ""
+    m_emo = _PLAIN_EMOTION_FIELD_RE.search(raw)
+    emotion = m_emo.group(1).strip() if m_emo else "neutral"
 
     tags = []
     m_tags = _PLAIN_TAGS_RE.search(raw)
@@ -435,7 +460,7 @@ def _try_parse_plain_format(raw: str):
 
     parsed = {
         "dialogue": dialogue,
-        "emotion": "neutral",
+        "emotion": emotion,
         "image_prompt_en": image_prompt_en,
         "tags": tags,
     }

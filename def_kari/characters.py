@@ -108,6 +108,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "name": bp.get("name", character_id or ""),
         "name_reading": bp.get("name_reading", {}),
         "player_type": bp.get("player_type", "ai"),
+        "image_color": bp.get("image_color"),
         "appearance_tags": appearance_tags,
         "image_name_tags": image_name_tags,
         "persona_description": persona,

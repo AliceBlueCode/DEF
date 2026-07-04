@@ -3,7 +3,16 @@
     "native_language": "ja",
     "nsfw_tolerance": "sfw",
     "model_type": "chat",
+    "context_length": 262144,
     "max_tokens": 4096,
+    "notes": "Qwen3.6系 MoE。/think トークンで推論モードを有効化できる。英語で内部推論してから回答する傾向があり、推論内容が dialogue フィールドに漏れる場合がある。大型MoEのためレイテンシが高め。",
+    "quirks": {
+      "json_capable": true,
+      "appends_meta_text": false,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false,
+      "leaks_thinking": true
+    },
     "generation_params": {
       "temperature": 0.7,
       "top_p": 0.9,

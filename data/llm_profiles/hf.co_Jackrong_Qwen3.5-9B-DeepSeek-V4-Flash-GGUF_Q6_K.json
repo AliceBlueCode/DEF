@@ -1,6 +1,8 @@
 {
   "hf.co/Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF:Q6_K": {
     "native_language": "ja",
-    "nsfw_tolerance": "sfw"
+    "nsfw_tolerance": "sfw",
+    "context_length": 262144,
+    "max_tokens": 2048
   }
 }

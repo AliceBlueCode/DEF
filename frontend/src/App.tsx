@@ -8,7 +8,7 @@ import DebugTab from './components/DebugTab'
 import Sidebar from './components/Sidebar'
 import './App.css'
 
-type Character = { id: string; name: string }
+type Character = { id: string; name: string; image_color?: string }
 type BackendInfo = {
   backends: string[]
   labels: Record<string, string>
@@ -131,7 +131,7 @@ function App() {
             <CharacterTab characters={characters} selectedChar={selectedChar} onCharChange={setSelectedChar} onHistoryCleared={() => setChatReloadTrigger(t => t + 1)} ttsBackend={selectedTtsBackend} />
           </div>
           <div style={{ display: activeTab === 'session' ? 'contents' : 'none' }}>
-            <SessionTab characters={characters} backend={selectedBackend} />
+            <SessionTab characters={characters} backend={selectedBackend} ttsBackend={selectedTtsBackend} />
           </div>
           <div style={{ display: activeTab === 'novel' ? 'contents' : 'none' }}>
             <NovelTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} ttsBackend={selectedTtsBackend} selectedChar={selectedChar} llmBackends={llmBackends} />

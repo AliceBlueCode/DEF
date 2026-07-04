@@ -122,6 +122,7 @@ def build_system_prompt(
 ) -> str:
     quirks = quirks or {}
     json_capable = quirks.get("json_capable", True)
+    leaks_thinking = quirks.get("leaks_thinking", False)
     _lang_name = _LANG_LABELS.get(user_language, user_language)
     _is_ja = user_language == "ja"
 
@@ -131,11 +132,15 @@ def build_system_prompt(
         _app_label = _APPEARANCE_LABEL.get(user_language, _APPEARANCE_LABEL["en"])
         parts.append(f"{_app_label}: {appearance_tags}")
 
-    parts.append(
-        f"【言語ルール】応答は必ず{_lang_name}で行うこと。他の言語に切り替えてはならない。"
-        if _is_ja else
-        f"[Language Rule] You MUST respond in {_lang_name}. Do NOT switch to any other language."
-    )
+    if _is_ja:
+        _lang_rule = f"【言語ルール】応答は必ず{_lang_name}で行うこと。他の言語に切り替えてはならない。"
+        if leaks_thinking:
+            _lang_rule += "\n思考プロセス・推論過程・メタ的なコメントを出力に含めてはならない。dialogue フィールドには発言内容のみを書くこと。"
+    else:
+        _lang_rule = f"[Language Rule] You MUST respond in {_lang_name}. Do NOT switch to any other language."
+        if leaks_thinking:
+            _lang_rule += "\nDo NOT include your reasoning process, internal thoughts, or meta-commentary in the output. Write only the spoken dialogue in the dialogue field."
+    parts.append(_lang_rule)
 
     rating_inst = _build_rating_instruction(allowed_sexual, allowed_violence, user_language)
     if rating_inst:

@@ -54,6 +54,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   const [allowedSexual, setAllowedSexual] = useState<string[]>(['general'])
   const [allowedViolence, setAllowedViolence] = useState<string[]>(['general'])
   const [charColor, setCharColor] = useState('')
+  const [userColor, setUserColor] = useState('#F0F8FF')
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const characterGreetingRef = useRef(true)
@@ -63,12 +64,22 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
 
   useEffect(() => { messagesRef.current = messages }, [messages])
 
+  const [standingVisible, setStandingVisible] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/characters/character_i_001/raw-profile')
+      .then(r => r.json())
+      .then(data => { if (data.profile?.image_color) setUserColor(data.profile.image_color) })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (!selectedChar) { setCharColor(''); return }
     fetch(`/api/characters/${selectedChar}/raw-profile`)
       .then(r => r.json())
       .then(data => setCharColor((data.profile?.image_color as string) || ''))
       .catch(() => setCharColor(''))
+    setStandingVisible(true)
   }, [selectedChar])
 
   useEffect(() => {
@@ -457,8 +468,19 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   const charName = characters.find(c => c.id === selectedChar)?.name || ''
   const iconUrl = selectedChar ? `/api/characters/${selectedChar}/icon` : ''
 
+  const standingUrl = selectedChar ? `/api/characters/${selectedChar}/standing` : ''
+
   return (
     <div className="tab-content chat-tab">
+      <div className="chat-body">
+        {standingVisible && standingUrl && (
+          <img
+            src={standingUrl}
+            alt=""
+            className="chat-standing"
+            onError={() => setStandingVisible(false)}
+          />
+        )}
       <div className="chat-area">
         {hasMore && (
           <div className="load-more-wrap">
@@ -472,11 +494,29 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
             {m.role === 'assistant' && iconUrl && (
               <img src={iconUrl} alt="" className="avatar" />
             )}
-            <div className="message-body" style={m.role === 'assistant' && charColor ? { background: charColor } : undefined}>
-              <div className="message-sender">
-                {m.role === 'user' ? 'あなた' : charName}
-                {m.emotion && m.emotion !== 'neutral' && (
-                  <span className="emotion"> ({m.emotion})</span>
+            <div className="message-body" style={
+              m.role === 'assistant' && charColor
+                ? { background: charColor + '33', borderLeft: `3px solid ${charColor}` }
+                : m.role === 'user'
+                  ? { background: userColor + '33', borderRight: `3px solid ${userColor}`, minWidth: '200px' }
+                  : undefined
+            }>
+              <div className="message-header">
+                <div
+                  className="message-sender"
+                  style={
+                    m.role === 'assistant' && charColor ? { color: charColor }
+                    : m.role === 'user' ? { color: userColor }
+                    : undefined
+                  }
+                >
+                  {m.role === 'user' ? 'あなた' : charName}
+                  {m.emotion && m.emotion !== 'neutral' && (
+                    <span className="emotion"> ({m.emotion})</span>
+                  )}
+                </div>
+                {m.audioUrl && (
+                  <audio key={m.audioUrl} controls autoPlay={!!m.autoPlayAudio} src={m.audioUrl} className="chat-msg-audio" />
                 )}
               </div>
               {(() => {
@@ -497,13 +537,8 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
                         <button className="turn-btn" onClick={() => setMessages(prev => prev.map((msg, j) => j === i ? { ...msg, isRevealed: false } : msg))}>隠す</button>
                       </div>
                     )}
-                    {/* 1. LLM テキスト */}
                     <div className="message-text">{m.content}</div>
-                    {/* 2. TTS 音声 */}
-                    {m.audioUrl && (
-                      <audio key={m.audioUrl} controls autoPlay={!!m.autoPlayAudio} src={m.audioUrl} className="audio-player" />
-                    )}
-                    {/* 3. T2I 画像 */}
+                    {/* T2I 画像 */}
                     {m.imageStatus === 'generating' && (
                       <div className="t2i-status">🎨 生成中...</div>
                     )}
@@ -557,6 +592,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
           </div>
         )}
         <div ref={chatEndRef} />
+      </div>
       </div>
 
       <div className="input-area">

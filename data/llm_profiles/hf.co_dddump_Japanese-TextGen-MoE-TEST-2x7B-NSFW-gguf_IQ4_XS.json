@@ -1,6 +1,8 @@
 {
   "hf.co/dddump/Japanese-TextGen-MoE-TEST-2x7B-NSFW-gguf:IQ4_XS": {
     "native_language": "ja",
-    "nsfw_tolerance": "hentai"
+    "nsfw_tolerance": "hentai",
+    "context_length": 32768,
+    "max_tokens": 1024
   }
 }

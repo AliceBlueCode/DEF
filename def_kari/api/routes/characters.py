@@ -35,7 +35,12 @@ def _find_char_dir(character_id: str) -> Path | None:
 def list_characters():
     profiles = load_profiles()
     choices = list_character_choices(profiles)
-    return {"characters": [{"id": cid, "name": name} for cid, name in choices]}
+    result = []
+    for cid, name in choices:
+        char = get_character(cid, profiles)
+        image_color = char.get("image_color") if char else None
+        result.append({"id": cid, "name": name, "image_color": image_color})
+    return {"characters": result}
 
 
 @router.get("/{character_id}")

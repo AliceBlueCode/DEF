@@ -85,6 +85,20 @@ def load_model(name: str) -> str | None:
         return str(e)
 
 
+def get_current_model() -> str:
+    """現在 TGW にロードされているモデル名を返す。取得失敗時は空文字。"""
+    try:
+        resp = requests.get(
+            f"{TEXTGEN_WEBUI_URL}/internal/model/info", headers=_headers(), timeout=5
+        )
+        if resp.ok:
+            name = resp.json().get("model_name", "")
+            return name if name and name != "None" else ""
+    except requests.RequestException:
+        pass
+    return ""
+
+
 def list_models() -> list[str]:
     # 全モデル一覧を /internal/model/list から取得
     try:
