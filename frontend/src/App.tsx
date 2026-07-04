@@ -113,20 +113,22 @@ function App() {
             </div>
           </div>
 
-          {activeTab === 'chat' && (
-            <ChatTab characters={characters} selectedChar={selectedChar} onCharChange={setSelectedChar} backend={selectedBackend} />
-          )}
-          {activeTab === 'character' && (
+          <div style={{ display: activeTab === 'chat' ? 'contents' : 'none' }}>
+            <ChatTab characters={characters} selectedChar={selectedChar} onCharChange={setSelectedChar} backend={selectedBackend} ttsBackend={selectedTtsBackend} t2iBackend={selectedT2iBackend} />
+          </div>
+          <div style={{ display: activeTab === 'character' ? 'contents' : 'none' }}>
             <CharacterTab selectedChar={selectedChar} />
-          )}
-          {activeTab === 'session' && (
+          </div>
+          <div style={{ display: activeTab === 'session' ? 'contents' : 'none' }}>
             <SessionTab characters={characters} backend={selectedBackend} />
-          )}
-          {activeTab === 'novel' && (
+          </div>
+          <div style={{ display: activeTab === 'novel' ? 'contents' : 'none' }}>
             <NovelTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
-          )}
-          {activeTab === 'debug' && <DebugTab />}
-          {activeTab === 'settings' && (
+          </div>
+          <div style={{ display: activeTab === 'debug' ? 'contents' : 'none' }}>
+            <DebugTab />
+          </div>
+          <div style={{ display: activeTab === 'settings' ? 'contents' : 'none' }}>
             <SettingsTab
               llmBackend={selectedBackend}
               onLlmBackendChange={setSelectedBackend}
@@ -139,7 +141,7 @@ function App() {
               theme={theme}
               onThemeToggle={toggleTheme}
             />
-          )}
+          </div>
         </div>
       </div>
     </div>

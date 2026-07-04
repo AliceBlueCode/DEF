@@ -314,6 +314,28 @@ def _save_env_file(updates: dict[str, str]) -> None:
     _ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
+@router.get("/launch-backend")
+def launch_backend(id: str = ""):
+    from def_kari import backends as _be
+    _map = {
+        "voicevox":      (_be.is_voicevox_running, _be.start_voicevox),
+        "irodori":       (_be.is_irodori_running,  _be.start_irodori),
+        "kokoro":        (_be.is_kokoro_running,   _be.start_kokoro),
+        "textgen_webui": (_be.is_tgw_running,      _be.start_tgw),
+        "a1111":         (_be.is_a1111_running,     _be.start_a1111),
+        "comfyui":       (_be.is_comfyui_running,   _be.start_comfyui),
+    }
+    if id not in _map:
+        return {"status": "unknown"}
+    is_running, start = _map[id]
+    if is_running():
+        return {"status": "already_running"}
+    err = start()
+    if err:
+        return {"status": "error", "message": err}
+    return {"status": "launched"}
+
+
 @router.get("/backend-dirs")
 def get_backend_dirs():
     env = _load_env_file()

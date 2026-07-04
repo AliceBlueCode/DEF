@@ -613,6 +613,12 @@
   color: #a8d8f0;
 }
 
+.tts-launch-msg {
+  font-size: 0.82em;
+  color: #a8d8f0;
+  margin-top: 6px;
+}
+
 .apikey-help {
   font-size: 0.8em;
   color: #666;
@@ -1507,6 +1513,24 @@
 .audio-player {
   height: 28px;
   max-width: 200px;
+}
+
+.t2i-status {
+  font-size: 0.82em;
+  color: #a0a0c0;
+  margin-top: 6px;
+}
+.t2i-error {
+  color: #e08080;
+}
+
+.generated-image {
+  display: block;
+  max-width: 320px;
+  max-height: 480px;
+  border-radius: 6px;
+  margin-top: 8px;
+  border: 1px solid rgba(128,128,128,0.3);
 }
 
 .input-area {

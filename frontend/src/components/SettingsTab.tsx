@@ -98,6 +98,9 @@ export default function SettingsTab({
   const [showHf, setShowHf] = useState(false)
   const [appSettings, setAppSettings] = useState<Record<string, unknown>>({})
   const [appVersion, setAppVersion] = useState('')
+  const [llmLaunchMsg, setLlmLaunchMsg] = useState('')
+  const [ttsLaunchMsg, setTtsLaunchMsg] = useState('')
+  const [t2iLaunchMsg, setT2iLaunchMsg] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/version')
@@ -148,6 +151,25 @@ export default function SettingsTab({
     return (key in appSettings ? appSettings[key] : def) as T
   }, [appSettings])
 
+  const LOCAL_BACKENDS: Record<string, string[]> = {
+    llm: ['textgen_webui'],
+    tts: ['voicevox', 'kokoro', 'irodori'],
+    t2i: ['a1111', 'comfyui'],
+  }
+
+  const launchBackend = async (id: string, setMsg: (m: string) => void) => {
+    setMsg('起動確認中...')
+    try {
+      const res = await fetch(`/api/settings/launch-backend?id=${id}`)
+      const data = await res.json()
+      if (data.status === 'already_running') setMsg('✓ 起動中')
+      else if (data.status === 'launched') setMsg('✓ 起動しました')
+      else if (data.status === 'error') setMsg(`✗ ${data.message || 'エラー'}`)
+      else setMsg('')
+    } catch { setMsg('✗ 接続エラー') }
+    setTimeout(() => setMsg(''), 5000)
+  }
+
   const set = useCallback(async (key: string, value: unknown) => {
     setAppSettings(prev => ({ ...prev, [key]: value }))
     fetch('/api/settings/', {
@@ -176,12 +198,18 @@ export default function SettingsTab({
       <div className="settings-section">
         <h3>LLM バックエンド</h3>
         {llmBackends && (
-          <select value={llmBackend} onChange={e => onLlmBackendChange(e.target.value)}>
+          <select value={llmBackend} onChange={async e => {
+            const b = e.target.value
+            onLlmBackendChange(b)
+            if (LOCAL_BACKENDS.llm.includes(b)) launchBackend(b, setLlmLaunchMsg)
+            else setLlmLaunchMsg('')
+          }}>
             {llmBackends.backends.map(b => (
               <option key={b} value={b}>{llmBackends.labels[b] || b}</option>
             ))}
           </select>
         )}
+        {llmLaunchMsg && <div className="tts-launch-msg">{llmLaunchMsg}</div>}
         {llmModels.length > 0 && (
           <div className="settings-row" style={{ marginTop: 8 }}>
             <label>モデル</label>
@@ -202,24 +230,36 @@ export default function SettingsTab({
 
       <div className="settings-section">
         <h3>TTS バックエンド</h3>
-        <select value={ttsBackend} onChange={e => onTtsBackendChange(e.target.value)}>
+        <select value={ttsBackend} onChange={async e => {
+          const b = e.target.value
+          onTtsBackendChange(b)
+          if (LOCAL_BACKENDS.tts.includes(b)) launchBackend(b, setTtsLaunchMsg)
+          else setTtsLaunchMsg('')
+        }}>
           <option value="voicevox">VOICEVOX (ローカル)</option>
           <option value="kokoro">Kokoro TTS (ローカル)</option>
           <option value="irodori">Irodori-TTS (ローカル)</option>
           <option value="gemini">Gemini TTS API</option>
         </select>
+        {ttsLaunchMsg && <div className="tts-launch-msg">{ttsLaunchMsg}</div>}
       </div>
 
       {/* ── T2I バックエンド ── */}
       <div className="settings-section">
         <h3>T2I バックエンド</h3>
         {t2iBackends && (
-          <select value={t2iBackend} onChange={e => onT2iBackendChange(e.target.value)}>
+          <select value={t2iBackend} onChange={async e => {
+            const b = e.target.value
+            onT2iBackendChange(b)
+            if (LOCAL_BACKENDS.t2i.includes(b)) launchBackend(b, setT2iLaunchMsg)
+            else setT2iLaunchMsg('')
+          }}>
             {t2iBackends.backends.map(b => (
               <option key={b} value={b}>{t2iBackends.labels[b] || b}</option>
             ))}
           </select>
         )}
+        {t2iLaunchMsg && <div className="tts-launch-msg">{t2iLaunchMsg}</div>}
         {t2iModels.length > 0 && (
           <div className="settings-row" style={{ marginTop: 8 }}>
             <label>モデル</label>

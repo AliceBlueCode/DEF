@@ -90,33 +90,34 @@ def _civitai_generate(
     if not model_air:
         raise RuntimeError("Civitaiモデル(AIR形式)が指定されていません。")
 
-    air_parts = model_air.split(":")
-    ecosystem = air_parts[2] if len(air_parts) > 2 and air_parts[:2] == ["urn", "air"] else "sd1"
-    raw_ecosystem = ecosystem
-    ecosystem = _load_ecosystem_map().get(ecosystem, ecosystem)
-    if raw_ecosystem != ecosystem and model_air.startswith("urn:air:"):
-        model_air = model_air.replace(f"urn:air:{raw_ecosystem}:", f"urn:air:{ecosystem}:", 1)
-
-    image_input = {
-        "engine": "sdcpp",
-        "ecosystem": ecosystem,
-        "operation": "createImage",
-        "model": model_air,
+    params: dict = {
         "prompt": prompt,
         "negativePrompt": negative_prompt,
         "width": width,
         "height": height,
-        "cfgScale": cfg_scale,
         "steps": steps,
-        "quantity": 1,
+        "cfgScale": cfg_scale,
+        "scheduler": "EulerA",
+        "clipSkip": 2,
     }
     if seed >= 0:
-        image_input["seed"] = seed
+        params["seed"] = seed
+
+    image_input = {
+        "model": model_air,
+        "params": params,
+        "quantity": 1,
+    }
 
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
-    resp = requests.post(f"{CIVITAI_URL}?wait=60", json={"steps": [{"$type": "imageGen", "input": image_input}]}, headers=headers, timeout=90)
+    payload = {"steps": [{"$type": "imageGen", "input": image_input}]}
+    print(f"[CIVITAI] POST {CIVITAI_URL} model={model_air}")
+    resp = requests.post(f"{CIVITAI_URL}?wait=true", json=payload, headers=headers, timeout=120)
+    if not resp.ok:
+        print(f"[CIVITAI] {resp.status_code}: {resp.text[:500]}")
     resp.raise_for_status()
     workflow = resp.json()
+    print(f"[CIVITAI] response status={workflow.get('status')} id={workflow.get('id')}")
 
     elapsed = 0
     while workflow.get("status") not in ("succeeded", "failed", "canceled"):
@@ -133,10 +134,13 @@ def _civitai_generate(
 
     image_url = None
     for step in workflow.get("steps", []):
-        for img in step.get("output", {}).get("images", []):
+        output = step.get("output") or {}
+        for img in output.get("images", []):
             if img.get("url"):
                 image_url = img["url"]
                 break
+        if image_url:
+            break
 
     if not image_url:
         raise RuntimeError("Civitai応答に画像URLがありません。")

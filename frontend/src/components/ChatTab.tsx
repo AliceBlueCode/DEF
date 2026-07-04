@@ -6,6 +6,9 @@ type Message = {
   content: string
   emotion?: string
   audioUrl?: string
+  imageUrl?: string
+  imageStatus?: 'generating' | 'error'
+  imageError?: string
 }
 
 type Props = {
@@ -13,13 +16,26 @@ type Props = {
   selectedChar: string
   onCharChange: (id: string) => void
   backend: string
+  ttsBackend: string
+  t2iBackend: string
 }
 
-export default function ChatTab({ characters, selectedChar, onCharChange, backend }: Props) {
+export default function ChatTab({ characters, selectedChar, onCharChange, backend, ttsBackend, t2iBackend }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [ttsEnabled, setTtsEnabled] = useState(true)
   const chatEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    fetch('/api/settings/')
+      .then(r => r.json())
+      .then(data => {
+        const s = data.settings || {}
+        if ('tts_enabled' in s) setTtsEnabled(!!s.tts_enabled)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     setMessages([])
@@ -28,6 +44,54 @@ export default function ChatTab({ characters, selectedChar, onCharChange, backen
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const playTTS = async (text: string, index: number): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/tts/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, character_id: selectedChar, backend: ttsBackend }),
+      })
+      if (!res.ok) return null
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      setMessages(prev =>
+        prev.map((m, i) => (i === index ? { ...m, audioUrl: url } : m))
+      )
+      return url
+    } catch (e) {
+      console.error('TTS error:', e)
+      return null
+    }
+  }
+
+  const generateImage = async (prompt: string, index: number) => {
+    if (!t2iBackend) return
+    setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageStatus: 'generating' } : m))
+    try {
+      const res = await fetch('/api/t2i/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, backend: t2iBackend }),
+      })
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const data = await res.json()
+        const msg = data.error || 'T2I生成失敗'
+        setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageStatus: 'error', imageError: msg } : m))
+        return
+      }
+      if (!res.ok) {
+        setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageStatus: 'error', imageError: `HTTP ${res.status}` } : m))
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageUrl: url, imageStatus: undefined } : m))
+    } catch (e) {
+      setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageStatus: 'error', imageError: String(e) } : m))
+    }
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return
@@ -48,34 +112,23 @@ export default function ChatTab({ characters, selectedChar, onCharChange, backen
         }),
       })
       const data = await res.json()
-      setMessages(prev => [...prev, {
+      const assistantMsg: Message = {
         role: 'assistant',
         content: data.text || '(no response)',
         emotion: data.emotion,
-      }])
+      }
+      const assistantIdx = messages.length + 1
+      setMessages(prev => [...prev, assistantMsg])
+      if (ttsEnabled && data.text) {
+        playTTS(data.text, assistantIdx)
+      }
+      if (data.image_prompt_en && t2iBackend) {
+        generateImage(data.image_prompt_en, assistantIdx)
+      }
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])
     } finally {
       setLoading(false)
-    }
-  }
-
-  const playTTS = async (text: string, index: number) => {
-    try {
-      const res = await fetch('/api/tts/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, character_id: selectedChar }),
-      })
-      if (!res.ok) return
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      setMessages(prev =>
-        prev.map((m, i) => (i === index ? { ...m, audioUrl: url } : m))
-      )
-      new Audio(url).play()
-    } catch (e) {
-      console.error('TTS error:', e)
     }
   }
 
@@ -103,10 +156,21 @@ export default function ChatTab({ characters, selectedChar, onCharChange, backen
                 )}
               </div>
               <div className="message-text">{m.content}</div>
+              {m.imageStatus === 'generating' && (
+                <div className="t2i-status">🎨 生成中...</div>
+              )}
+              {m.imageStatus === 'error' && (
+                <div className="t2i-status t2i-error">⚠ {m.imageError}</div>
+              )}
+              {m.imageUrl && (
+                <img src={m.imageUrl} alt="" className="generated-image" />
+              )}
               {m.role === 'assistant' && (
                 <div className="message-actions">
-                  <button className="tts-btn" onClick={() => playTTS(m.content, i)}>🔊</button>
-                  {m.audioUrl && <audio controls src={m.audioUrl} className="audio-player" />}
+                  {m.audioUrl
+                    ? <audio key={m.audioUrl} controls autoPlay src={m.audioUrl} className="audio-player" />
+                    : <button className="tts-btn" onClick={() => playTTS(m.content, i)}>🔊</button>
+                  }
                 </div>
               )}
             </div>
