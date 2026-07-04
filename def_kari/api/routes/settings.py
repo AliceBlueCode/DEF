@@ -149,3 +149,200 @@ def delete_api_key_route(service: str):
     delete_api_key(service)
     os.environ.pop(env_map[service], None)
     return {"status": "ok"}
+
+
+_CIVITAI_MODELS_PATH = _Path(__file__).parent.parent.parent.parent / "data" / "civitai_models.json"
+_LLM_PROFILES_DIR = _Path(__file__).parent.parent.parent.parent / "data" / "llm_profiles"
+
+
+@router.get("/llm-profile")
+def get_llm_profile(model: str = ""):
+    if not model:
+        return {"profile": {}}
+    from def_kari.models.registry import get_llm_profile as _get, DEFAULT_QUIRKS
+    return {"profile": _get(model), "default_quirks": DEFAULT_QUIRKS}
+
+
+class SaveLlmProfileRequest(BaseModel):
+    model: str
+    profile: dict
+
+
+@router.post("/llm-profile")
+def save_llm_profile(req: SaveLlmProfileRequest):
+    if not req.model:
+        return {"error": "model required"}
+    from def_kari.models.registry import _save_profile
+    _save_profile(req.model, req.profile)
+    return {"status": "ok"}
+
+
+@router.get("/civitai-models")
+def get_civitai_models():
+    if not _CIVITAI_MODELS_PATH.exists():
+        return {"models": []}
+    try:
+        return {"models": _json.loads(_CIVITAI_MODELS_PATH.read_text(encoding="utf-8"))}
+    except Exception:
+        return {"models": []}
+
+
+class AddCivitaiModelRequest(BaseModel):
+    label: str
+    model_air: str
+
+
+@router.post("/civitai-models")
+def add_civitai_model(req: AddCivitaiModelRequest):
+    models = get_civitai_models()["models"]
+    if any(m["model_air"] == req.model_air for m in models):
+        return {"status": "already_exists"}
+    models.append({"label": req.label or req.model_air, "model_air": req.model_air})
+    _CIVITAI_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _CIVITAI_MODELS_PATH.write_text(_json.dumps(models, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"status": "ok"}
+
+
+@router.delete("/civitai-models/{index}")
+def delete_civitai_model(index: int):
+    models = get_civitai_models()["models"]
+    if index < 0 or index >= len(models):
+        return {"error": "out of range"}
+    models.pop(index)
+    _CIVITAI_MODELS_PATH.write_text(_json.dumps(models, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"status": "ok"}
+
+
+_HF_MODELS_PATH = _Path(__file__).parent.parent.parent.parent / "data" / "hf_models.json"
+
+_HF_DEFAULT_MODELS = [
+    {"label": "FLUX.1-schnell", "model_id": "black-forest-labs/FLUX.1-schnell"},
+    {"label": "Stable Diffusion XL", "model_id": "stabilityai/stable-diffusion-xl-base-1.0"},
+    {"label": "Stable Diffusion 2.1", "model_id": "stabilityai/stable-diffusion-2-1"},
+]
+
+
+def _load_hf_models() -> list[dict]:
+    if not _HF_MODELS_PATH.exists():
+        return list(_HF_DEFAULT_MODELS)
+    try:
+        return _json.loads(_HF_MODELS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return list(_HF_DEFAULT_MODELS)
+
+
+def _save_hf_models(models: list[dict]) -> None:
+    _HF_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _HF_MODELS_PATH.write_text(_json.dumps(models, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@router.get("/hf-models")
+def get_hf_models():
+    return {"models": _load_hf_models()}
+
+
+class AddHfModelRequest(BaseModel):
+    label: str
+    model_id: str
+
+
+@router.post("/hf-models")
+def add_hf_model(req: AddHfModelRequest):
+    models = _load_hf_models()
+    if any(m["model_id"] == req.model_id for m in models):
+        return {"status": "already_exists"}
+    models.append({"label": req.label or req.model_id, "model_id": req.model_id})
+    _save_hf_models(models)
+    return {"status": "ok"}
+
+
+@router.delete("/hf-models/{index}")
+def delete_hf_model(index: int):
+    models = _load_hf_models()
+    if index < 0 or index >= len(models):
+        return {"error": "out of range"}
+    models.pop(index)
+    _save_hf_models(models)
+    return {"status": "ok"}
+
+
+_BACKEND_DIR_DEFS = [
+    {"id": "textgen_webui", "label": "TextGen WebUI (TGW)", "dir_env": "TEXTGEN_WEBUI_DIR", "url_env": None,              "default_url": None},
+    {"id": "voicevox",      "label": "VOICEVOX",            "dir_env": "VOICEVOX_DIR",      "url_env": "VOICEVOX_URL",    "default_url": "http://127.0.0.1:50021"},
+    {"id": "irodori",       "label": "Irodori-TTS",         "dir_env": "IRODORI_TTS_DIR",   "url_env": "IRODORI_TTS_URL", "default_url": "http://127.0.0.1:8088"},
+    {"id": "kokoro",        "label": "Kokoro TTS",          "dir_env": "KOKORO_TTS_DIR",    "url_env": "KOKORO_TTS_URL",  "default_url": "http://127.0.0.1:8766"},
+    {"id": "a1111",         "label": "A1111 (SD WebUI)",    "dir_env": "A1111_DIR",         "url_env": "A1111_URL",       "default_url": "http://localhost:7860"},
+    {"id": "comfyui",       "label": "ComfyUI",             "dir_env": "COMFYUI_DIR",       "url_env": "COMFYUI_URL",     "default_url": "http://127.0.0.1:8188"},
+]
+
+_ENV_PATH = _Path(__file__).parent.parent.parent.parent / ".env"
+
+
+def _load_env_file() -> dict[str, str]:
+    result: dict[str, str] = {}
+    if not _ENV_PATH.exists():
+        return result
+    for line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        result[k.strip()] = v.strip()
+    return result
+
+
+def _save_env_file(updates: dict[str, str]) -> None:
+    existing_lines = []
+    if _ENV_PATH.exists():
+        existing_lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+    written_keys: set[str] = set()
+    new_lines = []
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            new_lines.append(line)
+            continue
+        k = stripped.partition("=")[0].strip()
+        if k in updates:
+            new_lines.append(f"{k}={updates[k]}")
+            written_keys.add(k)
+        else:
+            new_lines.append(line)
+    for k, v in updates.items():
+        if k not in written_keys:
+            new_lines.append(f"{k}={v}")
+    _ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+@router.get("/backend-dirs")
+def get_backend_dirs():
+    env = _load_env_file()
+    values = {}
+    for b in _BACKEND_DIR_DEFS:
+        if b["dir_env"]:
+            values[b["dir_env"]] = os.environ.get(b["dir_env"], env.get(b["dir_env"], ""))
+        if b["url_env"]:
+            values[b["url_env"]] = os.environ.get(b["url_env"], env.get(b["url_env"], b["default_url"] or ""))
+    return {"backends": _BACKEND_DIR_DEFS, "values": values}
+
+
+class SaveBackendDirsRequest(BaseModel):
+    values: dict
+
+
+@router.post("/backend-dirs")
+def save_backend_dirs(req: SaveBackendDirsRequest):
+    allowed_env_vars = {
+        ev
+        for b in _BACKEND_DIR_DEFS
+        for ev in [b.get("dir_env"), b.get("url_env")]
+        if ev
+    }
+    filtered = {k: v for k, v in req.values.items() if k in allowed_env_vars}
+    _save_env_file(filtered)
+    for k, v in filtered.items():
+        if v:
+            os.environ[k] = v
+        else:
+            os.environ.pop(k, None)
+    return {"status": "ok"}

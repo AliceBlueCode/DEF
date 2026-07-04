@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import ApiKeyDialog from './ApiKeyDialog'
+import BackendDirDialog from './BackendDirDialog'
+import ModelProfileDialog from './ModelProfileDialog'
+import CivitaiDialog from './CivitaiDialog'
+import HuggingFaceDialog from './HuggingFaceDialog'
 import Toggle from './Toggle'
 
 type BackendInfo = {
@@ -86,7 +90,12 @@ export default function SettingsTab({
   const [llmModels, setLlmModels] = useState<string[]>([])
   const [t2iModels, setT2iModels] = useState<string[]>([])
   const [t2iWorkflows, setT2iWorkflows] = useState<string[]>([])
+  const [civitaiModels, setCivitaiModels] = useState<{label: string; model_air: string}[]>([])
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false)
+  const [showBackendDirDialog, setShowBackendDirDialog] = useState(false)
+  const [showModelProfile, setShowModelProfile] = useState(false)
+  const [showCivitai, setShowCivitai] = useState(false)
+  const [showHf, setShowHf] = useState(false)
   const [appSettings, setAppSettings] = useState<Record<string, unknown>>({})
   const [appVersion, setAppVersion] = useState('')
 
@@ -114,6 +123,13 @@ export default function SettingsTab({
       .then(data => setLlmModels(data.models || []))
       .catch(() => {})
   }, [llmBackend])
+
+  useEffect(() => {
+    if (t2iBackend !== 'civitai') return
+    fetch('/api/settings/civitai-models')
+      .then(r => r.json())
+      .then(data => setCivitaiModels(data.models || []))
+  }, [t2iBackend, showCivitai])
 
   useEffect(() => {
     if (!t2iBackend) return
@@ -177,6 +193,11 @@ export default function SettingsTab({
             </select>
           </div>
         )}
+        {get(modelKey, llmModels[0] ?? '') && (
+          <button className="profile-open-btn" style={{ marginTop: 8 }} onClick={() => setShowModelProfile(true)}>
+            📋 モデルプロファイル編集
+          </button>
+        )}
       </div>
 
       <div className="settings-section">
@@ -221,13 +242,53 @@ export default function SettingsTab({
             </select>
           </div>
         )}
+        {t2iBackend === 'civitai' && civitaiModels.length > 0 && (
+          <div className="settings-row" style={{ marginTop: 8 }}>
+            <label>モデル</label>
+            <select
+              value={get('t2i_model', civitaiModels[0]?.model_air ?? '') as string}
+              onChange={e => set('t2i_model', e.target.value)}
+            >
+              {civitaiModels.map(m => (
+                <option key={m.model_air} value={m.model_air}>
+                  {m.label !== m.model_air ? m.label : m.model_air}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {t2iBackend === 'civitai' && (
+          <button className="profile-open-btn" style={{ marginTop: 8 }} onClick={() => setShowCivitai(true)}>
+            🎨 Civitai モデル管理
+          </button>
+        )}
+        {t2iBackend === 'huggingface' && (
+          <>
+            {get('t2i_model', '') && (
+              <div className="settings-row" style={{ marginTop: 4 }}>
+                <label>選択中</label>
+                <span style={{ fontSize: '0.82em', fontFamily: 'monospace', color: '#a8d8f0' }}>
+                  {get('t2i_model', '') as string}
+                </span>
+              </div>
+            )}
+            <button className="profile-open-btn" style={{ marginTop: 8 }} onClick={() => setShowHf(true)}>
+              🤗 HuggingFace モデル管理
+            </button>
+          </>
+        )}
       </div>
 
       <div className="settings-section">
-        <h3>APIキー</h3>
-        <button className="api-key-open-btn" onClick={() => setShowApiKeyDialog(true)}>
-          🔑 APIキー管理を開く
-        </button>
+        <h3>バックエンド / APIキー</h3>
+        <div className="settings-btn-row">
+          <button className="api-key-open-btn" onClick={() => setShowBackendDirDialog(true)}>
+            📁 バックエンド設定
+          </button>
+          <button className="api-key-open-btn" onClick={() => setShowApiKeyDialog(true)}>
+            🔑 APIキー管理
+          </button>
+        </div>
       </div>
 
       <div className="settings-divider" />
@@ -261,7 +322,7 @@ export default function SettingsTab({
           </select>
         </div>
         <div className="settings-row">
-          <label>感情タグ</label>
+          <label>感情タグ自動挿入</label>
           <Toggle checked={get('emotion_tag_enabled', true)} onChange={v => set('emotion_tag_enabled', v)} />
         </div>
         <div className="settings-row">
@@ -386,6 +447,27 @@ export default function SettingsTab({
       </div>
 
       {showApiKeyDialog && <ApiKeyDialog onClose={() => setShowApiKeyDialog(false)} />}
+      {showBackendDirDialog && <BackendDirDialog onClose={() => setShowBackendDirDialog(false)} />}
+      {showModelProfile && (
+        <ModelProfileDialog
+          model={get(modelKey, llmModels[0] ?? '') as string}
+          onClose={() => setShowModelProfile(false)}
+        />
+      )}
+      {showCivitai && (
+        <CivitaiDialog
+          currentModel={get('t2i_model', '') as string}
+          onSelect={id => set('t2i_model', id)}
+          onClose={() => setShowCivitai(false)}
+        />
+      )}
+      {showHf && (
+        <HuggingFaceDialog
+          currentModel={get('t2i_model', '') as string}
+          onSelect={id => set('t2i_model', id)}
+          onClose={() => setShowHf(false)}
+        />
+      )}
     </div>
   )
 }

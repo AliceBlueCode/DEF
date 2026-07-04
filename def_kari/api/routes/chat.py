@@ -12,6 +12,8 @@ def _debug_guard():
 from def_kari.characters import load_profiles, get_character
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.llm.client import generate_structured_reply
+from def_kari.image_prompt.emotion_tags import apply_emotion_tags
+from def_kari.settings import load_settings
 
 router = APIRouter()
 
@@ -78,11 +80,15 @@ def chat(req: ChatRequest):
             if forced not in tags:
                 tags = [forced]
             _force_rating["enabled"] = False
+        image_prompt_en = parsed.get("image_prompt_en", "")
+        settings = load_settings()
+        if settings.get("emotion_tag_enabled", True):
+            image_prompt_en = apply_emotion_tags(image_prompt_en, parsed.get("emotion", "neutral"))
         _last_debug = {
             "success": True,
             "text": parsed.get("dialogue", ""),
             "emotion": parsed.get("emotion", "neutral"),
-            "image_prompt_en": parsed.get("image_prompt_en", ""),
+            "image_prompt_en": image_prompt_en,
             "tags": tags,
             "raw": raw,
             "attempts": attempts,
@@ -92,7 +98,7 @@ def chat(req: ChatRequest):
         return ChatResponse(
             text=parsed.get("dialogue", ""),
             emotion=parsed.get("emotion", "neutral"),
-            image_prompt_en=parsed.get("image_prompt_en", ""),
+            image_prompt_en=image_prompt_en,
             tags=tags,
             raw=raw,
         )

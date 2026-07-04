@@ -6,8 +6,10 @@ type Props = {
 
 type CharDetail = {
   name: string
-  base_profile: Record<string, unknown>
+  persona_description?: string
+  speech_style?: string
   appearance_tags?: string
+  image_name_tags?: string
   [key: string]: unknown
 }
 
@@ -23,12 +25,11 @@ export default function CharacterTab({ selectedChar }: Props) {
 
   if (!char) return <div className="tab-content">キャラクターを選択してください</div>
 
-  const bp = (char.base_profile || {}) as Record<string, unknown>
-  const name = (bp.name as string) || char.name || selectedChar
-  const personality = bp.personality as string || ''
-  const background = bp.background as string || ''
-  const speakingStyle = bp.speaking_style as string || ''
+  const name = char.name || selectedChar
+  const persona = char.persona_description as string || ''
+  const speakingStyle = char.speech_style as string || ''
   const appearanceTags = char.appearance_tags as string || ''
+  const imageNameTags = char.image_name_tags as string || ''
 
   return (
     <div className="tab-content character-tab">
@@ -49,16 +50,10 @@ export default function CharacterTab({ selectedChar }: Props) {
       </div>
 
       <div className="char-profile">
-        {personality && (
+        {persona && (
           <div className="profile-section">
-            <h3>性格</h3>
-            <p>{personality}</p>
-          </div>
-        )}
-        {background && (
-          <div className="profile-section">
-            <h3>背景</h3>
-            <p>{background}</p>
+            <h3>性格・背景</h3>
+            <p>{persona}</p>
           </div>
         )}
         {speakingStyle && (
@@ -71,6 +66,12 @@ export default function CharacterTab({ selectedChar }: Props) {
           <div className="profile-section">
             <h3>外見タグ</h3>
             <p className="appearance-tags">{appearanceTags}</p>
+          </div>
+        )}
+        {imageNameTags && (
+          <div className="profile-section">
+            <h3>キャラ名タグ</h3>
+            <p className="appearance-tags">{imageNameTags}</p>
           </div>
         )}
       </div>

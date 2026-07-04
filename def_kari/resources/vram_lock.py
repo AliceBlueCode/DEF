@@ -1,5 +1,6 @@
 """F-13-1: vram_lockシングルトン(基本設計5.3節)"""
 
+from __future__ import annotations
 import threading
 
 _lock: threading.Lock | None = None
