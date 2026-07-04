@@ -51,9 +51,10 @@
         "text_model_id": null,
         "image_model_id": null,
         "audio_id": null,
-        "voicevox_speaker_id": null,
-        "gemini_tts_voice": null,
-        "irodori_speaker_id": null,
+        "voicevox_speaker_id": 11,
+        "gemini_tts_voice": "Charon",
+        "irodori_speaker_id": "",
+        "kokoro_voice": "jm_kumo",
         "location": "local"
       },
       "visual_references": {
@@ -61,7 +62,8 @@
         "features": null,
         "appearance_tags": null
       },
-      "player_type": "human"
+      "player_type": "human",
+      "image_color": "#4a5568"
     },
     "relationships": {},
     "game_rules_sheets": {}

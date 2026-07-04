@@ -31,16 +31,18 @@ const LS_KEY_T2I = 'def_t2i_backend'
 const LS_KEY_TTS = 'def_tts_backend'
 const LS_KEY_CANDIDATES = 'def_candidate_count'
 const LS_KEY_THEME = 'def_theme'
+const LS_KEY_CHAR = 'def_selected_char'
 
 function App() {
   const [characters, setCharacters] = useState<Character[]>([])
-  const [selectedChar, setSelectedChar] = useState('')
+  const [selectedChar, setSelectedChar] = useState(() => localStorage.getItem(LS_KEY_CHAR) || '')
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
   const [selectedBackend, setSelectedBackend] = useState(() => localStorage.getItem(LS_KEY_LLM) || '')
   const [selectedT2iBackend, setSelectedT2iBackend] = useState(() => localStorage.getItem(LS_KEY_T2I) || '')
   const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'voicevox')
   const [candidateCount, setCandidateCount] = useState(() => Number(localStorage.getItem(LS_KEY_CANDIDATES)) || 3)
   const [activeTab, setActiveTab] = useState<TabId>('chat')
+  const [chatReloadTrigger, setChatReloadTrigger] = useState(0)
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'dark'
   )
@@ -57,8 +59,13 @@ function App() {
     fetch('/api/characters/')
       .then(r => r.json())
       .then(data => {
-        setCharacters(data.characters || [])
-        if (data.characters?.length > 0) setSelectedChar(data.characters[0].id)
+        const chars: Character[] = data.characters || []
+        setCharacters(chars)
+        if (chars.length > 0) {
+          const saved = localStorage.getItem(LS_KEY_CHAR)
+          const valid = saved && chars.some(c => c.id === saved)
+          setSelectedChar(valid ? saved : chars[0].id)
+        }
       })
     fetch('/api/settings/backends')
       .then(r => r.json())
@@ -72,6 +79,10 @@ function App() {
         }
       })
   }, [])
+
+  useEffect(() => {
+    if (selectedChar) localStorage.setItem(LS_KEY_CHAR, selectedChar)
+  }, [selectedChar])
 
   useEffect(() => {
     if (selectedBackend) localStorage.setItem(LS_KEY_LLM, selectedBackend)
@@ -114,16 +125,16 @@ function App() {
           </div>
 
           <div style={{ display: activeTab === 'chat' ? 'contents' : 'none' }}>
-            <ChatTab characters={characters} selectedChar={selectedChar} onCharChange={setSelectedChar} backend={selectedBackend} ttsBackend={selectedTtsBackend} t2iBackend={selectedT2iBackend} />
+            <ChatTab characters={characters} selectedChar={selectedChar} backend={selectedBackend} ttsBackend={selectedTtsBackend} t2iBackend={selectedT2iBackend} reloadTrigger={chatReloadTrigger} />
           </div>
           <div style={{ display: activeTab === 'character' ? 'contents' : 'none' }}>
-            <CharacterTab selectedChar={selectedChar} />
+            <CharacterTab characters={characters} selectedChar={selectedChar} onCharChange={setSelectedChar} onHistoryCleared={() => setChatReloadTrigger(t => t + 1)} ttsBackend={selectedTtsBackend} />
           </div>
           <div style={{ display: activeTab === 'session' ? 'contents' : 'none' }}>
             <SessionTab characters={characters} backend={selectedBackend} />
           </div>
           <div style={{ display: activeTab === 'novel' ? 'contents' : 'none' }}>
-            <NovelTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} />
+            <NovelTab backend={selectedBackend} t2iBackend={selectedT2iBackend} candidateCount={candidateCount} ttsBackend={selectedTtsBackend} selectedChar={selectedChar} llmBackends={llmBackends} />
           </div>
           <div style={{ display: activeTab === 'debug' ? 'contents' : 'none' }}>
             <DebugTab />

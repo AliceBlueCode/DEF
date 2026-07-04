@@ -1,13 +1,17 @@
 """T2I API routes."""
 
+from pathlib import Path
+
 from fastapi import APIRouter
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from def_kari.t2i.backend import generate_image
 from def_kari.settings import load_settings
 
 router = APIRouter()
+
+ASSET_DIR = (Path(__file__).parent.parent.parent.parent / "assets").resolve()
 
 
 class T2IRequest(BaseModel):
@@ -29,24 +33,38 @@ def generate_t2i(req: T2IRequest):
     if not backend:
         return {"error": "T2Iバックエンドが設定されていません"}
 
-    model = req.model or settings.get("t2i_model") or None
+    model = req.model or settings.get(f"t2i_model_{backend}") or None
     width = req.width or settings.get("t2i_width", 512)
     height = req.height or settings.get("t2i_height", 768)
 
     try:
+        from def_kari.models.t2i_profiles import get_quality_settings
+        quality_tags, default_neg = get_quality_settings(model)
+        prompt = req.prompt
+        if quality_tags:
+            prompt = f"{prompt}, {quality_tags}"
+        negative_prompt = req.negative_prompt or default_neg
+
         image_path = generate_image(
-            prompt=req.prompt,
+            prompt=prompt,
             width=int(width),
             height=int(height),
             model=model,
             backend=backend,
-            negative_prompt=req.negative_prompt,
+            negative_prompt=negative_prompt,
             seed=req.seed,
             steps=req.steps,
             cfg_scale=req.cfg_scale,
         )
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-        return Response(content=image_bytes, media_type="image/png")
+        filename = Path(image_path).name
+        return {"url": f"/api/t2i/image/{filename}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+@router.get("/image/{filename}")
+def get_t2i_image(filename: str):
+    path = (ASSET_DIR / filename).resolve()
+    if not str(path).startswith(str(ASSET_DIR)) or not path.exists():
+        return {"error": "Image not found"}
+    return FileResponse(str(path), media_type="image/png")

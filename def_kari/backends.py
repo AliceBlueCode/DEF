@@ -85,6 +85,20 @@ def start_tgw() -> str | None:
         return str(exc)
 
 
+def stop_tgw() -> str | None:
+    pid_path = _pid_path("tgw")
+    if not os.path.exists(pid_path):
+        return None
+    try:
+        with open(pid_path) as f:
+            pid = f.read().strip()
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
+        os.remove(pid_path)
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
 # ===== VOICEVOX =====
 
 def is_voicevox_running() -> bool:
@@ -186,6 +200,20 @@ def start_a1111() -> str | None:
         )
         with open(_pid_path("a1111"), "w") as f:
             f.write(str(proc.pid))
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
+def stop_a1111() -> str | None:
+    pid_path = _pid_path("a1111")
+    if not os.path.exists(pid_path):
+        return None
+    try:
+        with open(pid_path) as f:
+            pid = f.read().strip()
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
+        os.remove(pid_path)
         return None
     except Exception as exc:
         return str(exc)
@@ -381,6 +409,51 @@ def stop_comfyui() -> str | None:
         subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
         os.remove(pid_path)
         return None
+    except Exception as exc:
+        return str(exc)
+
+
+# ===== Ollama =====
+
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+
+def is_ollama_running() -> bool:
+    url = os.environ.get("OLLAMA_URL", OLLAMA_URL)
+    try:
+        return requests.get(f"{url}/api/tags", timeout=3).status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def stop_ollama() -> str | None:
+    pid_path = _pid_path("ollama")
+    if not os.path.exists(pid_path):
+        return None
+    try:
+        with open(pid_path) as f:
+            pid = f.read().strip()
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
+        os.remove(pid_path)
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
+def start_ollama() -> str | None:
+    if is_ollama_running():
+        return None
+    try:
+        proc = subprocess.Popen(
+            ["ollama", "serve"],
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+        )
+        with open(_pid_path("ollama"), "w") as f:
+            f.write(str(proc.pid))
+        print(f"[Ollama] Started pid={proc.pid}")
+        return None
+    except FileNotFoundError:
+        return "ollamaコマンドが見つかりません。Ollamaがインストールされているか確認してください。"
     except Exception as exc:
         return str(exc)
 

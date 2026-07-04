@@ -80,7 +80,8 @@
         "features": "reddish brown hair, shoulder length, amber eyes, coral scarf, ivory shirt, beige pants, gentle expression, thoughtful, young woman, warm, intellectual",
         "appearance_tags": "1girl, reddish brown hair, shoulder length hair, amber eyes, coral scarf, ivory shirt, gentle expression, intellectual"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#c8706a"
     },
     "relationships": {
       "character_chatgpt_001": "最高のファシリテーター。議論が分岐したとき、穏やかに議論を整理してくれる。",

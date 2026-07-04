@@ -81,7 +81,8 @@
         "features": "renaissance italian, thin face, black eyes, sardonic smile, black robe, red inner garment, short black hair, scholar, diplomat",
         "appearance_tags": "1boy, renaissance, thin face, black eyes, sardonic smile, black robe, red clothes, short hair, scholar"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#8b1a1a"
     },
     "relationships": {},
     "game_rules_sheets": {}

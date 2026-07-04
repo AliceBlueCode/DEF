@@ -86,6 +86,12 @@ def _civitai_generate(
     if not api_token:
         raise RuntimeError("Civitai APIキーが設定されていません。APIキー管理から設定してください。")
 
+    if not model_name:
+        try:
+            from def_kari.settings import load_settings
+            model_name = load_settings().get("t2i_model_civitai", "")
+        except Exception:
+            pass
     model_air = model_name or os.environ.get("CIVITAI_DEFAULT_MODEL_AIR", "")
     if not model_air:
         raise RuntimeError("Civitaiモデル(AIR形式)が指定されていません。")
@@ -176,6 +182,12 @@ def _huggingface_generate(
     prompt: str, width: int, height: int, model_name: str | None,
     negative_prompt: str, seed: int, steps: int, cfg_scale: float,
 ) -> str:
+    if not model_name:
+        try:
+            from def_kari.settings import load_settings
+            model_name = load_settings().get("t2i_model_huggingface", "")
+        except Exception:
+            pass
     model = model_name or HF_DEFAULT_MODEL
     body = {"inputs": prompt}
     params = {}
@@ -251,8 +263,18 @@ def _comfyui_generate(
     workflow = copy.deepcopy(_load_comfyui_workflow(_wf_name))
     if not workflow:
         raise RuntimeError(f"ComfyUIワークフローが見つかりません: data/comfyui_workflows/{_wf_name}.json")
+    current_ckpt = workflow.get("4", {}).get("inputs", {}).get("ckpt_name", "")
     if model_name:
         workflow["4"]["inputs"]["ckpt_name"] = model_name
+    elif not current_ckpt:
+        try:
+            info = requests.get(f"{COMFYUI_URL}/object_info/CheckpointLoaderSimple", timeout=5).json()
+            choices = info.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+            if choices:
+                workflow["4"]["inputs"]["ckpt_name"] = choices[0]
+                print(f"[COMFYUI T2I] auto-selected model: {choices[0]}")
+        except Exception as _e:
+            print(f"[COMFYUI T2I] model auto-detect failed: {_e}")
     workflow["5"]["inputs"]["width"] = width or 512
     workflow["5"]["inputs"]["height"] = height or 768
     workflow["6"]["inputs"]["text"] = prompt

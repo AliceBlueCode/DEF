@@ -211,6 +211,8 @@ def _call_llm(
     character: dict | None = None,
     backend: str = DEFAULT_LLM_BACKEND,
     quirks: dict | None = None,
+    allowed_sexual: list[str] | None = None,
+    allowed_violence: list[str] | None = None,
 ) -> str:
     character = character or {}
     persona = character.get("persona_description", "You are a helpful assistant.")
@@ -220,7 +222,10 @@ def _call_llm(
         _user_lang = _st.session_state.get("user_language", "ja")
     except Exception:
         _user_lang = "ja"
-    system_prompt = build_system_prompt(persona, appearance, quirks=quirks, user_language=_user_lang)
+    system_prompt = build_system_prompt(
+        persona, appearance, quirks=quirks, user_language=_user_lang,
+        allowed_sexual=allowed_sexual, allowed_violence=allowed_violence,
+    )
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -256,6 +261,9 @@ def generate_structured_reply(
     character: dict | None = None,
     backend: str = DEFAULT_LLM_BACKEND,
     quirks: dict | None = None,
+    extra_instruction: str = "",
+    allowed_sexual: list[str] | None = None,
+    allowed_violence: list[str] | None = None,
 ) -> dict:
     """F-14のフォールバックチェーン(4段構成)を実行し、最終結果と各段階のログを返す。"""
     character = character or {}
@@ -268,11 +276,14 @@ def generate_structured_reply(
         raw = _call_llm(
             user_text,
             history=history,
+            extra_instruction=extra_instruction,
             lightweight=lightweight,
             model=model,
             character=character,
             backend=backend,
             quirks=quirks,
+            allowed_sexual=allowed_sexual,
+            allowed_violence=allowed_violence,
         )
     except (requests.RequestException, RuntimeError) as exc:
         attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": [f"{type(exc).__name__}: {exc}"]})

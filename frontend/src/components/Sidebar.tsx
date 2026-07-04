@@ -32,6 +32,7 @@ export default function Sidebar() {
   const [forceEnabled, setForceEnabled] = useState(false)
   const [forceTag, setForceTag] = useState('nsfw')
   const [showRating, setShowRating] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
   const vramTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -46,14 +47,18 @@ export default function Sidebar() {
         setForceTag(data.tag ?? 'nsfw')
       })
 
-    const pollVram = () => {
+    const poll = () => {
       fetch('/api/chat/vram-lock')
         .then(r => r.json())
         .then(data => setVramLocked(data.locked ?? false))
         .catch(() => {})
+      fetch('/api/chat/force-rating')
+        .then(r => r.json())
+        .then(data => setForceEnabled(data.enabled ?? false))
+        .catch(() => {})
     }
-    pollVram()
-    vramTimerRef.current = setInterval(pollVram, 3000)
+    poll()
+    vramTimerRef.current = setInterval(poll, 3000)
     return () => { if (vramTimerRef.current) clearInterval(vramTimerRef.current) }
   }, [])
 
@@ -67,6 +72,7 @@ export default function Sidebar() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings: { [key]: value } }),
     })
+    window.dispatchEvent(new CustomEvent('def-settings-change', { detail: { key, value } }))
   }, [])
 
   const updateForceRating = (enabled: boolean, tag: string) => {
@@ -94,7 +100,10 @@ export default function Sidebar() {
   const handleViolence = (key: string) => set('allowed_rating_violence', VIOLENCE_PRESETS[key])
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}>
+      <button className="sidebar-toggle" onClick={() => setCollapsed(c => !c)} title={collapsed ? '開く' : '閉じる'}>
+        {collapsed ? '▶' : '◀'}
+      </button>
 
       <div className="sidebar-section">
         <button className="rating-open-btn" onClick={() => setShowRating(true)}>
@@ -117,11 +126,11 @@ export default function Sidebar() {
       <div className="sidebar-section">
         <h4>チャット設定</h4>
         <div className="sidebar-row">
-          <span>TTS 有効</span>
+          <span>AI TTS 有効</span>
           <Toggle checked={get('tts_enabled', true)} onChange={v => set('tts_enabled', v)} />
         </div>
         <div className="sidebar-row">
-          <span>ユーザー TTS</span>
+          <span>ユーザー TTS有効</span>
           <Toggle checked={get('tts_human_enabled', false)} onChange={v => set('tts_human_enabled', v)} />
         </div>
         <div className="sidebar-row">

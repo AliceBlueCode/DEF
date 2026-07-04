@@ -15,7 +15,12 @@ from def_kari.config import DEFAULT_T2I_BACKEND
 
 router = APIRouter()
 
-_NOVELS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "private" / "novels"
+_DATA_ROOT = Path(__file__).parent.parent.parent.parent / "data"
+_NOVELS_DIR = _DATA_ROOT / "private" / "novels"
+_PLOTS_DIRS = [
+    _DATA_ROOT / "public" / "episode_prompts",
+    _DATA_ROOT / "private" / "episode_prompts",
+]
 
 _SAFE_NAME_RE = re.compile(r'[^\w\-　-鿿゠-ヿ぀-ゟ]+')
 
@@ -26,6 +31,40 @@ def _safe_path(title: str) -> Path | None:
     if not str(path).startswith(str(_NOVELS_DIR.resolve())):
         return None
     return path
+
+
+@router.get("/plots")
+def list_plots():
+    files = []
+    for d in _PLOTS_DIRS:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.suffix in (".txt", ".md"):
+                    files.append({"name": f.name, "dir": str(d)})
+    return {"files": files}
+
+
+@router.get("/plots/{filename}")
+def get_plot(filename: str):
+    for d in _PLOTS_DIRS:
+        path = (d / filename).resolve()
+        if str(path).startswith(str(d.resolve())) and path.exists():
+            return {"content": path.read_text(encoding="utf-8"), "name": filename}
+    return {"error": "not found"}
+
+
+class SavePlotFileRequest(BaseModel):
+    content: str
+
+
+@router.put("/plots/{filename}")
+def save_plot_file(filename: str, req: SavePlotFileRequest):
+    for d in _PLOTS_DIRS:
+        path = (d / filename).resolve()
+        if str(path).startswith(str(d.resolve())) and path.exists():
+            path.write_text(req.content, encoding="utf-8")
+            return {"status": "ok", "name": filename}
+    return {"error": "not found"}
 
 
 @router.get("/")
@@ -89,6 +128,7 @@ class GenerateRequest(BaseModel):
 @router.post("/generate")
 def generate_candidates(req: GenerateRequest):
     from def_kari.settings import load_settings
+    from def_kari.resources.vram_lock import get_vram_lock
     user_language = req.user_language or load_settings().get("user_language", "ja")
 
     sys_prompt = req.plot
@@ -125,13 +165,18 @@ def generate_candidates(req: GenerateRequest):
 
     candidates = []
     errors = []
-    for i in range(max(1, min(req.candidate_count, 5))):
-        try:
-            cont = LLM_BACKENDS[backend_id]["chat"](messages, model, json_mode=False, options=opts)
-            if cont:
-                candidates.append(cont)
-        except Exception as e:
-            errors.append(f"#{i + 1}: {e}")
+    vram_lock = get_vram_lock()
+    vram_lock.acquire()
+    try:
+        for i in range(max(1, min(req.candidate_count, 5))):
+            try:
+                cont = LLM_BACKENDS[backend_id]["chat"](messages, model, json_mode=False, options=opts)
+                if cont:
+                    candidates.append(cont)
+            except Exception as e:
+                errors.append(f"#{i + 1}: {e}")
+    finally:
+        vram_lock.release()
 
     return {"candidates": candidates, "errors": errors}
 
@@ -150,6 +195,7 @@ class T2IRequest(BaseModel):
 @router.post("/t2i")
 def generate_episode_image(req: T2IRequest):
     from def_kari.settings import load_settings
+    from def_kari.resources.vram_lock import get_vram_lock
     _saved = load_settings()
     width = req.width or _saved.get("episode_t2i_width", 1216)
     height = req.height or _saved.get("episode_t2i_height", 832)
@@ -170,25 +216,30 @@ def generate_episode_image(req: T2IRequest):
     if backend_id not in LLM_BACKENDS:
         backend_id = DEFAULT_LLM_BACKEND
 
+    vram_lock = get_vram_lock()
+    vram_lock.acquire()
     try:
-        img_prompt = LLM_BACKENDS[backend_id]["chat"](messages, req.llm_model, json_mode=False, options={"num_predict": 150})
-    except Exception as e:
-        return {"error": f"prompt generation failed: {e}"}
+        try:
+            img_prompt = LLM_BACKENDS[backend_id]["chat"](messages, req.llm_model, json_mode=False, options={"num_predict": 150})
+        except Exception as e:
+            return {"error": f"prompt generation failed: {e}"}
 
-    if not img_prompt:
-        return {"error": "empty prompt"}
+        if not img_prompt:
+            return {"error": "empty prompt"}
 
-    try:
-        from def_kari.workers._t2i_generate import generate_image
-        img_path = generate_image(
-            prompt=img_prompt,
-            width=width,
-            height=height,
-            model_name=req.t2i_model,
-            backend=req.t2i_backend,
-        )
-    except Exception as e:
-        return {"error": f"image generation failed: {e}", "prompt": img_prompt}
+        try:
+            from def_kari.workers._t2i_generate import generate_image
+            img_path = generate_image(
+                prompt=img_prompt,
+                width=width,
+                height=height,
+                model_name=req.t2i_model,
+                backend=req.t2i_backend,
+            )
+        except Exception as e:
+            return {"error": f"image generation failed: {e}", "prompt": img_prompt}
+    finally:
+        vram_lock.release()
 
     filename = os.path.basename(img_path)
     return {"prompt": img_prompt, "image_url": f"/api/novel/image/{filename}"}

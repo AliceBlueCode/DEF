@@ -44,8 +44,17 @@ def generate(
     if not workflow:
         raise RuntimeError(f"ComfyUIワークフローが見つかりません: data/comfyui_workflows/{workflow_name}.json")
 
+    current_ckpt = workflow.get("4", {}).get("inputs", {}).get("ckpt_name", "")
     if model:
         workflow["4"]["inputs"]["ckpt_name"] = model
+    elif not current_ckpt:
+        try:
+            info = requests.get(f"{url}/object_info/CheckpointLoaderSimple", timeout=5).json()
+            choices = info.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+            if choices:
+                workflow["4"]["inputs"]["ckpt_name"] = choices[0]
+        except Exception:
+            pass
     workflow["5"]["inputs"]["width"] = width
     workflow["5"]["inputs"]["height"] = height
     workflow["6"]["inputs"]["text"] = prompt
@@ -55,7 +64,8 @@ def generate(
     workflow["3"]["inputs"]["cfg"] = cfg_scale
 
     resp = requests.post(f"{url}/prompt", json={"prompt": workflow}, timeout=10)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f"ComfyUI {resp.status_code}: {resp.text[:500]}")
     prompt_id = resp.json().get("prompt_id")
     print(f"[COMFYUI] queued: prompt_id={prompt_id}")
 

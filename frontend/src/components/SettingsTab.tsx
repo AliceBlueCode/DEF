@@ -77,6 +77,10 @@ function llmModelKey(backend: string): string {
   return backend === 'textgen_webui' ? 'tgw_autoload_model' : `llm_ext_model_${backend}`
 }
 
+function t2iModelKey(backend: string): string {
+  return `t2i_model_${backend}`
+}
+
 
 export default function SettingsTab({
   llmBackend, onLlmBackendChange,
@@ -101,6 +105,12 @@ export default function SettingsTab({
   const [llmLaunchMsg, setLlmLaunchMsg] = useState('')
   const [ttsLaunchMsg, setTtsLaunchMsg] = useState('')
   const [t2iLaunchMsg, setT2iLaunchMsg] = useState('')
+  const [llmDebug, setLlmDebug] = useState(false)
+  const [ttsDebug, setTtsDebug] = useState(false)
+  const [t2iDebug, setT2iDebug] = useState(false)
+  const [t2iQualityTags, setT2iQualityTags] = useState('')
+  const [t2iNegPrompt, setT2iNegPrompt] = useState('')
+  const [t2iQualitySaveMsg, setT2iQualitySaveMsg] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/version')
@@ -118,14 +128,33 @@ export default function SettingsTab({
       .then(data => setAppSettings(data.settings || {}))
   }, [])
 
-  useEffect(() => {
-    if (!llmBackend) return
+  const t2iMKey = t2iModelKey(t2iBackend)
+
+  const fetchLlmModels = useCallback((backend: string) => {
+    if (!backend) return
     setLlmModels([])
-    fetch(`/api/settings/llm-models?backend=${encodeURIComponent(llmBackend)}`)
+    fetch(`/api/settings/llm-models?backend=${encodeURIComponent(backend)}`)
       .then(r => r.json())
       .then(data => setLlmModels(data.models || []))
       .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchLlmModels(llmBackend)
   }, [llmBackend])
+
+  useEffect(() => {
+    const model = (appSettings[t2iMKey] as string) || ''
+    if (!model) return
+    fetch(`/api/settings/t2i-quality?model=${encodeURIComponent(model)}`)
+      .then(r => r.json())
+      .then(data => {
+        setT2iQualityTags(data.quality_tags ?? '')
+        setT2iNegPrompt(data.negative_prompt ?? '')
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appSettings[t2iMKey], t2iBackend])
 
   useEffect(() => {
     if (t2iBackend !== 'civitai') return
@@ -152,18 +181,23 @@ export default function SettingsTab({
   }, [appSettings])
 
   const LOCAL_BACKENDS: Record<string, string[]> = {
-    llm: ['textgen_webui'],
+    llm: ['textgen_webui', 'ollama'],
     tts: ['voicevox', 'kokoro', 'irodori'],
     t2i: ['a1111', 'comfyui'],
   }
 
-  const launchBackend = async (id: string, setMsg: (m: string) => void) => {
+  const stopBackend = (id: string) => {
+    if (!id) return
+    fetch(`/api/settings/stop-backend?id=${id}`).catch(() => {})
+  }
+
+  const launchBackend = async (id: string, setMsg: (m: string) => void, afterLaunch?: () => void) => {
     setMsg('起動確認中...')
     try {
       const res = await fetch(`/api/settings/launch-backend?id=${id}`)
       const data = await res.json()
-      if (data.status === 'already_running') setMsg('✓ 起動中')
-      else if (data.status === 'launched') setMsg('✓ 起動しました')
+      if (data.status === 'already_running') { setMsg('✓ 起動中'); afterLaunch?.() }
+      else if (data.status === 'launched') { setMsg('✓ 起動しました'); afterLaunch?.() }
       else if (data.status === 'error') setMsg(`✗ ${data.message || 'エラー'}`)
       else setMsg('')
     } catch { setMsg('✗ 接続エラー') }
@@ -196,12 +230,19 @@ export default function SettingsTab({
 
       {/* ── LLM バックエンド ── */}
       <div className="settings-section">
-        <h3>LLM バックエンド</h3>
+        <h3>
+          LLM バックエンド
+          <label className="debug-mode-label">
+            <input type="checkbox" checked={llmDebug} onChange={e => setLlmDebug(e.target.checked)} />
+            多重起動
+          </label>
+        </h3>
         {llmBackends && (
           <select value={llmBackend} onChange={async e => {
             const b = e.target.value
+            if (!llmDebug && LOCAL_BACKENDS.llm.includes(llmBackend) && llmBackend !== b) stopBackend(llmBackend)
             onLlmBackendChange(b)
-            if (LOCAL_BACKENDS.llm.includes(b)) launchBackend(b, setLlmLaunchMsg)
+            if (LOCAL_BACKENDS.llm.includes(b)) launchBackend(b, setLlmLaunchMsg, () => fetchLlmModels(b))
             else setLlmLaunchMsg('')
           }}>
             {llmBackends.backends.map(b => (
@@ -210,17 +251,38 @@ export default function SettingsTab({
           </select>
         )}
         {llmLaunchMsg && <div className="tts-launch-msg">{llmLaunchMsg}</div>}
-        {llmModels.length > 0 && (
-          <div className="settings-row" style={{ marginTop: 8 }}>
-            <label>モデル</label>
-            <select
-              value={get(modelKey, llmModels[0])}
-              onChange={e => set(modelKey, e.target.value)}
-            >
-              {llmModels.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
+        <div className="settings-row" style={{ marginTop: 8 }}>
+          <label>モデル</label>
+          <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+            {llmModels.length > 0 ? (
+              <select
+                style={{ flex: 1 }}
+                value={get(modelKey, llmModels[0])}
+                onChange={e => {
+                  const m = e.target.value
+                  set(modelKey, m)
+                  if (llmBackend === 'textgen_webui' && m) {
+                    setLlmLaunchMsg('⏳ モデルをロード中...')
+                    fetch(`/api/settings/load-llm-model?backend=textgen_webui&model=${encodeURIComponent(m)}`)
+                      .then(r => r.json())
+                      .then(data => {
+                        if (data.status === 'ok') setLlmLaunchMsg('✅ モデルロード完了')
+                        else setLlmLaunchMsg(`⚠ ${data.message || data.status}`)
+                      })
+                      .catch(e => setLlmLaunchMsg(`⚠ ${e}`))
+                  }
+                }}
+              >
+                {llmModels.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : (
+              <span style={{ flex: 1, fontSize: '0.82em', color: '#888', alignSelf: 'center' }}>
+                (バックエンド起動後に取得)
+              </span>
+            )}
+            <button className="turn-btn" onClick={() => fetchLlmModels(llmBackend)} title="モデル一覧を更新">🔄</button>
           </div>
-        )}
+        </div>
         {get(modelKey, llmModels[0] ?? '') && (
           <button className="profile-open-btn" style={{ marginTop: 8 }} onClick={() => setShowModelProfile(true)}>
             📋 モデルプロファイル編集
@@ -229,9 +291,16 @@ export default function SettingsTab({
       </div>
 
       <div className="settings-section">
-        <h3>TTS バックエンド</h3>
+        <h3>
+          TTS バックエンド
+          <label className="debug-mode-label">
+            <input type="checkbox" checked={ttsDebug} onChange={e => setTtsDebug(e.target.checked)} />
+            多重起動
+          </label>
+        </h3>
         <select value={ttsBackend} onChange={async e => {
           const b = e.target.value
+          if (!ttsDebug && LOCAL_BACKENDS.tts.includes(ttsBackend) && ttsBackend !== b) stopBackend(ttsBackend)
           onTtsBackendChange(b)
           if (LOCAL_BACKENDS.tts.includes(b)) launchBackend(b, setTtsLaunchMsg)
           else setTtsLaunchMsg('')
@@ -246,10 +315,17 @@ export default function SettingsTab({
 
       {/* ── T2I バックエンド ── */}
       <div className="settings-section">
-        <h3>T2I バックエンド</h3>
+        <h3>
+          T2I バックエンド
+          <label className="debug-mode-label">
+            <input type="checkbox" checked={t2iDebug} onChange={e => setT2iDebug(e.target.checked)} />
+            多重起動
+          </label>
+        </h3>
         {t2iBackends && (
           <select value={t2iBackend} onChange={async e => {
             const b = e.target.value
+            if (!t2iDebug && LOCAL_BACKENDS.t2i.includes(t2iBackend) && t2iBackend !== b) stopBackend(t2iBackend)
             onT2iBackendChange(b)
             if (LOCAL_BACKENDS.t2i.includes(b)) launchBackend(b, setT2iLaunchMsg)
             else setT2iLaunchMsg('')
@@ -264,8 +340,8 @@ export default function SettingsTab({
           <div className="settings-row" style={{ marginTop: 8 }}>
             <label>モデル</label>
             <select
-              value={get('t2i_model', t2iModels[0])}
-              onChange={e => set('t2i_model', e.target.value)}
+              value={get(t2iMKey, t2iModels[0])}
+              onChange={e => set(t2iMKey, e.target.value)}
             >
               {t2iModels.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
@@ -286,8 +362,8 @@ export default function SettingsTab({
           <div className="settings-row" style={{ marginTop: 8 }}>
             <label>モデル</label>
             <select
-              value={get('t2i_model', civitaiModels[0]?.model_air ?? '') as string}
-              onChange={e => set('t2i_model', e.target.value)}
+              value={get(t2iMKey, civitaiModels[0]?.model_air ?? '') as string}
+              onChange={e => set(t2iMKey, e.target.value)}
             >
               {civitaiModels.map(m => (
                 <option key={m.model_air} value={m.model_air}>
@@ -304,11 +380,11 @@ export default function SettingsTab({
         )}
         {t2iBackend === 'huggingface' && (
           <>
-            {get('t2i_model', '') && (
+            {get(t2iMKey, '') && (
               <div className="settings-row" style={{ marginTop: 4 }}>
                 <label>選択中</label>
                 <span style={{ fontSize: '0.82em', fontFamily: 'monospace', color: '#a8d8f0' }}>
-                  {get('t2i_model', '') as string}
+                  {get(t2iMKey, '') as string}
                 </span>
               </div>
             )}
@@ -316,6 +392,46 @@ export default function SettingsTab({
               🤗 HuggingFace モデル管理
             </button>
           </>
+        )}
+        {get(t2iMKey, '') && (
+          <div className="t2i-quality-section">
+            <div className="settings-row" style={{ marginTop: 12 }}>
+              <label>品質タグ</label>
+              <input
+                type="text"
+                className="settings-text-input"
+                value={t2iQualityTags}
+                onChange={e => setT2iQualityTags(e.target.value)}
+                placeholder="masterpiece, best quality"
+              />
+            </div>
+            <div className="settings-row" style={{ marginTop: 6 }}>
+              <label>ネガプロンプト</label>
+              <input
+                type="text"
+                className="settings-text-input"
+                value={t2iNegPrompt}
+                onChange={e => setT2iNegPrompt(e.target.value)}
+                placeholder="lowres, bad anatomy, worst quality"
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              <button className="profile-open-btn" onClick={async () => {
+                const model = get(t2iMKey, '') as string
+                if (!model) return
+                await fetch('/api/settings/t2i-quality', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ model, quality_tags: t2iQualityTags, negative_prompt: t2iNegPrompt }),
+                })
+                setT2iQualitySaveMsg('✓ 保存しました')
+                setTimeout(() => setT2iQualitySaveMsg(''), 3000)
+              }}>
+                💾 保存
+              </button>
+              {t2iQualitySaveMsg && <span className="tts-launch-msg">{t2iQualitySaveMsg}</span>}
+            </div>
+          </div>
         )}
       </div>
 
@@ -496,15 +612,15 @@ export default function SettingsTab({
       )}
       {showCivitai && (
         <CivitaiDialog
-          currentModel={get('t2i_model', '') as string}
-          onSelect={id => set('t2i_model', id)}
+          currentModel={get(t2iMKey, '') as string}
+          onSelect={id => set(t2iMKey, id)}
           onClose={() => setShowCivitai(false)}
         />
       )}
       {showHf && (
         <HuggingFaceDialog
-          currentModel={get('t2i_model', '') as string}
-          onSelect={id => set('t2i_model', id)}
+          currentModel={get(t2iMKey, '') as string}
+          onSelect={id => set(t2iMKey, id)}
           onClose={() => setShowHf(false)}
         />
       )}

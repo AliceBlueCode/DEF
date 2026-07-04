@@ -74,7 +74,8 @@
         "appearance_tags": "1girl, long hair, twintails, teal hair, aqua hair, teal eyes, aqua eyes, headphones, detached sleeves, necktie, miniskirt, thighhighs, boots, smile",
         "image_name_tags": "hatsune miku"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#1da0a0"
     },
     "relationships": {},
     "game_rules_sheets": {}

@@ -1,42 +1,75 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 
 type NovelItem = { title: string; file: string }
-type Novel = {
-  title: string
-  body: string
-  plot?: string
-  [key: string]: unknown
-}
-type MediaItem = { type: 'image'; prompt: string; url: string }
+type Novel = { title: string; body: string; plot?: string; [key: string]: unknown }
+type MediaItem =
+  | { type: 'image'; prompt: string; url: string }
+  | { type: 'audio'; text: string; url: string }
+
+type BackendInfo = { backends: string[]; labels: Record<string, string>; default: string }
 
 type Props = {
   backend: string
   t2iBackend: string
   candidateCount: number
+  ttsBackend: string
+  selectedChar: string
+  llmBackends: BackendInfo | null
 }
 
+
 function splitScenes(body: string): { label: string; text: string }[] {
-  const segments = body.split(/(--- Scene \d+ ---)/)
+  const segments = body.split(/(--- (?:Chapter|Scene) \d+ ---)/)
   const scenes: { label: string; text: string }[] = []
-  let label = ''
+  let chapter = ''
+  let scene = ''
   for (const seg of segments) {
-    if (/^--- Scene \d+ ---$/.test(seg)) {
-      label = seg.trim()
-    } else if (seg.trim()) {
-      const clean = seg.replace(/--- Chapter \d+ ---/g, '').trim()
-      if (clean) scenes.push({ label: label || 'Scene', text: clean })
+    const chMatch = seg.match(/^--- (Chapter \d+) ---$/)
+    const scMatch = seg.match(/^--- (Scene \d+) ---$/)
+    if (chMatch) { chapter = chMatch[1]; scene = '' }
+    else if (scMatch) { scene = scMatch[1] }
+    else if (seg.trim()) {
+      const clean = seg.trim()
+      if (clean) {
+        const label = chapter && scene ? `${chapter} + ${scene}` : scene || chapter || 'Scene'
+        scenes.push({ label, text: clean })
+      }
     }
   }
   return scenes
 }
 
-export default function NovelTab({ backend, t2iBackend, candidateCount }: Props) {
+function chunkText(text: string, maxLen = 400): string[] {
+  const cleaned = text.replace(/--- (?:Chapter|Scene) \d+ ---/g, '').trim()
+  const sentences: string[] = []
+  cleaned.split('\n').forEach(line => {
+    line = line.trim()
+    if (!line) return
+    line.split(/(?<=。)/).forEach(s => { if (s.trim()) sentences.push(s.trim()) })
+  })
+  if (sentences.length === 0 && cleaned) return [cleaned]
+  const chunks: string[] = []
+  let buf = ''
+  for (const sent of sentences) {
+    if (buf && buf.length + sent.length > maxLen) { chunks.push(buf); buf = sent }
+    else { buf = buf ? buf + sent : sent }
+  }
+  if (buf) chunks.push(buf)
+  return chunks
+}
+
+export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBackend, selectedChar, llmBackends }: Props) {
   const [novels, setNovels] = useState<NovelItem[]>([])
   const [selectedTitle, setSelectedTitle] = useState('')
   const [novel, setNovel] = useState<Novel | null>(null)
   const [body, setBody] = useState('')
-  const [newTitle, setNewTitle] = useState('')
+  const [titleInput, setTitleInput] = useState('')
   const [plot, setPlot] = useState('')
+  const [showPlotDialog, setShowPlotDialog] = useState(false)
+  const [plotDraft, setPlotDraft] = useState('')
+  const [plotFile, setPlotFile] = useState('')
+  const [plotServerFiles, setPlotServerFiles] = useState<{ name: string }[]>([])
+  const [showPlotPicker, setShowPlotPicker] = useState(false)
   const [candidates, setCandidates] = useState<string[]>([])
   const [activeCandidate, setActiveCandidate] = useState(0)
   const [generating, setGenerating] = useState(false)
@@ -44,24 +77,88 @@ export default function NovelTab({ backend, t2iBackend, candidateCount }: Props)
   const [generatingImage, setGeneratingImage] = useState(false)
   const [media, setMedia] = useState<MediaItem[]>([])
   const [imageError, setImageError] = useState('')
+  const [novelBackend, setNovelBackend] = useState('')
+  const [novelT2iBackend, setNovelT2iBackend] = useState('')
+  const [novelT2iModel, setNovelT2iModel] = useState('')
+  const [showT2iDialog, setShowT2iDialog] = useState(false)
+  const [t2iDlgBackend, setT2iDlgBackend] = useState('')
+  const [t2iDlgModel, setT2iDlgModel] = useState('')
+  const [t2iDlgModels, setT2iDlgModels] = useState<string[]>([])
+  const [t2iDlgWorkflows, setT2iDlgWorkflows] = useState<string[]>([])
+  const [t2iDlgWorkflow, setT2iDlgWorkflow] = useState('')
+  const [t2iDlgCustom, setT2iDlgCustom] = useState('')
+  const [t2iBackendInfo, setT2iBackendInfo] = useState<{ backends: string[]; labels: Record<string, string> } | null>(null)
+  const [t2iCivitaiModels, setT2iCivitaiModels] = useState<{ label: string; model_air: string }[]>([])
+  const [ttsPlaying, setTtsPlaying] = useState(false)
+  const [mediaHeight, setMediaHeight] = useState(() => Number(localStorage.getItem('novel_media_height')) || 200)
+  const [candidatesWidth, setCandidatesWidth] = useState(() => Number(localStorage.getItem('novel_candidates_width')) || 420)
+  const ttsAbortRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const resizingRef = useRef(false)
+  const resizeStartY = useRef(0)
+  const resizeStartH = useRef(0)
+  const colResizingRef = useRef(false)
+  const colResizeStartX = useRef(0)
+  const colResizeStartW = useRef(0)
+
+  const onResizeStart = (e: React.MouseEvent) => {
+    resizingRef.current = true
+    resizeStartY.current = e.clientY
+    resizeStartH.current = mediaHeight
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return
+      const delta = resizeStartY.current - ev.clientY
+      setMediaHeight(Math.max(80, Math.min(600, resizeStartH.current + delta)))
+    }
+    const onUp = () => {
+      resizingRef.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const onColResizeStart = (e: React.MouseEvent) => {
+    colResizingRef.current = true
+    colResizeStartX.current = e.clientX
+    colResizeStartW.current = candidatesWidth
+    const onMove = (ev: MouseEvent) => {
+      if (!colResizingRef.current) return
+      const delta = colResizeStartX.current - ev.clientX
+      setCandidatesWidth(Math.max(160, Math.min(700, colResizeStartW.current + delta)))
+    }
+    const onUp = () => {
+      colResizingRef.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  useEffect(() => { if (!novelBackend && backend) setNovelBackend(backend) }, [backend])
+  useEffect(() => { if (!novelT2iBackend && t2iBackend) setNovelT2iBackend(t2iBackend) }, [t2iBackend])
+  useEffect(() => { localStorage.setItem('novel_media_height', String(mediaHeight)) }, [mediaHeight])
+  useEffect(() => { localStorage.setItem('novel_candidates_width', String(candidatesWidth)) }, [candidatesWidth])
 
   const scenes = useMemo(() => splitScenes(body), [body])
   const currentSceneText = scenes.length > 0
     ? scenes[scenes.length - 1].text
     : body.replace(/--- (?:Chapter|Scene) \d+ ---/g, '').trim()
 
-  const loadList = () => {
-    fetch('/api/novel/')
-      .then(r => r.json())
-      .then(data => setNovels(data.novels || []))
-  }
+  const loadList = () =>
+    fetch('/api/novel/').then(r => r.json()).then(data => setNovels(data.novels || []))
 
   useEffect(() => { loadList() }, [])
 
   useEffect(() => {
     setCandidates([])
     setMedia([])
-    if (!selectedTitle) { setNovel(null); setBody(''); setPlot(''); return }
+    if (!selectedTitle) {
+      setNovel(null); setBody(''); setPlot(''); setTitleInput('')
+      return
+    }
     fetch(`/api/novel/${encodeURIComponent(selectedTitle)}`)
       .then(r => r.json())
       .then(data => {
@@ -69,223 +166,281 @@ export default function NovelTab({ backend, t2iBackend, candidateCount }: Props)
           setNovel(data.novel)
           setBody(data.novel.body || '')
           setPlot(data.novel.plot || '')
+          setTitleInput(data.novel.title || selectedTitle)
         }
       })
   }, [selectedTitle])
 
-  const saveNovel = async () => {
-    const ep = { ...(novel || {}), title: selectedTitle || newTitle, body, plot }
+  const doSave = async (newBody: string, newPlot?: string, newTitle?: string) => {
+    const title = (newTitle ?? titleInput).trim() || 'Untitled'
+    const ep = { ...(novel || {}), title, body: newBody, plot: newPlot ?? plot }
     await fetch('/api/novel/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ novel: ep }),
     })
-    loadList()
-    if (!selectedTitle) setSelectedTitle(ep.title)
-  }
-
-  const createNew = () => {
-    if (!newTitle.trim()) return
-    setSelectedTitle('')
-    setNovel(null)
-    setBody('')
-    saveNovelAs(newTitle)
-  }
-
-  const saveNovelAs = async (title: string) => {
-    await fetch('/api/novel/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ novel: { title, body: '' } }),
-    })
-    loadList()
+    // タイトルが変わった場合は旧ファイルを削除
+    if (selectedTitle && selectedTitle !== title) {
+      await fetch(`/api/novel/${encodeURIComponent(selectedTitle)}`, { method: 'DELETE' })
+    }
     setSelectedTitle(title)
-    setNewTitle('')
+    setTitleInput(title)
+    loadList()
   }
+
+  const saveNovel = () => doSave(body)
 
   const deleteNovel = async () => {
     if (!selectedTitle) return
     if (!confirm(`"${selectedTitle}" を削除しますか？`)) return
     await fetch(`/api/novel/${encodeURIComponent(selectedTitle)}`, { method: 'DELETE' })
-    setSelectedTitle('')
-    setNovel(null)
-    setBody('')
+    setSelectedTitle(''); setNovel(null); setBody(''); setTitleInput('')
     loadList()
   }
 
   const insertMarker = (type: 'chapter' | 'scene') => {
     if (type === 'chapter') {
-      const chCount = (body.match(/--- Chapter \d+ ---/g) || []).length
-      const marker = `\n--- Chapter ${chCount + 1} ---\n--- Scene 1 ---\n`
-      setBody(body + marker)
+      const n = (body.match(/--- Chapter \d+ ---/g) || []).length
+      setBody(body + `\n--- Chapter ${n + 1} ---\n--- Scene 1 ---\n`)
     } else {
-      const scCount = (body.match(/--- Scene \d+ ---/g) || []).length
-      setBody(body + `\n--- Scene ${scCount + 1} ---\n`)
+      const n = (body.match(/--- Scene \d+ ---/g) || []).length
+      setBody(body + `\n--- Scene ${n + 1} ---\n`)
     }
   }
 
   const generateCandidates = async () => {
-    setGenerating(true)
-    setCandidates([])
+    setGenerating(true); setCandidates([])
     try {
       const res = await fetch('/api/novel/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          body,
-          plot,
-          backend,
-          candidate_count: candidateCount,
-        }),
+        body: JSON.stringify({ body, plot, backend: novelBackend || backend, candidate_count: candidateCount }),
       })
       const data = await res.json()
-      setCandidates(data.candidates || [])
-      setActiveCandidate(0)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setGenerating(false)
-    }
+      setCandidates(data.candidates || []); setActiveCandidate(0)
+    } catch (e) { console.error(e) }
+    finally { setGenerating(false) }
   }
 
-  const appendCandidate = (text: string) => {
-    setBody(prev => (prev ? `${prev}\n${text}` : text))
-    setCandidates([])
+  const appendCandidate = async (text: string) => {
+    const newBody = body ? `${body}\n${text}` : text
+    setBody(newBody); setCandidates([])
+    await doSave(newBody)
+  }
+
+  const loadT2iModelsForBackend = async (backend: string) => {
+    setT2iDlgModels([])
+    setT2iDlgWorkflows([])
+    if (!backend) return
+    try {
+      if (backend === 'civitai') {
+        const res = await fetch('/api/settings/civitai-models')
+        const data = await res.json()
+        setT2iCivitaiModels(data.models || [])
+      } else {
+        const res = await fetch(`/api/settings/t2i-models?backend=${encodeURIComponent(backend)}`)
+        const data = await res.json()
+        setT2iDlgModels(data.models || [])
+        setT2iDlgWorkflows(data.workflows || [])
+      }
+    } catch { /* ignore */ }
+  }
+
+  const openT2iDialog = async () => {
+    const dlgBackend = novelT2iBackend || t2iBackend || ''
+    setT2iDlgBackend(dlgBackend)
+    setT2iDlgModel(novelT2iModel)
+    setT2iDlgCustom('')
+    setT2iDlgModels([])
+    setT2iDlgWorkflows([])
+    setT2iDlgWorkflow('')
+    setShowT2iDialog(true)
+    if (!t2iBackendInfo) {
+      try {
+        const res = await fetch('/api/settings/backends')
+        const data = await res.json()
+        if (data.t2i) setT2iBackendInfo(data.t2i)
+      } catch { /* ignore */ }
+    }
+    await loadT2iModelsForBackend(dlgBackend)
+  }
+
+  const onT2iDlgBackendChange = async (backend: string) => {
+    setT2iDlgBackend(backend)
+    setT2iDlgModel('')
+    setT2iDlgCustom('')
+    await loadT2iModelsForBackend(backend)
+  }
+
+  const applyT2iSettings = () => {
+    setNovelT2iBackend(t2iDlgBackend)
+    setNovelT2iModel(t2iDlgCustom.trim() || t2iDlgModel)
+    setShowT2iDialog(false)
   }
 
   const generateImage = async (sceneText: string) => {
     if (!sceneText) return
-    setGeneratingImage(true)
-    setImageError('')
+    setGeneratingImage(true); setImageError('')
     try {
       const res = await fetch('/api/novel/t2i', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scene_text: sceneText,
-          plot,
-          llm_backend: backend,
-          t2i_backend: t2iBackend,
-        }),
+        body: JSON.stringify({ scene_text: sceneText, plot, llm_backend: novelBackend || backend, t2i_backend: novelT2iBackend || t2iBackend, t2i_model: novelT2iModel }),
       })
       const data = await res.json()
-      if (data.error) {
-        setImageError(data.error)
-        return
-      }
+      if (data.error) { setImageError(data.error); return }
       setMedia(prev => [...prev, { type: 'image', prompt: data.prompt, url: data.image_url }])
-    } catch (e) {
-      setImageError(String(e))
-    } finally {
-      setGeneratingImage(false)
-    }
+    } catch (e) { setImageError(String(e)) }
+    finally { setGeneratingImage(false) }
   }
+
+  const playNovelTTS = async (text: string) => {
+    if (!selectedChar || !ttsBackend || ttsPlaying) return
+    ttsAbortRef.current = false; setTtsPlaying(true)
+    for (const chunk of chunkText(text)) {
+      if (ttsAbortRef.current) break
+      try {
+        const res = await fetch('/api/tts/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: chunk, character_id: selectedChar, backend: ttsBackend }),
+        })
+        if (!res.ok) continue
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        setMedia(prev => [...prev, { type: 'audio', text: chunk, url }])
+        await new Promise<void>(resolve => {
+          const audio = new Audio(url)
+          audio.onended = () => resolve()
+          audio.onerror = () => resolve()
+          audio.play().catch(() => resolve())
+        })
+      } catch (e) { console.error('Novel TTS error:', e) }
+    }
+    setTtsPlaying(false)
+  }
+
+  const stopTTS = () => { ttsAbortRef.current = true; setTtsPlaying(false) }
+
+  const openPlotDialog = () => {
+    setPlotDraft(plot)
+    setShowPlotPicker(false)
+    setShowPlotDialog(true)
+    fetch('/api/novel/plots')
+      .then(r => r.json())
+      .then(data => setPlotServerFiles(data.files || []))
+      .catch(() => {})
+  }
+
+  const loadServerPlot = async (name: string) => {
+    try {
+      const res = await fetch(`/api/novel/plots/${encodeURIComponent(name)}`)
+      const data = await res.json()
+      if (data.content !== undefined) {
+        setPlotDraft(data.content)
+        setPlotFile(name)
+      }
+    } catch (e) { console.error('plot load error:', e) }
+    setShowPlotPicker(false)
+  }
+
+  const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPlotFile(file.name)
+    const reader = new FileReader()
+    reader.onload = ev => setPlotDraft((ev.target?.result as string) || '')
+    reader.readAsText(file, 'utf-8')
+    e.target.value = ''
+  }
+
+  const writePlotFile = async (content: string) => {
+    if (!plotFile) return
+    await fetch(`/api/novel/plots/${encodeURIComponent(plotFile)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    })
+  }
+
+  const savePlot = async () => {
+    setPlot(plotDraft)
+    await writePlotFile(plotDraft)
+    if (selectedTitle) await doSave(body, plotDraft)
+  }
+
+  const applyPlot = async () => {
+    setPlot(plotDraft)
+    await writePlotFile(plotDraft)
+    if (selectedTitle) await doSave(body, plotDraft)
+    setShowPlotDialog(false)
+  }
+
+  const backendList = llmBackends?.backends || []
+  const backendLabels = llmBackends?.labels || {}
+  const isNew = !selectedTitle
 
   return (
     <div className="tab-content novel-tab">
-      <div className="novel-sidebar">
-        <h3>作品一覧</h3>
-        <div className="novel-list">
-          {novels.map(ep => (
-            <button
-              key={ep.title}
-              className={`novel-item ${selectedTitle === ep.title ? 'active' : ''}`}
-              onClick={() => setSelectedTitle(ep.title)}
-            >
-              {ep.title}
-            </button>
-          ))}
+
+      {/* ヘッダー: 作品選択・タイトル・プロット設定 */}
+      <div className="novel-header">
+        <div className="novel-select-row">
+          <select
+            className="novel-select"
+            value={selectedTitle}
+            onChange={e => setSelectedTitle(e.target.value)}
+          >
+            <option value="">＋ 新規作品</option>
+            {novels.map(n => <option key={n.title} value={n.title}>{n.title}</option>)}
+          </select>
         </div>
-        <div className="novel-new">
+
+        <div className="novel-title-row">
+          <label className="novel-field-label">タイトル</label>
           <input
-            type="text"
-            value={newTitle}
-            onChange={e => setNewTitle(e.target.value)}
-            placeholder="新しい作品名..."
+            className="novel-title-input"
+            value={titleInput}
+            onChange={e => setTitleInput(e.target.value)}
+            placeholder="タイトルを入力..."
           />
-          <button onClick={createNew} disabled={!newTitle.trim()}>作成</button>
+        </div>
+
+        <div className="novel-plot-row">
+          <button className="novel-hdr-btn" onClick={openPlotDialog}>
+            📝 プロット設定
+          </button>
+          <span className="novel-plot-status">
+            {plotFile ? `✅ ${plotFile}` : plot ? '✅ 設定済み' : '未設定'}
+          </span>
+          {backendList.length > 0 && (
+            <select
+              className="novel-backend-sel"
+              value={novelBackend || backend}
+              onChange={e => setNovelBackend(e.target.value)}
+            >
+              {backendList.map(b => (
+                <option key={b} value={b}>{backendLabels[b] || b}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
-      <div className="novel-main">
-        {selectedTitle ? (
-          <>
-            <div className="novel-toolbar">
-              <h2>{selectedTitle}</h2>
-              <div className="novel-actions">
-                <button onClick={saveNovel}>💾 保存</button>
-                <button onClick={generateCandidates} disabled={generating}>
-                  {generating ? '✍ 生成中...' : '✍ 生成'}
-                </button>
-                <button onClick={() => insertMarker('chapter')}>新章</button>
-                <button onClick={() => insertMarker('scene')}>新場面</button>
-                <button className="delete-btn" onClick={deleteNovel}>🗑 削除</button>
-              </div>
-            </div>
-            <textarea
-              className="plot-editor"
-              value={plot}
-              onChange={e => setPlot(e.target.value)}
-              placeholder="プロット設定（任意）..."
-              rows={2}
-            />
-            <textarea
-              className="novel-editor"
-              value={body}
-              onChange={e => setBody(e.target.value)}
-              placeholder="ここに物語を書きましょう..."
-            />
+      {/* 本文 + 候補 2カラム */}
+      <div className="novel-body-area">
+        <div className="novel-body-col">
+          <textarea
+            className="novel-editor"
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            placeholder="ここに物語を書きましょう..."
+          />
+        </div>
 
-            <div className="novel-illustration-bar">
-              <button
-                onClick={() => generateImage(currentSceneText)}
-                disabled={generatingImage || !currentSceneText}
-              >
-                🎨 現挿絵
-              </button>
-              {scenes.length > 0 && (
-                <>
-                  <select
-                    value={selectedSceneIdx}
-                    onChange={e => setSelectedSceneIdx(Number(e.target.value))}
-                  >
-                    {scenes.map((s, i) => (
-                      <option key={i} value={i}>{s.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => generateImage(scenes[selectedSceneIdx]?.text || '')}
-                    disabled={generatingImage}
-                  >
-                    🎨 選択挿絵
-                  </button>
-                </>
-              )}
-              {generatingImage && <span className="generating-label">生成中...</span>}
-            </div>
+        <div className="novel-col-resize-handle" onMouseDown={onColResizeStart} />
 
-            {imageError && <p className="image-error">⚠ {imageError}</p>}
-
-            {media.length > 0 && (
-              <div className="novel-media">
-                {media.map((m, i) => (
-                  <div key={i} className="media-item">
-                    <p className="media-prompt">Prompt: {m.prompt.slice(0, 200)}</p>
-                    <img src={m.url} alt="" />
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="novel-empty">
-            <p>作品を選択するか、新しく作成してください</p>
-          </div>
-        )}
-      </div>
-
-      {selectedTitle && (
-        <div className="novel-candidates">
+        <div className="novel-candidates" style={{ width: `${candidatesWidth}px`, flexShrink: 0 }}>
           <h3>AI候補</h3>
           {candidates.length > 0 ? (
             <>
@@ -304,9 +459,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount }: Props)
                 className="candidate-text"
                 value={candidates[activeCandidate] || ''}
                 onChange={e => {
-                  const next = [...candidates]
-                  next[activeCandidate] = e.target.value
-                  setCandidates(next)
+                  const next = [...candidates]; next[activeCandidate] = e.target.value; setCandidates(next)
                 }}
               />
               <div className="candidate-actions">
@@ -318,7 +471,240 @@ export default function NovelTab({ backend, t2iBackend, candidateCount }: Props)
             <p className="candidate-empty">「生成」で候補が表示されます。</p>
           )}
         </div>
+      </div>
+
+      {/* 下部バー: 編集操作（左） / TTS・T2I（右） */}
+      <div className="novel-action-bar">
+        <div className="novel-action-left">
+          <button onClick={saveNovel}>💾 保存</button>
+          <button onClick={generateCandidates} disabled={generating}>
+            {generating ? '✍ 生成中...' : '✍ 生成'}
+          </button>
+          <button onClick={() => insertMarker('chapter')}>新章</button>
+          <button onClick={() => insertMarker('scene')}>新場面</button>
+          {!isNew && (
+            <button className="delete-btn" onClick={deleteNovel}>🗑 削除</button>
+          )}
+        </div>
+        <div className="novel-action-right">
+          {ttsPlaying ? (
+            <button onClick={stopTTS}>⏹ 停止</button>
+          ) : (
+            <button onClick={() => playNovelTTS(currentSceneText)} disabled={!currentSceneText || !selectedChar}>
+              🔊 現場面
+            </button>
+          )}
+          <button onClick={() => generateImage(currentSceneText)} disabled={generatingImage || !currentSceneText}>
+            🎨 現挿絵
+          </button>
+          {scenes.length > 0 && (
+            <>
+              <select value={selectedSceneIdx} onChange={e => setSelectedSceneIdx(Number(e.target.value))}>
+                {scenes.map((s, i) => <option key={i} value={i}>{s.label}</option>)}
+              </select>
+              <button onClick={() => playNovelTTS(scenes[selectedSceneIdx]?.text || '')} disabled={ttsPlaying || !selectedChar}>
+                🔊 選択読上
+              </button>
+              <button onClick={() => generateImage(scenes[selectedSceneIdx]?.text || '')} disabled={generatingImage}>
+                🎨 選択挿絵
+              </button>
+            </>
+          )}
+          {(generatingImage || ttsPlaying) && (
+            <span className="generating-label">{generatingImage ? '画像生成中...' : '読み上げ中...'}</span>
+          )}
+          <button className="novel-hdr-btn" onClick={openT2iDialog} title="T2I設定">⚙ T2I</button>
+        </div>
+      </div>
+
+      {imageError && <p className="image-error">⚠ {imageError}</p>}
+
+      {media.length > 0 && (
+        <>
+        <div className="novel-resize-handle" onMouseDown={onResizeStart} />
+        <div className="novel-media" style={{ height: `${mediaHeight}px`, maxHeight: 'none' }}>
+          {media.map((m, i) => (
+            <div key={i} className="media-item">
+              {m.type === 'image' ? (
+                <><p className="media-prompt">Prompt: {m.prompt.slice(0, 200)}</p><img src={m.url} alt="" /></>
+              ) : (
+                <><p className="media-prompt">{m.text.slice(0, 80)}</p><audio controls src={m.url} className="audio-player" /></>
+              )}
+            </div>
+          ))}
+        </div>
+        </>
       )}
+
+      {/* プロット設定モーダル */}
+      {showPlotDialog && (
+        <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowPlotDialog(false) }}>
+          <div className="plot-dialog">
+            <div className="plot-dialog-header">
+              <span>プロット設定</span>
+              <button className="plot-dialog-close" onClick={() => setShowPlotDialog(false)}>×</button>
+            </div>
+            <div className="plot-dialog-body">
+              <div className="plot-file-row">
+                <button className="novel-hdr-btn" onClick={() => setShowPlotPicker(v => !v)}>
+                  📂 開く
+                </button>
+                {plotFile && <span className="plot-file-name">{plotFile}</span>}
+              </div>
+              {showPlotPicker && (
+                <div className="plot-file-picker">
+                  {plotServerFiles.length === 0 ? (
+                    <p className="plot-file-empty">episode_prompts フォルダにファイルがありません</p>
+                  ) : (
+                    plotServerFiles.map(f => (
+                      <button key={f.name} className="plot-file-item" onClick={() => loadServerPlot(f.name)}>
+                        📄 {f.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+              <hr className="plot-dialog-divider" />
+              <textarea
+                className="plot-dialog-textarea"
+                value={plotDraft}
+                onChange={e => setPlotDraft(e.target.value)}
+                placeholder="プロット（任意）..."
+                rows={12}
+              />
+            </div>
+            <div className="plot-dialog-footer">
+              <button className="novel-hdr-btn" onClick={savePlot}>💾 保存</button>
+              <button className="novel-hdr-btn apply-btn" onClick={applyPlot}>✅ 反映</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* T2I設定モーダル */}
+      {showT2iDialog && (
+        <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowT2iDialog(false) }}>
+          <div className="plot-dialog" style={{ maxWidth: 440 }}>
+            <div className="plot-dialog-header">
+              <span>⚙ T2I設定（ノベル専用）</span>
+              <button onClick={() => setShowT2iDialog(false)}>✕</button>
+            </div>
+            <div className="plot-dialog-body" style={{ gap: 14 }}>
+
+              {/* バックエンド */}
+              <div className="t2i-dlg-row">
+                <label>バックエンド</label>
+                <select
+                  className="novel-backend-sel"
+                  value={t2iDlgBackend}
+                  onChange={e => onT2iDlgBackendChange(e.target.value)}
+                >
+                  {(t2iBackendInfo?.backends ?? [t2iDlgBackend]).map(b => (
+                    <option key={b} value={b}>{t2iBackendInfo?.labels[b] || b}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* モデル (a1111 / comfyui / HF — リストあり) */}
+              {t2iDlgModels.length > 0 && t2iDlgBackend !== 'civitai' && (
+                <div className="t2i-dlg-row">
+                  <label>モデル</label>
+                  <select
+                    className="novel-backend-sel"
+                    value={t2iDlgModel}
+                    onChange={e => { setT2iDlgModel(e.target.value); setT2iDlgCustom('') }}
+                  >
+                    {t2iDlgBackend !== 'huggingface' && <option value="">（現在のモデル）</option>}
+                    {t2iDlgModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* ワークフロー (comfyui のみ) */}
+              {t2iDlgWorkflows.length > 0 && (
+                <div className="t2i-dlg-row">
+                  <label>ワークフロー</label>
+                  <select
+                    className="novel-backend-sel"
+                    value={t2iDlgWorkflow}
+                    onChange={e => setT2iDlgWorkflow(e.target.value)}
+                  >
+                    {t2iDlgWorkflows.map(w => <option key={w} value={w}>{w}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* HuggingFace カスタム入力 */}
+              {t2iDlgBackend === 'huggingface' && (
+                <div className="t2i-dlg-row">
+                  <label>カスタム</label>
+                  <input
+                    className="novel-title-input"
+                    value={t2iDlgCustom}
+                    onChange={e => setT2iDlgCustom(e.target.value)}
+                    placeholder="user/model-name"
+                  />
+                </div>
+              )}
+
+              {/* Civitai モデル */}
+              {t2iDlgBackend === 'civitai' && (
+                <>
+                  {t2iCivitaiModels.length > 0 && (
+                    <div className="t2i-dlg-row">
+                      <label>モデル</label>
+                      <select
+                        className="novel-backend-sel"
+                        value={t2iDlgModel}
+                        onChange={e => { setT2iDlgModel(e.target.value); setT2iDlgCustom('') }}
+                      >
+                        <option value="">選択...</option>
+                        {t2iCivitaiModels.map(m => (
+                          <option key={m.model_air} value={m.model_air}>{m.label || m.model_air}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div className="t2i-dlg-row">
+                    <label>新規 AIR</label>
+                    <input
+                      className="novel-title-input"
+                      value={t2iDlgCustom}
+                      onChange={e => setT2iDlgCustom(e.target.value)}
+                      placeholder="AIR / URL"
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* モデルなしバックエンド用テキスト入力 */}
+              {t2iDlgModels.length === 0 && t2iDlgBackend !== 'civitai' && t2iDlgBackend !== 'huggingface' && (
+                <div className="t2i-dlg-row">
+                  <label>モデル名</label>
+                  <input
+                    className="novel-title-input"
+                    value={t2iDlgModel}
+                    onChange={e => setT2iDlgModel(e.target.value)}
+                    placeholder="（空=現在のモデル）"
+                  />
+                </div>
+              )}
+
+              {/* 現在の設定表示 */}
+              {novelT2iBackend && (
+                <p style={{ fontSize: '0.8em', color: '#888', margin: 0 }}>
+                  現在: {t2iBackendInfo?.labels[novelT2iBackend] || novelT2iBackend}
+                  {novelT2iModel ? ` / ${novelT2iModel}` : ''}
+                </p>
+              )}
+            </div>
+            <div className="plot-dialog-footer">
+              <button className="novel-hdr-btn apply-btn" onClick={applyT2iSettings}>✅ 反映</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <input ref={fileInputRef} type="file" accept=".txt,.md" style={{ display: 'none' }} onChange={handleFileLoad} />
     </div>
   )
 }

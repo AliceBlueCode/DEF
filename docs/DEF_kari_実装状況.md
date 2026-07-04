@@ -1,6 +1,8 @@
-# DEF(kari) v1.0.0 実装状況
+# DEF(kari) v2.0.0 実装状況
 
 本ドキュメントは、基本設計書に記載された機能仕様（F番号）の実装状況を記録するものです。
+
+> **v2.0.0 変更点:** アーキテクチャを Streamlit → FastAPI + React (Vite/TypeScript) に移行。詳細は基本設計書 Section 2.1 を参照。
 
 ---
 
@@ -25,11 +27,17 @@
 | F-17 | 生成アセット管理 | ✅ 実装済み | Git管理対象外に隔離 |
 | F-18 | session_state軽量化 | ✅ 実装済み | MAX_VISIBLE_TURNS=3、trim_session、遅延読み込み |
 | F-23 | ターン再生成・Undo/Redo | ✅ 実装済み | 全体/音声のみ/画像のみ再生成、保持件数設定可能 |
-| F-24 | エピソードモード基盤 | ✅ 実装済み | 作品管理、プロット設定、AI候補生成、Chapter/Sceneマーカー |
+| F-24 | エピソードモード基盤 | ✅ 実装済み | 作品管理、プロット設定、AI候補生成、`Chapter N + Scene M` ラベル |
 | F-24 | エピソードモード 3モダリティ | ✅ 実装済み | TTS読み上げ（Scene単位）、T2I挿絵（LLM→画像プロンプト→生成） |
+| F-24 | プロットファイル書き戻し | ✅ 実装済み | `PUT /api/novel/plots/{filename}` でGit管理プロットを直接保存 |
+| F-24 | T2I設定ダイアログ | ✅ 実装済み | バックエンド・モデルを `/api/settings/backends` から動的取得 |
+| F-24 | リサイズ対応レイアウト | ✅ 実装済み | 本文↔サムネ（縦）・本文↔AI候補（横）ドラッグリサイズ、localStorage保存 |
+| F-13-1 | VRAM排他制御（ノベルタブ） | ✅ 実装済み | `/api/novel/generate` と `/api/novel/t2i` が vram_lock を取得・解放 |
 | F-25 | origin_type・公開ポリシー | ✅ 実装済み | original/reconstructed_persona/personification/derivative |
 | F-26 | キャラクター切替時の自動挨拶 | ✅ 実装済み | ON/OFF設定可能 |
 | F-27 | メタ自己認識ディレクティブ | ✅ 実装済み | システムプロンプトに組み込み |
+| —— | キャラクターイメージカラー | ✅ 実装済み | `base_profile.image_color` フィールド、CharacterTab カラーピッカー、ChatTab AIバブルへの適用 |
+| —— | サイドバー折り畳み | ✅ 実装済み | `Sidebar.tsx` collapse state、◀/▶ トグルボタン |
 
 ---
 
@@ -55,7 +63,7 @@
 |---|---|
 | セッション履歴のトークン上限 | 長時間セッションでLLMのコンテキスト上限に達する可能性あり |
 | i18n動的メッセージ | セッション内のf-string約30箇所が未ロケール化（Python 3.12以降で対応予定） |
-| タブヘッダー固定 | Streamlitの制約。フレームワーク移行時に対応 |
+| タブヘッダー固定 | React移行後は解消済み |
 | Irodori-TTS CUDA | uv sync後にvenvがCPU版になる場合がある |
 | バックエンド多重起動 | PIDファイルガードの不安定さ |
 
@@ -79,4 +87,4 @@
 
 ---
 
-本ドキュメントはv1.0.0時点の状況です。最新の状況はリポジトリのIssuesおよびリリースノートを参照してください。
+本ドキュメントはv2.0.0時点の状況です。最新の状況はリポジトリのIssuesおよびリリースノートを参照してください。

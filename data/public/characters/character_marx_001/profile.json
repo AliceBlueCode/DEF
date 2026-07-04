@@ -88,7 +88,8 @@
         "features": "black beard, large mustache, dark suit, 19th century european clothing, intense gaze",
         "appearance_tags": "1boy, old man, black hair, long beard, mustache, suit, serious expression"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#992222"
     },
     "game_rules_sheets": {},
     "relationships": {}

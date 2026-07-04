@@ -86,6 +86,17 @@ def get_llm_models(backend: str = ""):
     return {"models": models, "default": LLM_BACKENDS[backend].get("default_model", "")}
 
 
+@router.get("/load-llm-model")
+def load_llm_model(backend: str = "", model: str = ""):
+    if backend == "textgen_webui" and model:
+        from def_kari.llm.adapters.tgw import load_model
+        err = load_model(model)
+        if err:
+            return {"status": "error", "message": err}
+        return {"status": "ok"}
+    return {"status": "unsupported"}
+
+
 @router.get("/t2i-models")
 def get_t2i_models(backend: str = ""):
     models: list[str] = []
@@ -322,6 +333,7 @@ def launch_backend(id: str = ""):
         "irodori":       (_be.is_irodori_running,  _be.start_irodori),
         "kokoro":        (_be.is_kokoro_running,   _be.start_kokoro),
         "textgen_webui": (_be.is_tgw_running,      _be.start_tgw),
+        "ollama":        (_be.is_ollama_running,   _be.start_ollama),
         "a1111":         (_be.is_a1111_running,     _be.start_a1111),
         "comfyui":       (_be.is_comfyui_running,   _be.start_comfyui),
     }
@@ -334,6 +346,48 @@ def launch_backend(id: str = ""):
     if err:
         return {"status": "error", "message": err}
     return {"status": "launched"}
+
+
+@router.get("/t2i-quality")
+def get_t2i_quality(model: str = ""):
+    from def_kari.models.t2i_profiles import get_quality_settings
+    quality_tags, negative_prompt = get_quality_settings(model or None)
+    return {"quality_tags": quality_tags, "negative_prompt": negative_prompt}
+
+
+class SaveT2iQualityRequest(BaseModel):
+    model: str
+    quality_tags: str
+    negative_prompt: str
+
+
+@router.post("/t2i-quality")
+def save_t2i_quality(req: SaveT2iQualityRequest):
+    if not req.model:
+        return {"error": "model required"}
+    from def_kari.models.t2i_profiles import save_quality_settings
+    save_quality_settings(req.model, req.quality_tags, req.negative_prompt)
+    return {"status": "ok"}
+
+
+@router.get("/stop-backend")
+def stop_backend(id: str = ""):
+    from def_kari import backends as _be
+    _map = {
+        "voicevox":      _be.stop_voicevox,
+        "irodori":       _be.stop_irodori,
+        "kokoro":        _be.stop_kokoro,
+        "textgen_webui": _be.stop_tgw,
+        "ollama":        _be.stop_ollama,
+        "a1111":         _be.stop_a1111,
+        "comfyui":       _be.stop_comfyui,
+    }
+    if id not in _map:
+        return {"status": "unknown"}
+    err = _map[id]()
+    if err:
+        return {"status": "error", "message": err}
+    return {"status": "stopped"}
 
 
 @router.get("/backend-dirs")

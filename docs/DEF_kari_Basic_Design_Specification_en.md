@@ -75,9 +75,33 @@ This principle applies to the following design decisions:
 
 ## 2.1 Frontend / Application Platform
 
-Streamlit (Python) is fully adopted as the application platform. All dynamic state management for users (chat history, character sheets, toss counts, etc.) is stored and centrally managed in `st.session_state` to accommodate each screen's rendering characteristics. `st.session_state` is used solely for pure UI state management and event bridging from queues; direct writes from background threads are universally prohibited.
+**React (TypeScript, Vite) + FastAPI (Python)** is adopted as the application platform. The backend exposes REST APIs via FastAPI, and the frontend is a single-page application built with React/TypeScript (Vite). The two communicate via HTTP (REST API), with no WebSocket connection at present (polling is used where needed).
 
-Streamlit is positioned as the implementation platform for the current stage. In preparation for future architecture migration (see Chapter 10), core logic (event processing, state transitions, interfaces with each AI layer) is implemented separately from the UI layer.
+### Frontend Tab Structure
+
+The UI is organized into four tabs:
+
+| Tab | Component | Responsibility |
+|---|---|---|
+| Chat | `ChatTab.tsx` | Turn-by-turn dialogue with a character. LLM call, TTS, T2I trigger, Undo/Redo |
+| Novel | `NovelTab.tsx` | Long-form episode generation. Body editor, AI candidates, plot settings, scene thumbnail display |
+| Character | `CharacterTab.tsx` | Character sheet editing, voice settings, image color picker |
+| Settings | `SettingsTab.tsx` | LLM/T2I/TTS backend selection, API key management, generation parameters |
+
+The sidebar (`Sidebar.tsx`) holds character selection, mode toggles, and a collapse toggle (persisted in React state). UI theme (light / dark) is applied as a CSS class on the root element and toggled from the header.
+
+### State Management
+
+React component-local state (`useState`) and `localStorage` are used for UI state. Cross-component state (selected character, theme) is lifted to `App.tsx`. No global state library (Redux etc.) is used; the design is kept intentionally simple.
+
+### Resize Handles and Layout Persistence
+
+The Novel tab provides draggable resize handles:
+
+- **Vertical handle** (`novel-resize-handle`, `ns-resize`): Adjusts the height boundary between the body editor and the thumbnail area.
+- **Horizontal handle** (`novel-col-resize-handle`, `ew-resize`): Adjusts the width boundary between the body editor and the AI candidates panel.
+
+Resize values (`novel_media_height`, `novel_candidates_width`) are persisted in `localStorage` and restored on page load.
 
 ## 2.2 Infrastructure Deployment Patterns & Technology Stack
 
@@ -706,6 +730,22 @@ In addition to the "1 turn = 1 line of dialogue" chat format assumed by the prec
 
 The user selects either "chat mode" or "episode mode" from the UI at session start (or when changing settings of an existing session). The mode selection result is recorded as the `mode` field in the session/game state management data structure (Chapter 12, item 3), which determines whether the structured output schema for F-14 (chat) or F-24-1 (novel) is used. Conversion between chat mode and episode mode is not supported (a new session must be started in the other mode).
 
+#### NovelTab Implementation Details (React)
+
+The Novel tab (`NovelTab.tsx`) provides the full episode editing workflow:
+
+**Scene splitting:** The body text is split into scenes using `splitScenes(body)`, which parses `--- Chapter N --- / --- Scene M ---` markers and generates human-readable labels in the format `Chapter N + Scene M`. The label is shown in the scene selector dropdown.
+
+**Plot file management:** Plot files (`.txt`/`.md`) are loaded from `data/public/episode_prompts/` and `data/private/episode_prompts/` via `GET /api/novel/plots`. On save or apply, the updated content is written back to the source file via `PUT /api/novel/plots/{filename}` (path-traversal protected via `pathlib.resolve` check). This supports Git-managed plot files and shared plot files across multiple works.
+
+**VRAM lock integration:** Both `POST /api/novel/generate` (AI candidate generation) and `POST /api/novel/t2i` (scene image generation) acquire the global `vram_lock` singleton (shared with the chat pipeline's T2I worker) to prevent VRAM contention. The lock is always released in a `try/finally` block.
+
+**T2I settings dialog:** A settings dialog allows the user to select the T2I backend and model for novel image generation. Backends are fetched dynamically from `GET /api/settings/backends`; models are fetched from `GET /api/settings/t2i-models?backend=<id>`. This ensures that newly added backends or models are immediately available without code changes.
+
+**Thumbnail display:** Generated scene thumbnails are displayed with `max-width: 480px`. The thumbnail area height is controlled by the vertical resize handle (default `200px`, persisted in `localStorage` as `novel_media_height`).
+
+**Font size:** Body text and AI candidates both use `font-size: 0.95em` for comfortable reading.
+
 ### F-24-1: Episode-Specific Structured Output Schema
 
 Separate from F-14's chat schema (four fields: dialogue, emotion, English image prompt, safety tags), a JSON Schema specific to episode mode is defined, with the same JSON Schema validation via LLM backend adapters (Section 2.3) and auto-correction/reparse fallback chain applied on the Python side as F-14.
@@ -949,13 +989,13 @@ The data loading and asynchronous control sequence for a single Cycle (see Chapt
 - Third rendering via periodic polling: Periodic polling detects the IMAGE_COMPLETE event, safely merges it into `st.session_state`, and additionally renders the image asset on Streamlit.
 - Persistence & departure preparation (Persist -> Idle): Generated audio and image binaries are saved to the asset directory outside Git management (F-17), with unique names following the file naming convention (Section 5.6). Only metadata and dialogue logs (JSON) are committed to Git, completing the data-consistent history sync. session_state returns to Idle holding only the most recent turns per Section 5.6, F-18.
 
-# 10. Future Extension Policy
+# 10. Extension Policy
 
-The core engine is separated from the UI to maintain the possibility of migration to FastAPI/WebSocket/React/Electron. As stated in Section 2.1, the current implementation is based on Streamlit, but future migration costs are minimized by maintaining the following boundaries:
+The architecture migration from Streamlit to FastAPI + React (Section 2.1) is complete as of v2.0.0. The following boundaries are maintained to minimize future extension costs:
 
-- Core logic (event processing, state transition model, interfaces with each AI layer) is implemented in a form not dependent on UI frameworks, limiting dependency on Streamlit-specific APIs (`st.session_state`, `st_autorefresh`, etc.) to the UI layer.
-- The common Event schema defined in Chapter 3 is structured to be reusable as a message format for server-client communication via WebSocket in the future.
-- The T2I abstract interface of Section 2.3 and the TTS worker model of Section 5.2 are designed at a granularity that allows them to be extracted as independent services after a FastAPI migration.
+- Core logic (event processing, state transitions, interfaces with each AI layer) is implemented independently of UI frameworks. The FastAPI routes in `def_kari/api/routes/` are thin HTTP adapters; all business logic resides in `def_kari/` Python modules.
+- The T2I abstract interface (Section 2.4) and TTS worker model (Section 5.2) are designed at a granularity that allows extraction as independent microservices.
+- Future migration paths: Electron packaging (for true offline desktop use), WebSocket streaming for incremental LLM output, and PWA support for mobile.
 
 ## GitHub Publishing Operations Policy
 
@@ -1107,8 +1147,12 @@ Images can be imported from the character tab (file upload with automatic resizi
       },
       "visual_references": {
         "base_image_path": "private_zone/characters/luna/base_seed.png",
-        "features": "silver hair, twintails, purple eyes, magic robes"
-      }
+        "features": "silver hair, twintails, purple eyes, magic robes",
+        "appearance_tags": "1girl, silver hair, twintails, purple eyes, magic robes",
+        "image_name_tags": "luna_lora_trigger"
+      },
+      "image_color": "#7a4aaa",
+      "player_type": "ai"
     },
     "relationships": {
       "character_gemini_001": "好奇心旺盛な変換者。私の論理的な構成を色彩豊かな物語に翻訳してくれる。",
@@ -1152,6 +1196,9 @@ Images can be imported from the character tab (file upload with automatic resizi
     - `birthplace` (place of birth): Record of birthplace. Character setting reference information; not expanded into the LLM's system prompt.
     - `raised_in` (where raised and for how long): The environment that shaped values, language, and behavioral patterns. Free-form descriptions including periods such as "New York (ages 10-18)" are acceptable. When raised in multiple places, use an array. Expanded into the LLM's system prompt; has the most direct influence on persona and speech pattern formation.
     - `dominant_culture` (dominant cultural sphere): The cultural affiliation at the core of the character's identity that cannot be fully expressed by where they were raised alone. While `raised_in` represents "where," this abstract attribute indicates "which culture has the strongest influence." Expanded into the LLM's system prompt.
+- **`image_color` (UI accent color)**: A CSS hex color string (e.g., `"#c8706a"`) representing the character's image color. Used as the background color of the AI chat bubble in ChatTab and as the color swatch in the character selector. Set from the color picker in CharacterTab; auto-saved on blur. Defaults to `"#2a2a2a"` when absent.
+- **`visual_references.appearance_tags` (Danbooru-style tag string)**: Condensed Danbooru-format tag string for T2I prompt generation. Used as a fallback when the LLM does not return `image_prompt_en`.
+- **`visual_references.image_name_tags` (LoRA / known-character trigger words)**: Trigger word string prepended to the T2I prompt when a LoRA model or known character name tag is needed (e.g., `"hatsune miku"` for character-specific image generation). Optional; omitted when not needed.
 - **`content_policy` fields:** See F-25. Field group for determining the GitHub publishability of character data. Characters with `is_real_person: true` have `publish_restriction` fixed to `"private"` regardless of copyright expiration status.
 - Multiple AI characters registrable in a single session (F-6) are represented by having multiple entries of this data structure (`character_claude_001`, etc.). The character switching feature corresponds to a UI for selecting one character as the dialogue partner from the multiple entries in this structure.
 - **`default_model_config` fields:**

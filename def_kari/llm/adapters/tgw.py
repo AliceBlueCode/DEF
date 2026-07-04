@@ -68,15 +68,44 @@ def chat(
     return _content
 
 
+def load_model(name: str) -> str | None:
+    """指定モデルをTGWにロードする。エラー時はメッセージを返す。"""
+    url = os.environ.get("TEXTGEN_WEBUI_URL", TEXTGEN_WEBUI_URL)
+    try:
+        resp = requests.post(
+            f"{url}/internal/model/load",
+            headers=_headers(),
+            json={"model_name": name},
+            timeout=300,
+        )
+        if resp.ok:
+            return None
+        return f"TGW load error {resp.status_code}: {resp.text[:200]}"
+    except requests.RequestException as e:
+        return str(e)
+
+
 def list_models() -> list[str]:
+    # 全モデル一覧を /internal/model/list から取得
+    try:
+        resp = requests.get(
+            f"{TEXTGEN_WEBUI_URL}/internal/model/list", headers=_headers(), timeout=10
+        )
+        if resp.ok:
+            names = resp.json().get("model_names", [])
+            if names:
+                return names
+    except requests.RequestException:
+        pass
+    # フォールバック: 現在ロード中のモデルのみ
     try:
         resp = requests.get(
             f"{TEXTGEN_WEBUI_URL}/internal/model/info", headers=_headers(), timeout=10
         )
-        resp.raise_for_status()
-        model_name = resp.json().get("model_name", "")
-        if model_name and model_name != "None":
-            return [model_name]
+        if resp.ok:
+            model_name = resp.json().get("model_name", "")
+            if model_name and model_name != "None":
+                return [model_name]
     except requests.RequestException:
         pass
     resp = requests.get(f"{TEXTGEN_WEBUI_URL}/models", headers=_headers(), timeout=10)
