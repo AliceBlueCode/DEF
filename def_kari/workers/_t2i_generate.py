@@ -264,8 +264,8 @@ def _comfyui_generate(
     import copy
 
     try:
-        import streamlit as _st
-        _wf_name = _st.session_state.get("comfyui_workflow", "default")
+        from def_kari.settings import load_settings
+        _wf_name = load_settings().get("comfyui_workflow", "default") or "default"
     except Exception:
         _wf_name = "default"
     workflow = copy.deepcopy(_load_comfyui_workflow(_wf_name))
