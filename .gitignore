@@ -156,3 +156,5 @@ pid/
 # LICENSE HEADER.txt             -- license header
 # .env.example                   -- environment template
 !.env.example
+/DEF ID採番仕様書.md
+/GitHub運用方針（DEF）.md
