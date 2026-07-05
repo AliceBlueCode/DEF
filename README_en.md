@@ -78,8 +78,8 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 ### Session Mode
 ![Session](docs/images/session.png)
 
-### Episode Mode
-![Episode](docs/images/episode.png)
+### Novel Mode
+![Novel](docs/images/novel.png)
 
 ### Character
 ![Character](docs/images/character.png)
@@ -91,7 +91,7 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 - **Local-First:** LLM, TTS, and T2I all run locally. External API fallback also supported
 - **No GPU required to start:** Text + voice works via external APIs. Switch to local GPU whenever you're ready
 - **3-Modality Integration:** Text, voice, and image work together as a continuous creative experience
-- **3 Modes:** Chat (1-on-1 dialogue), Session (multiple AIs + humans at the same table), Episode (novel writing + AI candidate generation)
+- **3 Modes:** Chat (1-on-1 dialogue), Session (multiple AIs + humans at the same table), Novel (novel writing + AI candidate generation)
 - **Character Persistence:** Dialogue history, emotions, and generated assets are persisted — resume from where you left off after restart
 - **Adapter Pattern:** Freely swap between 4 LLM, 4 TTS, and 4 T2I backends
 - **Zoning:** Clear separation of public and private data. Generated assets are excluded from Git
@@ -114,9 +114,21 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 git clone https://github.com/AliceBlueCode/DEF.git
 cd DEF
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 cp .env.example .env   # Set backend paths and API keys
-streamlit run def_kari/app.py
 ```
+
+Launch with `start_dev.bat`, or run in two separate terminals:
+
+```bash
+# Terminal 1: backend
+python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+
+# Terminal 2: frontend
+cd frontend && npm run dev
+```
+
+Open `http://localhost:3000` in your browser.
 
 Select LLM, TTS, and T2I backends from the Settings tab.
 API keys are stored encrypted via "API Key Management" in the Settings tab.
