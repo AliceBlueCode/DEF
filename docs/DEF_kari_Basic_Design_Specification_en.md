@@ -39,9 +39,9 @@ The following four development concepts are each positioned as means to realize 
 
 In a multimodal asset generation environment (text, audio, images), the top priority is not to impede the progression of narratives or TRPGs. This is achieved through immediate text rendering with follow-up audio, and thorough background generation. High-load image generation fires by default only on manual commands or specific emotional change triggers.
 
-### (2) Breaking Through Streamlit Architecture Constraints and Establishing Thread Safety
+### (2) Architecture Revamp via FastAPI+React Migration
 
-To overcome Streamlit's constraints of "thin threads (state contention)" and "top-down full UI (display does not update without user interaction)," an event-driven UI update mechanism is adopted using a thread-safe message queue (Queue) and periodic polling.
+The migration from Streamlit to FastAPI (Python) + React (Vite/TypeScript) was completed in v2.0.0. FastAPI handles REST APIs and background workers, and the React frontend reflects server state via periodic polling. A thread-safe queue and message queue bridge continue to serve as the bridge between background workers and the API layer.
 
 ### (3) Full Abstraction and Pluggability of T2I and LLM Backends
 
@@ -121,8 +121,8 @@ The text generation engine is not locked to a specific backend; TGW (Text Genera
 def chat(
     messages: list[dict],         # [{"role": "system"|"user"|"assistant", "content": str}, ...]
     model: str | None = None,     # Model name (backend-dependent)
-    response_format: dict | None = None,  # JSON output specification, e.g.: {"type": "json_object"}
-    adapter_options: dict | None = None   # Additional parameters specific to each backend
+    json_mode: bool = True,       # True: force JSON output (method depends on backend)
+    options: dict | None = None   # Additional parameters specific to each backend
 ) -> str                          # Generated text (JSON string or plain text)
 ```
 
@@ -136,17 +136,20 @@ Backend switching: The LLM backend in use is specified by a configuration value 
 |------------------|---------------------------|------------------------------|----------------------------------------------------------------------------------------------------------|
 |`TgwAdapter`|Text Generation WebUI (TGW)|Local (`http://127.0.0.1:5000/v1`)|**Default adapter.** OpenAI-compatible API. Fine-grained control over sampling parameters and instruction templates|
 |`OllamaAdapter`|Ollama|Local (`http://127.0.0.1:11434`)|Supports Structured Outputs via `format="json"`. Fallback for environments where TGW is unavailable|
-|`GeminiLlmAdapter`|Google Gemini API|Remote API|External API fallback. API key obtained from environment variable `GEMINI_API_KEY` or the "API Key Management" in the settings tab. Free tier available (rate-limited)|
-|`OpenAIAdapter`|OpenAI API|Remote API|External API fallback. API key obtained from environment variable `OPENAI_API_KEY` or the "API Key Management" in the settings tab|
+|`GeminiLlmAdapter`|Google Gemini API|Remote API|External API fallback. API key obtained from environment variable `GEMINI_API_KEY` or "API Key Management" in the settings tab. Free tier available (rate-limited)|
+|`OpenAIAdapter`|OpenAI API|Remote API|External API fallback. API key obtained from environment variable `OPENAI_API_KEY` or "API Key Management" in the settings tab|
+|`AnthropicAdapter`|Anthropic API (Claude)|Remote API|External API fallback. API key obtained from environment variable `ANTHROPIC_API_KEY` or "API Key Management" in the settings tab|
 
 ### JSON Output Handling
 
 - **TgwAdapter:** Enforces JSON output using TGW's JSON Grammar feature or `response_format` parameter. F-14's JSON Schema validation and fallback chain are commonly applied on the Python side after the adapter call.
 - **OllamaAdapter:** Uses Ollama's `format="json"` (Structured Outputs).
+- **GeminiLlmAdapter / OpenAIAdapter:** Enforces JSON output via `response_mime_type: "application/json"` or `response_format: {"type": "json_object"}`.
+- **AnthropicAdapter:** Uses a JSON output instruction embedded in the system prompt (Anthropic API does not support JSON Grammar natively).
 
 ## 2.4 T2I Backend Abstract Interface
 
-The following interface is defined to abstract commands to the image generation engine, ensuring Consistency control and extensibility. The DEF(kari) core only requests image generation through this interface. `ref_image_path` and `adapter_options` are passed to each backend adapter as the materialization of the Consistency Provider concept defined in Chapter 6.
+The following interface is defined to abstract commands to the image generation engine, ensuring consistency control and extensibility. The DEF(kari) core only requests image generation through this interface. `ref_image_path` and `adapter_options` are passed to each backend adapter as the materialization of the consistency provider concept defined in Chapter 6.
 
 ```python
 def generate_image(
@@ -204,7 +207,7 @@ Backend switching: The TTS backend in use is specified by a configuration value 
 
 The UI language (for humans) and the prompt language (for AI) are completely separated. Even if on-screen displays and menus are in Japanese, the internal instructions and descriptive context sent to the LLM are built and routed in the "prompt language (model's native language)" defined per LLM model in the model characteristic master data of Section 5.1, F-5 (to maximize generation quality, English-native models receive English instructions, multilingual models strong in Japanese receive Japanese instructions, etc.). On the other hand, internal instructions for T2I (image generation prompts) are always built and routed in English regardless of the model's prompt language setting, following conventions such as Danbooru tags.
 
-- **Translation master:** UI display strings are externalized to `locales/<language_code>.json` (e.g., `locales/ja.json`), and the Streamlit frontend references this master to switch the display language. The translation master is included in the Git-managed scope (clean zone) per Section 5.6, F-17.
+- **Translation master:** UI display strings are externalized to `locales/<language_code>.json` (e.g., `locales/ja.json`), and the React frontend references this master to switch the display language. The translation master is included in the Git-managed scope (clean zone) per Section 5.6, F-17.
 - **Language separation in history data:** In the history data defined in Sections 5.6 and 12, user-facing text (`text`, in the user's configured language) and internal context for LLM/T2I and image prompts (always in English) are managed as separate fields.
 - **Scope of application:** The language separation in this section addresses the separation of UI strings and AI internal context. The language of character dialogue (the language of the `text` field) follows the user setting (the session's `language` field, see Chapter 12).
 
@@ -256,15 +259,18 @@ DEF(kari)'s adapter and service definitions are externally managed in JSON files
 
 |File|Purpose|Impact When Adding|
 |---|---|---|
-|`data/llm_services.json`|Dynamic addition of external LLM services. Defines `id`/`label`/`type` (`openai_compatible` or `gemini`)/`api_url`/`api_key_service`/`default_model`. Local backends (TGW/Ollama) are defined in code|Adding one entry to JSON displays it in the dropdown. No code changes required|
+|`data/llm_services.json`|Dynamic addition of external LLM services. Defines `id`/`label`/`type` (`openai_compatible`/`gemini`/`anthropic`)/`api_url`/`api_key_service`/`default_model`. Local backends (TGW/Ollama) are defined in code|Adding one entry to JSON displays it in the dropdown. No code changes required|
 |`data/api_services.json`|List of services displayed in the API key management dialog. Defines `id`/`label`/`env_var`. Integrates with secrets_store (encrypted storage)|Adding one entry to JSON displays it in the API key management screen|
 |`data/civitai_ecosystem_map.json`|Mapping of Civitai baseModel names to Orchestration API ecosystem identifiers. Add one line when introducing a new base model type|Referenced during URL-to-AIR conversion and image generation requests|
-|`data/llm_profiles/*.json`|Per-LLM-model characteristic profiles. One file per model. Defines `native_language`/`model_type`/`nsfw_tolerance`/`max_tokens`/`quirks`/`generation_params`. All fields editable and savable from the settings tab|Used for F-14 fallback strategy, automatic prompt composition switching, and generation parameter control (temperature/top_p/repetition_penalty)|
+|`data/llm_profiles/*.json`|Per-LLM-model characteristic profiles. One file per model. Defines `native_language`/`model_type`/`nsfw_tolerance`/`max_tokens`/`context_length`/`quirks`/`generation_params`. All fields editable and savable from the settings tab|Used for F-14 fallback strategy, automatic prompt composition switching, and generation parameter control (temperature/top_p/repetition_penalty)|
 |`data/t2i_model_profiles.json`|Per-T2I-model quality tags, negative prompts, and prompt notation|Referenced by model name during image generation|
 |`data/civitai_models.json`|Civitai model preset list (label + AIR format)|Displayed in the settings tab dropdown|
-|`public/action_directives/*.json`|Action directive sets (public). One file per set. Defines `id`/`label`/`rating`/`directives`|Switchable from the settings tab|
+|`data/emotion_tag_dict.json`|Emotion key → T2I emotion tag conversion dictionary. Referenced when inferring emotion from text for models with `emotion_in_text: true`|Edit when adding or adjusting emotion tags|
+|`data/public/action_directives/*.json`|Action directive sets (public). One file per set. Defines `id`/`label`/`rating`/`recommended_for`/`directives`|Switchable from the settings tab|
+|`data/private/action_directives/*.json`|Action directive sets (private — NSFW presets, etc.). Excluded from Git|Switchable from the settings tab. Same format as public sets|
 |`data/mvp_settings.json`|Application settings persistence|Loaded at startup, written on settings save|
-|`public/session_rules/*.json`|Session rule sets (public). One file per set. Defines `id`/`label`/`rating`/`rules`|Switchable from the session tab|
+|`data/public/session_rules/*.json`|Session rule sets (public). One file per set. Defines `id`/`label`/`rating`/`rules`|Switchable from the session tab|
+|`data/private/session_rules/*.json`|Session rule sets (private — NSFW rules, etc.). Excluded from Git|Switchable from the session tab. Same format as public sets|
 |`data/comfyui_workflows/*.json`|ComfyUI workflow templates. One file per workflow|Switchable from the settings tab. Users can add workflows created in ComfyUI|
 
 ### Environment Configuration Files
@@ -273,11 +279,18 @@ DEF(kari)'s adapter and service definitions are externally managed in JSON files
 |---|---|
 |`.env`|Environment settings such as backend directory paths. Distributed with `.env.example` as a template|
 |`data/api_keys.enc.json`|Encrypted API key storage (Fernet symmetric key encryption). Excluded from Git|
-|`data/api_keys.key`|Encryption key. Excluded from Git|
+|`data/secret.key`|Fernet encryption key. Auto-generated on first launch. Excluded from Git|
+
+### Developer Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+|`DEF_DEBUG_ENDPOINTS`|`false`|When `true`, enables debug endpoints (`/api/debug/*`)|
+|`DEF_MAX_SESSIONS`|`10`|Maximum number of sessions held simultaneously|
 
 # 3. Event-Driven Model
 
-This chapter defines the common Event schema and the queue/polling mechanism that handle state propagation from background workers (TTS/T2I) to the Streamlit frontend.
+This chapter defines the common Event schema and the queue/polling mechanism that handle state propagation from background workers (TTS/T2I) to the React frontend.
 
 ## 3.1 Common Event Schema
 
@@ -305,13 +318,13 @@ All background processing is pushed to the Queue in the following unified event 
 
 ## 3.3 Thread-Safe Message Queue (F-2)
 
-Direct writes from background TTS (speech generation) and T2I (image generation) worker tasks to Streamlit's `st.session_state` are prohibited. All completion notifications, binary data, and error events from these tasks are pushed as event objects (conforming to the Event schema in Section 3.1) to a global `queue.Queue`.
+Direct writes from background TTS (speech generation) and T2I (image generation) worker tasks to FastAPI's global server state are prohibited. All completion notifications, binary data, and error events from these tasks are pushed as event objects (conforming to the Event schema in Section 3.1) to a global `queue.Queue`.
 
-Queue and Thread singleton management: Since Streamlit has the characteristic of executing scripts from top to bottom, the message queue (`queue.Queue`) and background workers (Threads) must be initialized exactly once as global module-level or `st.session_state`-based global singletons to prevent multiple instantiation during full script re-execution (initialization functions must be idempotent).
+Queue and Thread singleton management: The message queue (`queue.Queue`) and background workers (Threads) are managed as global module-level singletons initialized exactly once at FastAPI application startup to prevent multiple instantiation (initialization functions must be idempotent).
 
 ## 3.4 Periodic Polling and Event Dispatcher (F-3)
 
-An external custom component (streamlit-autorefresh, etc.) is integrated to periodically re-execute the screen at fixed intervals (automatic polling). Each time the main thread loop runs, it checks the message queue, extracts asset information from the queue in timestamp order, and safely merges it into `st.session_state` to perform incremental UI updates (partial additive rendering).
+The React frontend periodically calls FastAPI state-retrieval endpoints via `useEffect` + `setInterval`. Events are extracted from the message queue in timestamp order, processed, and safely merged into React component state to perform incremental UI updates (partial additive rendering).
 
 The polling interval is not a fixed value but is dynamically controlled based on system activity state:
 
@@ -354,7 +367,7 @@ Using periodic re-execution (automatic polling) via an external custom component
 
 ### F-4: Bidirectional Loop for "Dynamic Generation" (Standing Portraits & Illustrations)
 
-Dynamically drives the image generation AI based on context (emotions, clothing, costume changes). The base image defined in character data and past generated images are carried over as `ref_image_path` (via Consistency Provider, see Chapter 6) to automatically ensure visual consistency of characters.
+Dynamically drives the image generation AI based on context (emotions, clothing, costume changes). The base image defined in character data and past generated images are carried over as `ref_image_path` (via the consistency provider, see Chapter 6) to automatically ensure visual consistency of characters.
 
 ### F-5: Numerical Master Data for Model Characteristics (Prompt Translator)
 
@@ -383,7 +396,7 @@ LLM model numerical master data holds the following fields in addition to `promp
 
 #### Externalized LLM Model Profile File Management
 
-LLM model numerical master data (`prompt_language`, `model_type`, `nsfw_tolerance`, `quirks`) is externalized to `data/llm_model_profiles.json`. This file is directly editable by users, allowing them to record and adjust model-specific behaviors when introducing new models. The DEF(kari) core loads this file at startup and references profiles by model name as the key. Default values (`model_type: "chat"`, `json_capable: true`, all other quirks `false`) are applied to unregistered models.
+LLM model numerical master data (`prompt_language`, `model_type`, `nsfw_tolerance`, `context_length`, `quirks`) is externalized to `data/llm_profiles/*.json` (one file per model). Each file is directly editable by users, allowing them to record and adjust model-specific behaviors when introducing new models. The DEF(kari) core loads these files at startup and references profiles by model name as the key. Default values (`model_type: "chat"`, `json_capable: true`, all other quirks `false`) are applied to unregistered models. The `context_length` field is used for history compression trigger decisions (F-26) and similar.
 
 #### Image Prompt Generation Pipeline (C2 Method)
 
@@ -431,6 +444,12 @@ The following rules are automatically injected into the system prompt for AI utt
 ### F-26: Automatic Greeting on Character Switch
 
 Immediately after switching characters in the character tab, an automatic greeting turn is generated based on the new character's persona and history. The greeting feature can be toggled ON/OFF by the user from the settings tab (`character_greeting` setting). The greeting text is sent to the LLM as a natural conversation prompt, and the generated result is added to history as a full cycle including audio and image.
+
+**Implementation details (v2.0.3):**
+
+- **Hidden history (`hiddenHistory`):** On greeting generation, all past history is held as `hiddenHistory` state and included in the LLM context but not displayed on screen. This allows the greeting to reflect past context even immediately after switching.
+- **Show history button:** A "Show History" button (`chat.history.showBtn`) is placed in the chat view to expand and display past history on click.
+- **Skip on initial mount:** Greeting generation is skipped at app startup (no character change), starting with an empty history state.
 
 ### F-27: Meta Self-Awareness Directive (System Directive)
 
@@ -765,33 +784,33 @@ Episode mode audio generation (F-10/F-11) generates `narration` as narrator voic
 
 The data structure for episode mode uses a 3-level hierarchy of Episode > Chapter > Scene. The narrative uses "Scene" (scene break) as the minimum structural unit, with multiple scenes composing a "Chapter" and multiple chapters composing an "Episode." Chapter and Scene boundaries are determined by the author via marker insertion buttons in the UI (New Chapter / New Scene).
 
-- Work data is persisted as individual files per title (`data/private/episodes/{title}.json`).
+- Work data is persisted as individual files per title (`data/private/episode_data/{title}.json`).
 - Scene illustrations and audio binaries are saved to the private zone following the zoning and naming conventions of F-16/F-17.
 
 ### F-24-3: Branching Choices and Git Branch Integration
 
 When a user selects a choice from F-24-1's `choices`, following the "history branching (Git operation) rules" defined in F-22 (only independent, unidirectional branch creation via `git checkout -b`; automatic merge prohibited), a new branch is created with the selected `branch_id` included in the name, and subsequent scene generation continues from there. This allows multiple narrative developments branching from choices to be maintained in parallel without the risk of conflicts. In sessions where a GM agent (F-21) is present, the GM agent handles choice presentation and post-branch progression narration.
 
-# 6. Character Visual Consistency (Character Consistency)
+# 6. Character Consistency
 
 This chapter defines the mechanism for technically ensuring "continuity of generated appearance," part of the Character Persistence defined in Section 1.2.
 
 ## 6.1 Consistency Provider Concept
 
-`ref_image_path` is abstracted not as a means of passing a single image path, but as an input source (Consistency Provider) for ensuring character visual consistency. The Consistency Provider is converted and applied by the selected T2I backend's adapter to one of the following methods:
+`ref_image_path` is abstracted not as a means of passing a single image path, but as an input source (consistency provider) for ensuring character visual consistency. The consistency provider is converted and applied by the selected T2I backend's adapter to one of the following methods:
 
 - i2i (image-to-image): Regenerates using a past generated image as the initial image.
 - ControlNet Reference: Generates new images while preserving the structure and features of the reference image.
 - IP Adapter: Applies the art style and character features of the reference image by permeating them into the prompt.
 - InstantID: Applies a method specialized in maintaining character identity centered on facial features.
 
-Which method to adopt is delegated to the backend adapter and `adapter_options` (Section 2.4). The DEF(kari) core engine only passes the Consistency Provider reference (`ref_image_path`) and extension options to the `generate_image` interface.
+Which method to adopt is delegated to the backend adapter and `adapter_options` (Section 2.4). The DEF(kari) core engine only passes the consistency provider reference (`ref_image_path`) and extension options to the `generate_image` interface.
 
 ## 6.2 Consistency Data Inheritance (Integration with F-4 and F-24)
 
-In the dynamic generation defined in Section 5.1, F-4, the base image defined in character data or images generated in past turns are inherited as input to the Consistency Provider. This inheritance information itself is managed as text/JSON data (Section 5.6, F-17 Git-managed scope), separated from the actual image files.
+In the dynamic generation defined in Section 5.1, F-4, the base image defined in character data or images generated in past turns are inherited as input to the consistency provider. This inheritance information itself is managed as text/JSON data (Section 5.6, F-17 Git-managed scope), separated from the actual image files.
 
-In episode mode (Section 5.10, F-24) as well, scene illustration generation based on per-scene `scene_image_prompt_en` goes through the same Consistency Provider, maintaining visual consistency with the character's base image and images generated in past scenes.
+In episode mode (Section 5.10, F-24) as well, scene illustration generation based on per-scene `scene_image_prompt_en` goes through the same consistency provider, maintaining visual consistency with the character's base image and images generated in past scenes.
 
 # 7. Multi-Agent Control
 
@@ -816,13 +835,16 @@ Session > Round > Turn > Action
 
 The number of Actions per Turn is configurable from 1 to 5 in the settings tab (default 3). With 1 Action, behavior is the same as the traditional 1 utterance per Turn. With 2 or more Actions, each Action receives a directive based on the action directive set.
 
-Action directive sets are managed as individual JSON files in `data/public/action_directives/`, switchable via a dropdown in the settings tab. Settings are persisted. The following presets are provided by default:
+Action directive sets are managed as individual JSON files in `data/public/action_directives/`, switchable via a dropdown in the settings tab. Settings are persisted. NSFW variants are managed in the Git-excluded `data/private/action_directives/`. The following presets are provided by default:
 
-- **Standard** (default): React -> Experience -> Question -> Summarize -> True feelings
+- **Standard** (default): React → Experience → Question → Summarize → True feelings
+- **Compact** (compact): React → Dig deeper → Wrap up
 - **Gentle** (gentle): Speak freely
 - **None** (none): Leave it entirely to the character
 
-Users can create custom directive sets by adding entries to the JSON file.
+The `recommended_for` field holds an array of recommended `actionsPerTurn` values, used to filter the dropdown when the action count changes.
+
+Users can create custom directive sets by adding JSON files.
 
 In chat mode, an upper limit is imposed on the number of autonomous dialogue exchanges (tosses) between AI characters to prevent resource consumption from unlimited loops. The initial maximum toss count is 3, and the user can change it as desired. When the maximum toss count is reached, the orchestrator returns the speaking turn to the user.
 
@@ -899,7 +921,7 @@ The current counter value is displayed next to each participant's name in the in
 | Voluntary skip | Player | Regardless of human/AI |
 | Forced skip | Keeper | Target's counter +1 |
 | Interrupt, next speaker designation, Turn extension | Player | Consumes counter as a resource |
-| Vote initiation | Player (-3) / Keeper (cost 0) | See Section 7.7 below |
+| Vote initiation | Player (-3) / Keeper (free) | See Section 7.7 below |
 
 The Keeper does not hold a speech counter. Counters are a resource of session participants.
 
@@ -918,7 +940,7 @@ During a session, the Keeper or a human player can initiate a vote.
 
 ### Vote Initiation
 
-- **Keeper**: Can initiate at cost 0 (GM authority)
+- **Keeper**: Can initiate for free (GM authority)
 - **Human player**: Can initiate by consuming 3 counters. The initiator automatically casts a vote in favor
 
 ### Vote Processing
@@ -927,7 +949,7 @@ AI participants automatically determine approve/reject via a lightweight LLM cal
 
 ## 7.8 Session Rules
 
-Session rules are managed as one JSON file per rule set in `data/public/session_rules/`. Each file has `id`, `label`, `rating`, and `rules` (string array). Switchable via dropdown in the session tab.
+Session rules are managed as one JSON file per rule set in `data/public/session_rules/`. Each file has `id`, `label`, `rating`, and `rules` (string array). Switchable via dropdown in the session tab. NSFW rule sets are managed in the Git-excluded `data/private/session_rules/` (same format).
 
 The following presets are provided by default:
 
@@ -950,7 +972,7 @@ The orchestrator determines session termination upon any of the following: compl
 
 # 8. Error Control
 
-This chapter defines the policies for handling failures that can occur at each phase of the state transition model defined in Chapter 4. All failures are communicated to the common Queue as ERROR events (Section 3.2), and the main thread safely reflects them in `st.session_state`.
+This chapter defines the policies for handling failures that can occur at each phase of the state transition model defined in Chapter 4. All failures are communicated to the common Queue as ERROR events (Section 3.2), and the main thread safely reflects them in server state.
 
 ## 8.1 LLM Failures
 
@@ -978,16 +1000,16 @@ The data loading and asynchronous control sequence for a single Cycle (see Chapt
 
 - Input phase (Idle): The main thread detects a user utterance, automatic toss from an AI agent (chat mode), or Turn start based on Round progression (AI Table mode, see Chapter 7).
 - LLM phase (LLM Processing): A JSON Schema-enforced output request is made to the persistently running LLM backend adapter (Section 2.3, default: `TgwAdapter`). Based on past context and base profile, four mandatory fields -- dialogue, emotion, English image prompt, and safety tags -- are deterministically retrieved in a single JSON batch (see Section 5.4, F-14, F-7). On failure, follow Section 8.1 procedures.
-- Frontend first rendering (Text Rendered): Immediately after JSON parse completion, the main thread first displays and renders only the text (dialogue) on Streamlit. At this point, the user's response waiting state is resolved.
-- Asynchronous TTS task submission: Simultaneously with text rendering execution, the main thread submits a speech synthesis task via the TTS backend adapter (Section 2.5, default: `VoicevoxAdapter`) to the dedicated tts_queue (Section 5.2, F-10).
+- Frontend first rendering (Text Rendered): After receiving the API response, only the text (dialogue) is first displayed and rendered on the frontend. At this point, the user's response waiting state is resolved.
+- Asynchronous TTS task submission: Simultaneously with text rendering, the main thread submits a speech synthesis task via the TTS backend adapter (Section 2.5, default: `VoicevoxAdapter`) to the dedicated tts_queue (Section 5.2, F-10).
 - Background audio generation & queue push (TTS Running -> TTS Completed): When the TTS worker completes audio binary (WAV) generation, the completed binary data or saved relative path is pushed to the common Queue as a TTS_COMPLETE event (Section 3.2). On failure, follow Section 8.2 procedures.
-- Event detection via periodic polling and second rendering: When periodic polling (st_autorefresh, Section 3.4) runs, the main thread checks the queue contents in timestamp order. If a TTS_COMPLETE event has arrived, data is safely incorporated into `st.session_state`, and the audio asset is additionally reflected and rendered on the corresponding chat log entry via `_render_audio_player()`. Since this does not involve a full screen reset, there is no audio flickering.
+- Event detection via periodic polling and second rendering: When periodic polling (Section 3.4) runs, if a TTS_COMPLETE event has arrived, data is safely merged into React component state, and the audio asset is additionally reflected and rendered on the corresponding chat log entry. Since this does not involve a full screen reset, there is no audio flickering.
 - Wait lock control & T2I phase (Image Running, trigger execution only): When a user request or specific intelligent trigger fires, the T2I worker is launched.
   - (1) vram_lock is acquired via the Smart Resource Manager (Section 5.3, F-12). From this point until completion, new LLM requests are forcibly limited to "lightweight response mode" (Section 5.3, F-13-2).
-  - (2) `generate_image` is executed via the selected Stable Diffusion-based backend's adapter. The LLM's raw English description is converted via F-5 (Prompt Translator) into a prompt according to the selected model's characteristic values before submission. For Diffusers, dynamic CPU offload (F-13-3) is enabled. For consistency maintenance, the Consistency Provider (Chapter 6) is passed as `ref_image_path`. On failure, follow Section 8.3 procedures.
+  - (2) `generate_image` is executed via the selected Stable Diffusion-based backend's adapter. The LLM's raw English description is converted via F-5 (Prompt Translator) into a prompt according to the selected model's characteristic values before submission. For Diffusers, dynamic CPU offload (F-13-3) is enabled. For consistency maintenance, the consistency provider (Chapter 6) is passed as `ref_image_path`. On failure, follow Section 8.3 procedures.
   - (3) After generation completion, vram_lock is released and an IMAGE_COMPLETE event (with ImagePath) is pushed to the message queue.
-- Third rendering via periodic polling: Periodic polling detects the IMAGE_COMPLETE event, safely merges it into `st.session_state`, and additionally renders the image asset on Streamlit.
-- Persistence & departure preparation (Persist -> Idle): Generated audio and image binaries are saved to the asset directory outside Git management (F-17), with unique names following the file naming convention (Section 5.6). Only metadata and dialogue logs (JSON) are committed to Git, completing the data-consistent history sync. session_state returns to Idle holding only the most recent turns per Section 5.6, F-18.
+- Third rendering via periodic polling: Periodic polling detects the IMAGE_COMPLETE event and additionally renders the image asset on the frontend.
+- Persistence & departure preparation (Persist -> Idle): Generated audio and image binaries are saved to the asset directory outside Git management (F-17), with unique names following the file naming convention (Section 5.6). Only metadata and dialogue logs (JSON) are committed to Git, completing the data-consistent history sync. Server state returns to Idle holding only the most recent turns per Section 5.6, F-18.
 
 # 10. Extension Policy
 
@@ -1002,7 +1024,7 @@ The architecture migration from Streamlit to FastAPI + React (Section 2.1) is co
 The basic policies for DEF(kari)'s GitHub publishing are defined below.
 
 **License**
-This software is distributed under the GNU Affero General Public License v3.0 (AGPL v3). Copyright (C) 2026 AliceBlueCode. When distributing or providing modified versions over a network, there is an obligation to publish the source code under AGPL v3. Major dependencies (A1111: AGPL v3, TGW: AGPL v3, VOICEVOX ENGINE: LGPL v3, Streamlit: Apache 2.0, Ollama: MIT) are all compatible with AGPL v3.
+This software is distributed under the GNU Affero General Public License v3.0 (AGPL v3). Copyright (C) 2026 AliceBlueCode. When distributing or providing modified versions over a network, there is an obligation to publish the source code under AGPL v3. Major dependencies (A1111: AGPL v3, TGW: AGPL v3, VOICEVOX ENGINE: LGPL v3, FastAPI: MIT, React: MIT, Ollama: MIT) are all compatible with AGPL v3.
 
 **Terms of Use**
 The terms of use for this software are defined in `TERMS.md`. Key provisions include: eligibility limited to age 18 and above; prohibition of creating characters of real minors and generating sexual content; prohibition of generating terrorism, crime, and dangerous material manufacturing information; prohibition of use for defamation, impersonation, and fraud; responsibility for generated content rests with the user.
@@ -1058,7 +1080,7 @@ Character data is managed as one directory per character. Each directory contain
 
 ```
 data/public/characters/              # Public characters (general/sfw)
-  character_claude_001/
+  character_luna_001/
     profile.json
     icon.png
     standing.png
@@ -1087,11 +1109,11 @@ Images can be imported from the character tab (file upload with automatic resizi
 
 `relationships` is an object that defines how characters recognize each other in multi-agent dialogue (F-6). Keys are other characters' IDs, and values describe this character's perception and impression of the other in natural language. Used to control tone and attitude toward others during AI Table and multi-character dialogue. Empty object is acceptable.
 
-`game_rules_sheets` corresponds to the character sheets defined in Section 5.8, F-22. `visual_references.base_image_path` is used as the initial input for the Consistency Provider defined in Chapter 6. `persona_attributes` is a set of attributes for mechanically expanding the character's persona (gender, age, interpersonal orientation, speech style, etc.) from F-6's persona settings into the LLM's system prompt, corresponding to each field in `character_profiles.json`.
+`game_rules_sheets` corresponds to the character sheets defined in Section 5.8, F-22. `visual_references.base_image_path` is used as the initial input for the consistency provider defined in Chapter 6. `persona_attributes` is a set of attributes for mechanically expanding the character's persona (gender, age, interpersonal orientation, speech style, etc.) from F-6's persona settings into the LLM's system prompt, corresponding to each field in `character_profiles.json`.
 
 ```json
 {
-  "character_claude_001": {
+  "character_luna_001": {
     "base_profile": {
       "name": "ルナ",
       "name_reading": {
@@ -1200,7 +1222,7 @@ Images can be imported from the character tab (file upload with automatic resizi
 - **`visual_references.appearance_tags` (Danbooru-style tag string)**: Condensed Danbooru-format tag string for T2I prompt generation. Used as a fallback when the LLM does not return `image_prompt_en`.
 - **`visual_references.image_name_tags` (LoRA / known-character trigger words)**: Trigger word string prepended to the T2I prompt when a LoRA model or known character name tag is needed (e.g., `"hatsune miku"` for character-specific image generation). Optional; omitted when not needed.
 - **`content_policy` fields:** See F-25. Field group for determining the GitHub publishability of character data. Characters with `is_real_person: true` have `publish_restriction` fixed to `"private"` regardless of copyright expiration status.
-- Multiple AI characters registrable in a single session (F-6) are represented by having multiple entries of this data structure (`character_claude_001`, etc.). The character switching feature corresponds to a UI for selecting one character as the dialogue partner from the multiple entries in this structure.
+- Multiple AI characters registrable in a single session (F-6) are represented by having multiple entries of this data structure (`character_luna_001`, etc.). The character switching feature corresponds to a UI for selecting one character as the dialogue partner from the multiple entries in this structure.
 - **`default_model_config` fields:**
   - `text_model_id`: LLM entry ID in the F-5 model characteristic numerical master data.
   - `image_model_id`: T2I entry ID in the F-5 model characteristic numerical master data (A1111 backend fixed for MVP).

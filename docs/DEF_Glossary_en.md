@@ -156,7 +156,7 @@ The number of Actions per Turn is configurable (default 3, range 1-5).
 With an Action count of 1, the behavior is the same as the traditional 1 speech per Turn.
 With an Action count of 2 or more, each Action is given a directive based on the Action Directive Set.
 
-The Action Directive Set is externally managed in `data/action_directives.json` and can be switched from the settings tab.
+The Action Directive Set is externally managed in `data/public/action_directives/*.json` (1 set per file) and can be switched from the settings tab. NSFW variants are managed in `data/private/action_directives/`.
 
 Hierarchy:
 

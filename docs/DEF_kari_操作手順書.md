@@ -2,12 +2,20 @@
 
 ## 1. 起動
 
+`start_dev.bat` をダブルクリック（または下記コマンドを2つのターミナルで実行）。
+
 ```bash
-cd DEF
-streamlit run def_kari/app.py
+# ターミナル1: FastAPI バックエンド
+cd E:\tools\DEF
+python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+
+# ターミナル2: React フロントエンド
+cd E:\tools\DEF\frontend
+npm run dev
 ```
 
-ブラウザで `http://localhost:8510` が開きます。
+ブラウザで `http://localhost:3000` を開いてください。  
+（FastAPI APIは `http://127.0.0.1:8511` で起動します）
 
 ---
 

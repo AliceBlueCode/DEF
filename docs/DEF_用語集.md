@@ -160,7 +160,7 @@ Turnの処理を実現するためにCycleが発生する。
 アクション数1の場合は従来の1発言/Turnと同じ挙動。
 アクション数2以上の場合、各アクションにアクション方向性指示セットに基づく指示が付与される。
 
-アクション方向性指示セットは`data/action_directives.json`で外出し管理され、設定タブで切り替え可能。
+アクション方向性指示セットは`data/public/action_directives/*.json`（1セット1ファイル）で外出し管理され、設定タブで切り替え可能。NSFWバリアントは`data/private/action_directives/`で管理する。
 
 階層：
 
