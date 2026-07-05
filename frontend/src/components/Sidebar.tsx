@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Toggle from './Toggle'
 import RatingDialog from './RatingDialog'
+import { useT } from '../i18n'
 
 const SEXUAL_PRESETS: Record<string, string[]> = {
   general: ['general'],
@@ -96,50 +97,50 @@ export default function Sidebar() {
   const sexualKey = toPresetKey(get('allowed_rating_sexual', ['general']), SEXUAL_PRESETS)
   const violenceKey = toPresetKey(get('allowed_rating_violence', ['general']), VIOLENCE_PRESETS)
 
+  const t = useT()
   const handleSexual = (key: string) => set('allowed_rating_sexual', SEXUAL_PRESETS[key])
   const handleViolence = (key: string) => set('allowed_rating_violence', VIOLENCE_PRESETS[key])
 
   return (
     <aside className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}>
-      <button className="sidebar-toggle" onClick={() => setCollapsed(c => !c)} title={collapsed ? '開く' : '閉じる'}>
+      <button className="sidebar-toggle" onClick={() => setCollapsed(c => !c)} title={collapsed ? t('sidebar.toggleBtn.open') : t('sidebar.toggleBtn.close')}>
         {collapsed ? '▶' : '◀'}
       </button>
 
       <div className="sidebar-section">
         <button className="rating-open-btn" onClick={() => setShowRating(true)}>
-          🚫 レーティング設定
+          {t('sidebar.ratingBtn')}
         </button>
         <div className="sidebar-col" style={{ marginTop: 6 }}>
-          <span>安全レベル</span>
+          <span>{t('sidebar.safetyLevel.label')}</span>
           <select
             className="sidebar-select"
-            value={get('safety_level', 'warn')}
+            value={get('safety_level', 'off') === 'warn' ? 'off' : get('safety_level', 'off')}
             onChange={e => set('safety_level', e.target.value)}
           >
-            <option value="off">オフ</option>
-            <option value="warn">警告</option>
-            <option value="mask">マスク</option>
+            <option value="off">{t('sidebar.safetyLevel.off')}</option>
+            <option value="mask">{t('sidebar.safetyLevel.mask')}</option>
           </select>
         </div>
       </div>
 
       <div className="sidebar-section">
-        <h4>チャット設定</h4>
+        <h4>{t('sidebar.section.chatSettings')}</h4>
         <div className="sidebar-row">
-          <span>AI TTS 有効</span>
+          <span>{t('sidebar.aiTtsEnabled')}</span>
           <Toggle checked={get('tts_enabled', true)} onChange={v => set('tts_enabled', v)} />
         </div>
         <div className="sidebar-row">
-          <span>ユーザー TTS有効</span>
+          <span>{t('sidebar.userTtsEnabled')}</span>
           <Toggle checked={get('tts_human_enabled', false)} onChange={v => set('tts_human_enabled', v)} />
         </div>
         <div className="sidebar-row">
-          <span>次の発言を強制</span>
+          <span>{t('sidebar.forceNext')}</span>
           <Toggle checked={forceEnabled} onChange={handleForceEnabled} />
         </div>
         {forceEnabled && (
           <div className="sidebar-col">
-            <span>強制タグ</span>
+            <span>{t('sidebar.forceTag')}</span>
             <select
               className="sidebar-select"
               value={forceTag}
@@ -151,12 +152,16 @@ export default function Sidebar() {
             </select>
           </div>
         )}
+        <div className="sidebar-row">
+          <span>{t('sidebar.voteForceApprove')}</span>
+          <Toggle checked={get('vote_force_approve', false)} onChange={v => set('vote_force_approve', v)} />
+        </div>
       </div>
 
 
       <div className="sidebar-section">
         <div className={`vram-status ${vramLocked ? 'vram-locked' : 'vram-free'}`}>
-          {vramLocked ? '⚡ vram_lock 保持中' : '✅ vram_lock 解放中'}
+          {vramLocked ? t('sidebar.vram.locked') : t('sidebar.vram.free')}
         </div>
       </div>
 

@@ -49,6 +49,7 @@ PERSISTED_KEYS = [
     "episode_candidate_count",
     "episode_t2i_width",
     "episode_t2i_height",
+    "vote_force_approve",
 ]
 
 

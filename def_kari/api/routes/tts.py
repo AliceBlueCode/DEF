@@ -9,9 +9,12 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from def_kari.characters import load_profiles, get_character, get_tts_speaker_id, apply_name_reading
+from def_kari.resources.vram_lock import get_vram_lock
 from def_kari.workers._tts_synth import synthesize
 
 router = APIRouter()
+
+_LOCAL_TTS_BACKENDS = {"voicevox", "kokoro", "irodori"}
 
 ASSET_DIR = (Path(__file__).parent.parent.parent.parent / "assets").resolve()
 
@@ -30,7 +33,15 @@ def generate_tts(req: TTSRequest):
     text = apply_name_reading(req.text, char)
 
     try:
-        audio_bytes = synthesize(text, speaker_id, req.backend)
+        if req.backend in _LOCAL_TTS_BACKENDS:
+            _vram_lock = get_vram_lock()
+            _vram_lock.acquire()
+            try:
+                audio_bytes = synthesize(text, speaker_id, req.backend)
+            finally:
+                _vram_lock.release()
+        else:
+            audio_bytes = synthesize(text, speaker_id, req.backend)
         return Response(content=audio_bytes, media_type="audio/wav")
     except Exception as e:
         return {"error": str(e)}
@@ -88,7 +99,15 @@ class TestTTSRequest(BaseModel):
 @router.post("/test")
 def test_tts(req: TestTTSRequest):
     try:
-        audio_bytes = synthesize(req.text, req.speaker_id, req.backend)
+        if req.backend in _LOCAL_TTS_BACKENDS:
+            _vram_lock = get_vram_lock()
+            _vram_lock.acquire()
+            try:
+                audio_bytes = synthesize(req.text, req.speaker_id, req.backend)
+            finally:
+                _vram_lock.release()
+        else:
+            audio_bytes = synthesize(req.text, req.speaker_id, req.backend)
         return Response(content=audio_bytes, media_type="audio/wav")
     except Exception as e:
         return {"error": str(e)}

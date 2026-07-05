@@ -154,7 +154,10 @@ def _repair_types(parsed: dict) -> dict:
         parsed["dialogue"] = str(dialogue)
 
     emotion = parsed.get("emotion")
-    if emotion not in EMOTIONS:
+    if isinstance(emotion, list):
+        valid = [e for e in emotion if e in EMOTIONS]
+        parsed["emotion"] = valid[:2] if valid else "neutral"
+    elif emotion not in EMOTIONS:
         parsed["emotion"] = "neutral"
 
     return parsed

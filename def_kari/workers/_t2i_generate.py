@@ -96,32 +96,40 @@ def _civitai_generate(
     if not model_air:
         raise RuntimeError("Civitaiモデル(AIR形式)が指定されていません。")
 
-    params: dict = {
+    air_parts = model_air.split(":")
+    ecosystem = air_parts[2] if len(air_parts) > 2 and air_parts[:2] == ["urn", "air"] else "sd1"
+    is_flux = "flux" in ecosystem.lower()
+
+    image_input: dict = {
+        "engine": "flux" if is_flux else "sdcpp",
+        "ecosystem": ecosystem,
+        "operation": "createImage",
+        "model": model_air,
         "prompt": prompt,
-        "negativePrompt": negative_prompt,
         "width": width,
         "height": height,
         "steps": steps,
-        "cfgScale": cfg_scale,
-        "scheduler": "EulerA",
-        "clipSkip": 2,
-    }
-    if seed >= 0:
-        params["seed"] = seed
-
-    image_input = {
-        "model": model_air,
-        "params": params,
         "quantity": 1,
     }
+    if is_flux:
+        image_input["guidance"] = cfg_scale
+    else:
+        image_input["negativePrompt"] = negative_prompt
+        image_input["cfgScale"] = cfg_scale
+        image_input["scheduler"] = "EulerA"
+        image_input["clipSkip"] = 2
+    if seed >= 0:
+        image_input["seed"] = seed
 
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     payload = {"steps": [{"$type": "imageGen", "input": image_input}]}
-    print(f"[CIVITAI] POST {CIVITAI_URL} model={model_air}")
-    resp = requests.post(f"{CIVITAI_URL}?wait=true", json=payload, headers=headers, timeout=120)
+    print(f"[CIVITAI] POST {CIVITAI_URL} model={model_air} ecosystem={image_input.get('ecosystem')} engine={image_input.get('engine')}")
+    print(f"[CIVITAI] payload={payload}")
+    resp = requests.post(f"{CIVITAI_URL}?wait=60", json=payload, headers=headers, timeout=120)
     if not resp.ok:
-        print(f"[CIVITAI] {resp.status_code}: {resp.text[:500]}")
-    resp.raise_for_status()
+        body = resp.text[:1000]
+        print(f"[CIVITAI] {resp.status_code}: {body}")
+        raise RuntimeError(f"Civitai {resp.status_code}: {body}")
     workflow = resp.json()
     print(f"[CIVITAI] response status={workflow.get('status')} id={workflow.get('id')}")
 

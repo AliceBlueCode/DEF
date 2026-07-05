@@ -9,29 +9,102 @@ import secrets
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from pydantic import BaseModel
 
 from def_kari.characters import load_profiles, get_character
 from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.llm.client import generate_structured_reply
+from def_kari.image_prompt.emotion_tags import apply_emotion_tags
+from def_kari.t2i.backend import generate_image as _generate_t2i_image
 
 router = APIRouter()
 
+
+
 _MAX_SESSIONS = int(os.environ.get("DEF_MAX_SESSIONS", "1000"))
 _sessions: OrderedDict[str, dict] = OrderedDict()
+_last_session_debug: dict = {}
 
 _BASE = Path(__file__).parent.parent.parent.parent
 _RULE_DIRS = [
     _BASE / "data" / "public" / "session_rules",
     _BASE / "data" / "private" / "session_rules",
 ]
+_DIRECTIVE_DIRS = [
+    _BASE / "data" / "public" / "action_directives",
+    _BASE / "data" / "private" / "action_directives",
+]
 _SESSION_HISTORY_DIRS = [
     _BASE / "data" / "public" / "session_history",
     _BASE / "data" / "private" / "session_history",
 ]
+_AUTOSAVE_DIR = _BASE / "data" / "private" / "session_autosave"
 _SAFE_FILENAME_RE = re.compile(r'^[A-Za-z0-9_\-]+\.json$')
+
+
+def _autosave(session_id: str) -> None:
+    session = _sessions.get(session_id)
+    if not session:
+        return
+    try:
+        _AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+        (_AUTOSAVE_DIR / f"{session_id}.json").write_text(
+            json.dumps(session, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _delete_autosave(session_id: str) -> None:
+    try:
+        (_AUTOSAVE_DIR / f"{session_id}.json").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+# ── 起動時に進行中セッションを復元 ──────────────────────────────
+try:
+    if _AUTOSAVE_DIR.is_dir():
+        for _f in sorted(_AUTOSAVE_DIR.iterdir()):
+            if _f.suffix == ".json":
+                try:
+                    _restored = json.loads(_f.read_text(encoding="utf-8"))
+                    if isinstance(_restored, dict) and _restored.get("id"):
+                        _sessions[_restored["id"]] = _restored
+                except Exception:
+                    pass
+except Exception:
+    pass
+
+
+def _load_action_directives() -> dict:
+    directives: dict = {}
+    for d in _DIRECTIVE_DIRS:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.suffix == ".json" and f.name != ".gitkeep":
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        did = data.get("id", f.stem)
+                        directives[did] = data
+                    except (json.JSONDecodeError, OSError):
+                        pass
+    if "none" not in directives:
+        directives["none"] = {"id": "none", "label": "指示なし（キャラクターに任せる）", "directives": {}}
+    return directives
+
+
+@router.get("/action-directives")
+def get_action_directives():
+    directives = _load_action_directives()
+    return {
+        "directives": [
+            {"id": did, "label": d.get("label", did), "rating": d.get("rating", "general"), "recommended_for": d.get("recommended_for", [])}
+            for did, d in directives.items()
+        ]
+    }
 
 
 def _load_session_rules() -> dict:
@@ -62,12 +135,56 @@ def get_session_rules():
     }
 
 
+@router.get("/rules/{rule_id}")
+def get_session_rule_detail(rule_id: str):
+    if not re.match(r'^[A-Za-z0-9_\-]+$', rule_id):
+        return {"error": "Invalid rule ID"}
+    for d in _RULE_DIRS:
+        path = d / f"{rule_id}.json"
+        if path.exists():
+            try:
+                return {"content": path.read_text(encoding="utf-8"), "id": rule_id}
+            except OSError as e:
+                return {"error": str(e)}
+    return {"error": f"Rule '{rule_id}' not found"}
+
+
+class SaveRuleRequest(BaseModel):
+    content: str
+
+
+@router.put("/rules/{rule_id}")
+def save_session_rule(rule_id: str, req: SaveRuleRequest):
+    if not re.match(r'^[A-Za-z0-9_\-]+$', rule_id):
+        return {"error": "Invalid rule ID"}
+    try:
+        data = json.loads(req.content)
+    except json.JSONDecodeError as e:
+        return {"error": f"Invalid JSON: {e}"}
+    target: Path | None = None
+    for d in _RULE_DIRS:
+        path = d / f"{rule_id}.json"
+        if path.exists():
+            target = path
+            break
+    if target is None:
+        _RULE_DIRS[0].mkdir(parents=True, exist_ok=True)
+        target = _RULE_DIRS[0] / f"{rule_id}.json"
+    tmp = str(target) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, str(target))
+    return {"status": "ok", "id": rule_id}
+
+
 class SessionStartRequest(BaseModel):
     character_ids: list[str]
     topic: str = ""
     backend: str = DEFAULT_LLM_BACKEND
     rule_set: str = "default"
-    actions_per_turn: int = 1
+    actions_per_turn: int = 0
+    action_directive_set: str = ""
+    char_backends: dict[str, str] = {}
 
 
 class SessionNextRequest(BaseModel):
@@ -81,8 +198,17 @@ class SessionHumanMessage(BaseModel):
     message: str
 
 
+class KeeperMessageRequest(BaseModel):
+    text: str
+
+
 @router.post("/start")
 def start_session(req: SessionStartRequest):
+    from def_kari.settings import load_settings as _load_s
+    _s = _load_s()
+    apt = req.actions_per_turn or _s.get("session_actions_per_turn", 2)
+    directive_set_id = req.action_directive_set or _s.get("session_action_directive_set", "default")
+
     session_id = secrets.token_urlsafe(16)
     initiative = random.sample(req.character_ids, len(req.character_ids))
     profiles = load_profiles()
@@ -93,23 +219,36 @@ def start_session(req: SessionStartRequest):
 
     if len(_sessions) >= _MAX_SESSIONS:
         _sessions.popitem(last=False)
-    rules = _load_session_rules().get(req.rule_set, {}).get("rules", [])
+    _rule_data = _load_session_rules().get(req.rule_set, {})
+    rules = _rule_data.get("rules", [])
+    scene = _rule_data.get("scene", "")
+    char_backends = {
+        cid: bid
+        for cid, bid in req.char_backends.items()
+        if cid in req.character_ids and bid in LLM_BACKENDS
+    }
     _sessions[session_id] = {
         "id": session_id,
         "initiative": initiative,
         "name_map": name_map,
         "topic": req.topic,
         "backend": req.backend,
+        "char_backends": char_backends,
         "rule_set": req.rule_set,
         "rules": rules,
+        "scene": scene,
         "round": 1,
         "turn": 0,
         "action_count": 0,
-        "actions_per_turn": req.actions_per_turn,
+        "actions_per_turn": apt,
+        "action_directive_set": directive_set_id,
         "history": [],
+        "counters": {},
+        "designated_next": None,
     }
 
     order = [name_map.get(c, c) for c in initiative]
+    _autosave(session_id)
     return {"session_id": session_id, "initiative": initiative, "order": order}
 
 
@@ -126,12 +265,49 @@ def next_turn(req: SessionNextRequest):
         session["turn"] = 0
         turn = 0
 
+    # 指名があれば優先
+    designated = session.pop("designated_next", None)
+    if designated and designated in initiative:
+        return_turn = session.pop("designated_return_turn", None)
+        if return_turn is not None:
+            session["_designated_return_turn"] = return_turn
+        turn = initiative.index(designated)
+        session["turn"] = turn
+        session["action_count"] = 0
+
     current_char_id = initiative[turn]
-    profiles = load_profiles()
-    char = get_character(current_char_id, profiles)
     name_map = session["name_map"]
 
-    backend_id = req.backend or session["backend"]
+    # 発言力がマイナスなら自動スキップ
+    counters = session.setdefault("counters", {})
+    if counters.get(current_char_id, 0) < 0:
+        counters[current_char_id] += 1
+        session["turn"] = turn + 1
+        session["action_count"] = 0
+        _autosave(req.session_id)
+        return {
+            "skipped": True,
+            "character_id": current_char_id,
+            "character_name": name_map.get(current_char_id, current_char_id),
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+
+    profiles = load_profiles()
+    char = get_character(current_char_id, profiles)
+
+    # 人間プレイヤーのターンは LLM を呼ばず入力待ちを返す
+    if char.get("player_type") == "human":
+        return {
+            "waiting_for_human": True,
+            "character_id": current_char_id,
+            "character_name": name_map.get(current_char_id, current_char_id),
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+
+    char_backends = session.get("char_backends", {})
+    backend_id = char_backends.get(current_char_id) or req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
     if backend_id not in LLM_BACKENDS:
         backend_id = DEFAULT_LLM_BACKEND
     model = req.model
@@ -148,8 +324,11 @@ def next_turn(req: SessionNextRequest):
     speaker_name = name_map.get(current_char_id, current_char_id)
     topic = session.get("topic", "")
 
+    action_count = session.get("action_count", 0)
     lang_rule = "【重要】必ず日本語で発言してください。英語で考えた内容も、出力は日本語にしてください。dialogue フィールドに思考プロセスや推論を書かないでください。\n"
+
     if not session["history"]:
+        # 最初のアクション（セッション開始直後）
         user_text = lang_rule + rule_block
         user_text += "\nこれは複数の参加者による討論セッションです。"
         if topic:
@@ -157,13 +336,41 @@ def next_turn(req: SessionNextRequest):
         user_text += f"\n参加者: {', '.join(name_map.get(c, c) for c in initiative)}"
         user_text += f"\nあなたは{speaker_name}です。対話相手は{', '.join(other_names)}です。"
         user_text += "\nまず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。"
-    else:
+    elif action_count == 0:
+        # ターン先頭アクション（2ターン目以降）
         user_text = lang_rule + rule_block
         user_text += f"\nあなたは{speaker_name}です。対話相手は{', '.join(other_names)}です。"
         if topic:
             user_text += f"\nお題: 「{topic}」"
         user_text += "\n上記の発言記録を踏まえ、他の参加者の発言を具体的に引用しながら、あなた自身の立場から意見を述べてください。"
+    else:
+        # ターン内の2アクション目以降 — directive を適用
+        _cur_round = session.get("round", 1)
+        _cur_turn = session.get("turn", 0)
+        turn_actions = [
+            h["content"].split(": ", 1)[-1]
+            for h in session["history"]
+            if h.get("character_id") == current_char_id
+            and h.get("round") == _cur_round
+            and h.get("turn") == _cur_turn
+        ]
+        prev_block = "\n".join(f"・{a}" for a in turn_actions) if turn_actions else ""
 
+        directive_set_id = session.get("action_directive_set", "default")
+        _directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
+        directive = _directives.get(str(action_count), "")
+
+        user_text = lang_rule
+        user_text += f"あなたは{speaker_name}です。このターンであなたは既に以下の発言をしています:\n{prev_block}\n\n"
+        if directive:
+            user_text += f"【アクション{action_count + 1}の指示】{directive}"
+        else:
+            user_text += "続けて発言してください。"
+
+    global _last_session_debug
+    from def_kari.resources.vram_lock import get_vram_lock
+    _vram_lock = get_vram_lock()
+    _vram_lock.acquire()
     try:
         result = generate_structured_reply(
             user_text=user_text,
@@ -173,21 +380,53 @@ def next_turn(req: SessionNextRequest):
             backend=backend_id,
         )
     except Exception as e:
-        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn + 1}
+        _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
+        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}
+    finally:
+        _vram_lock.release()
 
     text = ""
     emotion = "neutral"
     tags: list[str] = []
+    image_prompt_en = ""
     if result.get("success") and result.get("result"):
         parsed = result["result"]
         text = parsed.get("dialogue", "")
         emotion = parsed.get("emotion", "neutral")
         raw_tags = parsed.get("tags", [])
         tags = raw_tags if isinstance(raw_tags, list) else []
+        image_prompt_en = parsed.get("image_prompt_en", "")
+        image_prompt_en = apply_emotion_tags(image_prompt_en, emotion)
+        _last_session_debug = {
+            "success": True,
+            "character_id": current_char_id,
+            "character_name": name_map.get(current_char_id, current_char_id),
+            "backend": backend_id,
+            "topic": topic,
+            "round": session["round"],
+            "text": text,
+            "emotion": emotion,
+            "tags": tags,
+            "image_prompt_en": image_prompt_en,
+            "raw": result.get("attempts", [{}])[-1].get("raw", "") if result.get("attempts") else "",
+            "attempts": result.get("attempts", []),
+            "user_text": user_text,
+        }
     else:
         attempts = result.get("attempts", [])
         errors = "; ".join(e for a in attempts for e in a.get("errors", []))
         text = f"(generation failed: {errors})" if errors else "(generation failed)"
+        _last_session_debug = {
+            "success": False,
+            "character_id": current_char_id,
+            "character_name": name_map.get(current_char_id, current_char_id),
+            "backend": backend_id,
+            "topic": topic,
+            "round": session["round"],
+            "raw": attempts[-1]["raw"] if attempts else "",
+            "attempts": attempts,
+            "user_text": user_text,
+        }
 
     session["history"].append({
         "role": "assistant",
@@ -196,22 +435,45 @@ def next_turn(req: SessionNextRequest):
         "emotion": emotion,
         "tags": tags,
     })
-    actions_per_turn = session.get("actions_per_turn", 1)
+
+    # A6 リピートペナルティ
+    from def_kari.settings import load_settings as _load_settings
+    _repeat_threshold = int(_load_settings().get("session_repeat_penalty_count", 3))
+    if _repeat_threshold > 0:
+        _char_contents = [
+            h["content"] for h in session["history"]
+            if h.get("character_id") == current_char_id and h.get("role") == "assistant"
+        ][-_repeat_threshold:]
+        penalty_message = ""
+    if len(_char_contents) >= _repeat_threshold and len(set(_char_contents)) == 1:
+            counters[current_char_id] = counters.get(current_char_id, 0) - 1
+            penalty_message = f"⚠ {name_map.get(current_char_id, current_char_id)} が同一発言を{_repeat_threshold}回繰り返した [発言力-1]"
+
+    actions_per_turn = session.get("actions_per_turn", 2)
     action_count = session.get("action_count", 0) + 1
     if action_count >= actions_per_turn:
-        session["turn"] = turn + 1
+        return_turn = session.pop("_designated_return_turn", None)
+        if return_turn is not None:
+            next_t = return_turn % len(initiative) if initiative else 0
+        else:
+            next_t = turn + 1
+        session["turn"] = next_t
         session["action_count"] = 0
     else:
         session["action_count"] = action_count
 
+    _autosave(req.session_id)
     return {
         "character_id": current_char_id,
         "character_name": name_map.get(current_char_id, current_char_id),
         "text": text,
         "emotion": emotion,
         "tags": tags,
+        "image_prompt_en": image_prompt_en,
         "round": session["round"],
         "turn": turn + 1,
+        "counters": dict(counters),
+        "penalty_message": penalty_message,
     }
 
 
@@ -222,7 +484,7 @@ def retake_turn(session_id: str):
         return {"error": "Session not found"}
 
     action_count = session.get("action_count", 0)
-    actions_per_turn = session.get("actions_per_turn", 1)
+    actions_per_turn = session.get("actions_per_turn", 2)
     turn = session.get("turn", 0)
     history = session.get("history", [])
 
@@ -253,6 +515,7 @@ def retake_turn(session_id: str):
             break
     session["history"] = new_history
 
+    _autosave(session_id)
     return {"removed": removed}
 
 
@@ -267,7 +530,515 @@ def human_message(req: SessionHumanMessage):
         "character_id": "human",
         "emotion": "",
     })
+    _autosave(req.session_id)
     return {"status": "ok"}
+
+
+@router.post("/{session_id}/keeper")
+def inject_keeper_message(session_id: str, req: KeeperMessageRequest):
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    content = f"[GM] {req.text}"
+    session["history"].append({
+        "role": "user",
+        "content": content,
+        "character_id": "_keeper",
+    })
+    _autosave(session_id)
+    return {"status": "ok"}
+
+
+@router.post("/{session_id}/skip")
+def skip_turn(session_id: str):
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    initiative = session["initiative"]
+    turn = session["turn"]
+    if turn >= len(initiative):
+        session["round"] += 1
+        session["turn"] = 0
+        turn = 0
+    char_id = initiative[turn]
+    counters = session.setdefault("counters", {})
+    counters[char_id] = counters.get(char_id, 0) + 1
+    session["turn"] = turn + 1
+    session["action_count"] = 0
+    if session["turn"] >= len(initiative):
+        session["round"] += 1
+        session["turn"] = 0
+    _autosave(session_id)
+    return {
+        "character_id": char_id,
+        "character_name": session["name_map"].get(char_id, char_id),
+        "round": session["round"],
+        "counters": dict(counters),
+    }
+
+
+class DesignateRequest(BaseModel):
+    target_id: str
+
+
+@router.post("/{session_id}/designate")
+def designate_next(session_id: str, req: DesignateRequest):
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    if req.target_id not in session["initiative"]:
+        return {"error": "Character not in initiative"}
+    initiative = session["initiative"]
+    current_turn = session.get("turn", 0)
+    # 指名発言後に戻るべきターン位置を保存（指名キャラの次）
+    session["designated_next"] = req.target_id
+    session["designated_return_turn"] = (current_turn + 1) % len(initiative) if initiative else 0
+    _autosave(session_id)
+    return {"status": "ok"}
+
+
+class CounterAdjustRequest(BaseModel):
+    delta: int
+
+
+@router.post("/{session_id}/counter/{char_id}")
+def adjust_counter(session_id: str, char_id: str, req: CounterAdjustRequest):
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    counters = session.setdefault("counters", {})
+    counters[char_id] = counters.get(char_id, 0) + req.delta
+    _autosave(session_id)
+    return {"counters": dict(counters)}
+
+
+class VoteRequest(BaseModel):
+    vote_type: str
+    detail: str = ""
+    target_id: str = ""
+    proposer_id: str = ""  # 人間プレイヤーが発議した場合、カウンターを0にする
+    proposer_text: str = ""  # 人間プレイヤーの弁明テキスト
+
+
+class VoteCommitRequest(BaseModel):
+    keeper_vote: bool
+
+
+class HumanTurnRequest(BaseModel):
+    action: str  # "send" | "extend" | "skip" | "interrupt"
+    text: str = ""
+    character_id: str = ""  # interrupt 時に発言者IDを指定
+
+
+@router.post("/{session_id}/human_turn")
+def human_turn_action(session_id: str, req: HumanTurnRequest):
+    """人間プレイヤーのターンアクション（send / extend / skip）。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    initiative = session["initiative"]
+    turn = session["turn"]
+    if turn >= len(initiative):
+        return {"error": "invalid turn"}
+
+    current_char_id = initiative[turn]
+    name_map = session["name_map"]
+    counters = session.setdefault("counters", {})
+    char_name = name_map.get(current_char_id, current_char_id)
+
+    if req.action == "interrupt":
+        if not req.text.strip():
+            return {"error": "text required"}
+        # 割り込み発言者は current_char_id ではなく req.character_id（人間キャラ）
+        interrupter_id = req.character_id if req.character_id else current_char_id
+        interrupter_name = name_map.get(interrupter_id, interrupter_id)
+        counters[interrupter_id] = counters.get(interrupter_id, 0) - 2
+        session["history"].append({
+            "role": "assistant",
+            "content": f"{interrupter_name}: {req.text}",
+            "character_id": interrupter_id,
+            "emotion": "neutral",
+            "tags": [],
+        })
+        _autosave(session_id)
+        return {
+            "action": "interrupt",
+            "character_id": interrupter_id,
+            "character_name": interrupter_name,
+            "text": req.text,
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+
+    if req.action == "generate_image":
+        char_id = req.character_id if req.character_id else current_char_id
+        counters[char_id] = counters.get(char_id, 0) - 1
+        _autosave(session_id)
+        return {
+            "action": "generate_image",
+            "counters": dict(counters),
+            "round": session["round"],
+        }
+
+    if req.action == "skip":
+        counters[current_char_id] = counters.get(current_char_id, 0) + 1
+        session["turn"] = turn + 1
+        session["action_count"] = 0
+        _autosave(session_id)
+        return {
+            "action": "skip",
+            "character_id": current_char_id,
+            "character_name": char_name,
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+
+    if not req.text.strip():
+        return {"error": "text required"}
+
+    session["history"].append({
+        "role": "assistant",
+        "content": f"{char_name}: {req.text}",
+        "character_id": current_char_id,
+        "emotion": "neutral",
+        "tags": [],
+    })
+
+    if req.action == "extend":
+        counters[current_char_id] = counters.get(current_char_id, 0) - 1
+        _autosave(session_id)
+        return {
+            "action": "extend",
+            "character_id": current_char_id,
+            "character_name": char_name,
+            "text": req.text,
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+    else:  # "send"
+        # 人間プレイヤーは「積む→発言完」が1ターン完了とみなす（actions_per_turn に関わらず即時進行）
+        session["turn"] = turn + 1
+        session["action_count"] = 0
+        _autosave(session_id)
+        return {
+            "action": "send",
+            "turn_advanced": True,
+            "character_id": current_char_id,
+            "character_name": char_name,
+            "text": req.text,
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+
+
+@router.post("/{session_id}/vote/deliberate")
+def vote_deliberate(session_id: str, req: VoteRequest):
+    """弁明ラウンド: 全 AI キャラが意見を述べてセッションに保存し、結果を返す。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    initiative = session["initiative"]
+    name_map = session["name_map"]
+    char_backends = session.get("char_backends", {})
+    default_backend = session.get("backend", DEFAULT_LLM_BACKEND)
+    profiles = load_profiles()
+
+    vote_labels = {
+        "topic_change": "お題変更",
+        "expel": "参加者退場",
+        "end_session": "セッション終了",
+    }
+    vote_label = vote_labels.get(req.vote_type, req.vote_type)
+    detail_text = f" — {req.detail}" if req.detail else ""
+
+    # ターン位置を保存 (commit 時に復元する)
+    session["_pending_vote"] = {
+        "vote_type": req.vote_type,
+        "detail": req.detail,
+        "target_id": req.target_id,
+        "proposer_id": req.proposer_id,
+        "vote_label": vote_label,
+        "detail_text": detail_text,
+        "saved_turn": session["turn"],
+        "saved_round": session["round"],
+        "saved_action_count": session.get("action_count", 0),
+        "deliberation_texts": {},
+    }
+
+    counters = session.setdefault("counters", {})
+    if req.proposer_id:
+        counters[req.proposer_id] = 0
+
+    deliberations: list[dict] = []
+
+    vote_announce = (
+        f"[投票提案] {vote_label}{detail_text}\n"
+        f"参加者全員に意見を求めます。"
+    )
+    session["history"].append({
+        "role": "user",
+        "content": vote_announce,
+        "character_id": "_keeper",
+    })
+    deliberations.append({
+        "character_id": "_keeper",
+        "character_name": "GM",
+        "text": vote_announce,
+        "emotion": "neutral",
+    })
+
+    if req.proposer_id and req.proposer_text.strip():
+        proposer_name = name_map.get(req.proposer_id, req.proposer_id)
+        session["history"].append({
+            "role": "assistant",
+            "content": f"{proposer_name}: {req.proposer_text}",
+            "character_id": req.proposer_id,
+            "emotion": "neutral",
+            "tags": [],
+        })
+        deliberations.append({
+            "character_id": req.proposer_id,
+            "character_name": proposer_name,
+            "text": req.proposer_text,
+            "emotion": "neutral",
+        })
+        session["_pending_vote"]["deliberation_texts"][req.proposer_id] = req.proposer_text
+
+    for char_id in initiative:
+        char = get_character(char_id, profiles)
+        char_name = name_map.get(char_id, char_id)
+
+        # 人間プレイヤーは LLM 生成をスキップ
+        if char and char.get("player_type") == "human":
+            continue
+
+        bid = char_backends.get(char_id) or default_backend
+        if bid not in LLM_BACKENDS:
+            bid = DEFAULT_LLM_BACKEND
+        model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
+
+        deliberation_prompt = (
+            f"今、投票が提案されています: {vote_label}{detail_text}\n"
+            f"あなたはこれについてどう思いますか？賛成・反対どちらに投票するつもりですか？"
+            f"あなたのキャラクターとして、率直に意見を述べてください。"
+        )
+
+        try:
+            result = generate_structured_reply(
+                user_text=deliberation_prompt,
+                history=list(session["history"]),
+                model=model,
+                character=char,
+                backend=bid,
+            )
+            dialogue = ""
+            emotion = "neutral"
+            if result.get("success") and result.get("result"):
+                parsed = result["result"]
+                dialogue = parsed.get("dialogue", "")
+                emotion = parsed.get("emotion", "neutral")
+            if not dialogue:
+                dialogue = "(弁明なし)"
+        except Exception:
+            dialogue = "(弁明なし)"
+            emotion = "neutral"
+
+        session["history"].append({
+            "role": "assistant",
+            "content": f"{char_name}: {dialogue}",
+            "character_id": char_id,
+            "emotion": emotion,
+            "tags": [],
+        })
+        deliberations.append({
+            "character_id": char_id,
+            "character_name": char_name,
+            "text": dialogue,
+            "emotion": emotion,
+        })
+        session["_pending_vote"]["deliberation_texts"][char_id] = dialogue
+
+    _autosave(session_id)
+    return {"deliberations": deliberations, "counters": dict(counters)}
+
+
+@router.post("/{session_id}/vote/commit")
+def vote_commit(session_id: str, req: VoteCommitRequest):
+    """キーパー票を受け取り、AI票と合算して集計・効果適用する。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    pending = session.get("_pending_vote")
+    if not pending:
+        return {"error": "No pending vote"}
+
+    initiative = session["initiative"]
+    name_map = session["name_map"]
+    char_backends = session.get("char_backends", {})
+    default_backend = session.get("backend", DEFAULT_LLM_BACKEND)
+    profiles = load_profiles()
+
+    vote_type = pending["vote_type"]
+    vote_label = pending["vote_label"]
+    detail_text = pending["detail_text"]
+    detail = pending["detail"]
+    target_id = pending["target_id"]
+    deliberation_texts = pending["deliberation_texts"]
+
+    from def_kari.resources.vram_lock import get_vram_lock
+    from def_kari.settings import load_settings as _load_settings
+    _vram_lock = get_vram_lock()
+    _force_approve = bool(_load_settings().get("vote_force_approve", False))
+
+    proposer_id = pending.get("proposer_id", "")
+
+    results: dict[str, bool] = {}
+    for char_id in initiative:
+        char = get_character(char_id, profiles)
+
+        # 人間プレイヤーは LLM 判定せず keeper_vote（ボタンクリック）を直接使う
+        if char and char.get("player_type") == "human":
+            results[char_id] = req.keeper_vote
+            continue
+
+        bid = char_backends.get(char_id) or default_backend
+        if bid not in LLM_BACKENDS:
+            bid = DEFAULT_LLM_BACKEND
+        model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
+        dialogue = deliberation_texts.get(char_id, "")
+
+        if _force_approve:
+            results[char_id] = True
+            continue
+
+        judge_prompt = (
+            f"以下の発言から、この人物が投票に賛成しているか反対しているかを判断してください。\n"
+            f"発言: {dialogue}\n"
+            f"投票内容: {vote_label}{detail_text}\n"
+            f"「賛成」か「反対」の一言だけで答えてください。"
+        )
+        try:
+            chat_fn = LLM_BACKENDS[bid]["chat"]
+            messages = [
+                {"role": "system", "content": char.get("persona_description", "")},
+                {"role": "user", "content": judge_prompt},
+            ]
+            _vram_lock.acquire()
+            try:
+                reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 32})
+            finally:
+                _vram_lock.release()
+            results[char_id] = "賛成" in reply or "yes" in reply.lower()
+        except Exception:
+            results[char_id] = True
+
+    if proposer_id:
+        # 人間キャラがいる場合: LLM がキーパーとして追加投票
+        bid = default_backend if default_backend in LLM_BACKENDS else DEFAULT_LLM_BACKEND
+        model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
+        if _force_approve:
+            results["_keeper"] = True
+        else:
+            all_texts = "\n".join(
+                f"{name_map.get(cid, cid)}: {text}"
+                for cid, text in deliberation_texts.items()
+                if text
+            )
+            keeper_judge_prompt = (
+                f"投票が提案されています: {vote_label}{detail_text}\n"
+                f"参加者の弁明:\n{all_texts}\n"
+                f"あなたはキーパー（GM）として、この投票に賛成しますか？"
+                f"「賛成」か「反対」の一言だけで答えてください。"
+            )
+            try:
+                chat_fn = LLM_BACKENDS[bid]["chat"]
+                keeper_msgs = [
+                    {"role": "system", "content": "あなたはセッションのキーパー（GM・司会者）です。"},
+                    {"role": "user", "content": keeper_judge_prompt},
+                ]
+                _vram_lock.acquire()
+                try:
+                    reply = chat_fn(keeper_msgs, model, json_mode=False, options={"num_predict": 32})
+                finally:
+                    _vram_lock.release()
+                results["_keeper"] = "賛成" in reply or "yes" in reply.lower()
+            except Exception:
+                results["_keeper"] = True
+    else:
+        # 人間キャラなし: キーパー票はボタンクリックで決まる
+        results["_keeper"] = req.keeper_vote
+
+    yes_count = sum(1 for v in results.values() if v)
+    no_count = len(results) - yes_count
+    passed = yes_count > no_count
+
+    if passed:
+        if vote_type == "topic_change" and detail:
+            session["topic"] = detail
+        elif vote_type == "expel" and target_id:
+            session["initiative"] = [c for c in initiative if c != target_id]
+
+    # ターン位置を復元
+    session["turn"] = pending["saved_turn"]
+    session["round"] = pending["saved_round"]
+    session["action_count"] = pending["saved_action_count"]
+
+    # expel 可決時: 退場者が saved_turn より前にいた場合は turn を -1 してからクランプ
+    if passed and vote_type == "expel" and target_id:
+        new_init = session["initiative"]
+        expelled_idx = initiative.index(target_id) if target_id in initiative else -1
+        if expelled_idx >= 0 and expelled_idx < session["turn"]:
+            session["turn"] -= 1
+        if len(new_init) > 0 and session["turn"] >= len(new_init):
+            session["turn"] = len(new_init) - 1
+        elif len(new_init) == 0:
+            session["turn"] = 0
+
+    human_vote_label = "賛成" if req.keeper_vote else "反対"
+    keeper_llm_label = "賛成" if results.get("_keeper") else "反対"
+    if proposer_id:
+        vote_detail_str = (
+            f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
+            f"キーパー: {keeper_llm_label}"
+        )
+    else:
+        vote_detail_str = f"キーパー: {human_vote_label}"
+    result_text = (
+        f"🗳 投票結果: {vote_label}{detail_text} — "
+        f"賛成{yes_count}/反対{no_count}（{vote_detail_str}）"
+        f" → {'✅ 可決' if passed else '❌ 否決'}"
+    )
+    session["history"].append({
+        "role": "user",
+        "content": result_text,
+        "character_id": "_keeper",
+    })
+
+    session.pop("_pending_vote", None)
+
+    ended = passed and vote_type == "end_session"
+    if ended:
+        _delete_autosave(session_id)
+    else:
+        _autosave(session_id)
+    return {
+        "results": {name_map.get(k, k) if k != "_keeper" else "キーパー": v for k, v in results.items()},
+        "yes_count": yes_count,
+        "no_count": no_count,
+        "passed": passed,
+        "result_text": result_text,
+        "vote_type": vote_type,
+        "ended": ended,
+        "initiative": session["initiative"],
+        "topic": session.get("topic", ""),
+    }
+
+
+@router.get("/debug")
+def get_session_debug():
+    return _last_session_debug
 
 
 @router.get("/saved")
@@ -290,6 +1061,21 @@ def list_saved_sessions():
 
 class SessionLoadRequest(BaseModel):
     filename: str
+
+
+@router.delete("/saved/{filename}")
+def delete_saved_session(filename: str):
+    if not _SAFE_FILENAME_RE.match(filename):
+        return {"error": "Invalid filename"}
+    for d in _SESSION_HISTORY_DIRS:
+        path = d / filename
+        if path.exists():
+            try:
+                path.unlink()
+                return {"status": "ok"}
+            except OSError as e:
+                return {"error": str(e)}
+    return {"error": "File not found"}
 
 
 @router.post("/load")
@@ -319,6 +1105,8 @@ def load_session(req: SessionLoadRequest):
         "rules": meta.get("rules", []),
         "round": meta.get("round", 1),
         "turn": meta.get("turn", 0),
+        "actions_per_turn": meta.get("actions_per_turn", 2),
+        "action_count": 0,
         "history": data.get("history", []),
     }
     if len(_sessions) >= _MAX_SESSIONS:
@@ -331,14 +1119,32 @@ def load_session(req: SessionLoadRequest):
         "topic": session["topic"],
         "name_map": session["name_map"],
         "history": session["history"],
+        "actions_per_turn": session["actions_per_turn"],
     }
 
 
+class SaveSessionMediaItem(BaseModel):
+    index: int
+    image_url: str = ""
+    audio_url: str = ""
+
+class SaveSessionRequest(BaseModel):
+    media: list[SaveSessionMediaItem] = []
+
 @router.post("/{session_id}/save")
-def save_session(session_id: str):
+def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSessionRequest())):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+
+    history = session.get("history", [])
+    for item in req.media:
+        if 0 <= item.index < len(history):
+            if item.image_url:
+                history[item.index]["image_url"] = item.image_url
+            if item.audio_url:
+                history[item.index]["audio_url"] = item.audio_url
+
     metadata = {
         "topic": session.get("topic", ""),
         "backend": session.get("backend", ""),
@@ -348,15 +1154,154 @@ def save_session(session_id: str):
         "turn": session.get("turn", 0),
         "initiative": session.get("initiative", []),
         "name_map": session.get("name_map", {}),
+        "actions_per_turn": session.get("actions_per_turn", 2),
         "saved_at": datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
     }
     save_session_mode(
         session_id=session_id,
         participants=session.get("initiative", []),
-        history=session.get("history", []),
+        history=history,
         metadata=metadata,
     )
+    _delete_autosave(session_id)
     return {"status": "ok"}
+
+
+class SessionGenerateImageRequest(BaseModel):
+    backend: str = DEFAULT_LLM_BACKEND
+    t2i_backend: str = ""
+    t2i_model: str = ""
+
+
+@router.post("/{session_id}/generate-image")
+def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    history = session.get("history", [])
+    initiative = session.get("initiative", [])
+    actions_per_turn = session.get("actions_per_turn", 2)
+    name_map = session.get("name_map", {})
+    topic = session.get("topic", "")
+    scene = session.get("scene", "")
+
+    # 直近ラウンドの発言を取得
+    round_size = max(len(initiative) * actions_per_turn, 1)
+    last_round = [h for h in history[-round_size * 2:] if h.get("role") == "assistant"][-round_size:]
+    dialogue_block = "\n".join(
+        f"{name_map.get(h.get('character_id', ''), h.get('character_id', ''))}: "
+        f"{h.get('content', '').split(': ', 1)[-1]}"
+        for h in last_round
+    ) if last_round else ""
+
+    # scene を軸にしたプロンプト
+    scene_line = f"Base scene tags: {scene}" if scene else ""
+    topic_line = f"Session topic: {topic}" if topic else ""
+    dialogue_line = f"Recent dialogue (for character count and mood):\n{dialogue_block}" if dialogue_block else ""
+
+    user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+        "\n\nOutput ONLY Danbooru-style image tags in English, comma-separated. "
+        "Start from the base scene tags above and add character count, emotions, and mood from the dialogue. "
+        "No explanation. No reasoning. Tags only."
+    )
+
+    system_prompt = (
+        "You are an image prompt generator for Stable Diffusion. "
+        "Output ONLY Danbooru-style image tags, comma-separated. "
+        "Do NOT think out loud. Do NOT explain. Output tags immediately."
+    )
+
+    backend_id = req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
+    if backend_id not in LLM_BACKENDS:
+        backend_id = DEFAULT_LLM_BACKEND
+
+    try:
+        chat_fn = LLM_BACKENDS[backend_id]["chat"]
+        model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ]
+        from def_kari.resources.vram_lock import get_vram_lock
+        _vram_lock_llm = get_vram_lock()
+        _vram_lock_llm.acquire()
+        try:
+            image_prompt = chat_fn(messages, model, json_mode=False, options={"num_predict": 512})
+        finally:
+            _vram_lock_llm.release()
+        image_prompt = re.sub(r'#(\w)', r'\1', image_prompt).strip().strip('"').strip("'")
+        # 最終発言キャラの容姿タグを末尾に追加
+        _last_char_id = last_round[-1].get("character_id") if last_round else None
+        if _last_char_id:
+            _profiles = load_profiles()
+            _char = get_character(_last_char_id, _profiles)
+            _app_tags = _char.get("appearance_tags", "").strip()
+            if _app_tags:
+                image_prompt = image_prompt + ", " + _app_tags if image_prompt else _app_tags
+        # 重複除去・最大30タグ
+        _raw_tags = [t.strip() for t in image_prompt.split(',') if t.strip()]
+        _seen: set[str] = set()
+        _unique: list[str] = []
+        for t in _raw_tags:
+            k = t.lower()
+            if k not in _seen:
+                _seen.add(k)
+                _unique.append(t)
+        image_prompt = ', '.join(_unique[:256])
+    except Exception as e:
+        return {"error": f"image prompt generation failed: {e}"}
+
+    if not image_prompt:
+        return {"error": "empty image prompt"}
+
+    try:
+        from def_kari.settings import load_settings
+        from def_kari.api.routes.t2i import set_t2i_debug
+        settings = load_settings()
+        t2i_backend = req.t2i_backend or settings.get("t2i_backend", "")
+        if not t2i_backend:
+            return {"error": "T2Iバックエンドが未設定です"}
+        t2i_model = req.t2i_model or settings.get(f"t2i_model_{t2i_backend}") or None
+        workflow = settings.get("comfyui_workflow", "default") if t2i_backend == "comfyui" else ""
+        width = int(settings.get("session_t2i_width") or settings.get("t2i_width", 512))
+        height = int(settings.get("session_t2i_height") or settings.get("t2i_height", 768))
+        from def_kari.models.t2i_profiles import get_quality_settings
+        quality_tags, default_neg = get_quality_settings(t2i_model)
+        prompt_final = f"{image_prompt}, {quality_tags}" if quality_tags else image_prompt
+        t2i_debug = {
+            "backend": t2i_backend,
+            "model": t2i_model or "",
+            "workflow": workflow,
+            "prompt_input": image_prompt,
+            "quality_tags": quality_tags,
+            "prompt_final": prompt_final,
+            "negative_prompt": default_neg,
+            "width": width,
+            "height": height,
+        }
+        set_t2i_debug(t2i_debug)
+        from def_kari.resources.vram_lock import get_vram_lock
+        _vram_lock = get_vram_lock()
+        _vram_lock.acquire()
+        try:
+            image_path = _generate_t2i_image(
+                prompt=prompt_final,
+                width=width,
+                height=height,
+                model=t2i_model,
+                backend=t2i_backend,
+                negative_prompt=default_neg,
+                workflow_name=workflow,
+            )
+        finally:
+            _vram_lock.release()
+        filename = image_path.split("/")[-1].split("\\")[-1]
+        t2i_debug["url"] = f"/api/t2i/image/{filename}"
+        set_t2i_debug(t2i_debug)
+        return {"url": f"/api/t2i/image/{filename}", "prompt": prompt_final}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.get("/{session_id}")

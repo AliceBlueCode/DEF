@@ -2,6 +2,7 @@
   "id": "roleplay",
   "label": "ロールプレイ（物語重視）",
   "rating": "general",
+  "scene": "fantasy setting, dramatic lighting, characters facing each other, detailed background",
   "rules": [
     "これは参加者同士のロールプレイセッションです。",
     "お題やシナリオに沿って、キャラクターとして行動してください。",

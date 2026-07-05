@@ -6,8 +6,6 @@ import re
 import requests
 
 _THINKING_PROCESS_RE = re.compile(r"^Here's a thinking process:.*", re.DOTALL)
-
-
 def _extract_from_reasoning(text: str) -> str:
     """reasoning_contentからJSON応答または日本語テキストを抽出する。"""
     json_match = re.search(r'\n(\{.*)', text, re.DOTALL)

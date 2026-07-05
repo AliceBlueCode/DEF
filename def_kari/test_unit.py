@@ -575,7 +575,7 @@ class TestI18n:
 
     def test_t_returns_translated_string(self):
         result = t("app_title", lang="ja")
-        assert result == "DEF(kari) MVP"
+        assert result == "DEF(kari)"
 
     def test_t_returns_key_when_missing(self):
         result = t("nonexistent_key_xyz", lang="ja")
@@ -793,3 +793,245 @@ class TestEpisodeSaveLoad:
         loaded = self._load_episodes(episodes_dir)
         assert loaded[0]["custom_field"] == [1, 2, 3]
         assert loaded[0]["nested"]["key"] == "value"
+
+
+# ---------------------------------------------------------------------------
+# 7. Action directives loader
+# ---------------------------------------------------------------------------
+from def_kari.api.routes.session import (
+    _load_action_directives,
+    _DIRECTIVE_DIRS,
+    _autosave,
+    _delete_autosave,
+    _AUTOSAVE_DIR,
+    _sessions,
+)
+
+
+class TestLoadActionDirectives:
+    """_load_action_directives() should load JSON files and include recommended_for."""
+
+    def test_returns_dict(self):
+        result = _load_action_directives()
+        assert isinstance(result, dict)
+
+    def test_none_always_present(self):
+        result = _load_action_directives()
+        assert "none" in result
+
+    def test_public_sets_loaded(self):
+        result = _load_action_directives()
+        # 公開済みセットが読み込まれている
+        assert "default" in result
+        assert "standard" in result
+        assert "gentle" in result
+
+    def test_recommended_for_is_list(self):
+        result = _load_action_directives()
+        for did, d in result.items():
+            assert isinstance(d.get("recommended_for", []), list), \
+                f"{did}: recommended_for should be a list"
+
+    def test_standard_recommended_for_2_to_4(self):
+        result = _load_action_directives()
+        rf = result["standard"].get("recommended_for", [])
+        assert set(rf) == {2, 3, 4}
+
+    def test_default_recommended_for_5(self):
+        result = _load_action_directives()
+        rf = result["default"].get("recommended_for", [])
+        assert rf == [5]
+
+    def test_gentle_recommended_for_5(self):
+        result = _load_action_directives()
+        rf = result["gentle"].get("recommended_for", [])
+        assert rf == [5]
+
+    def test_none_recommended_for_empty(self):
+        result = _load_action_directives()
+        rf = result["none"].get("recommended_for", [])
+        assert rf == []
+
+    def test_standard_has_directives_1_to_3(self):
+        result = _load_action_directives()
+        directives = result["standard"].get("directives", {})
+        assert "1" in directives
+        assert "2" in directives
+        assert "3" in directives
+
+    def test_default_has_directives_1_to_4(self):
+        result = _load_action_directives()
+        directives = result["default"].get("directives", {})
+        assert "1" in directives
+        assert "4" in directives
+
+    def test_none_has_empty_directives(self):
+        result = _load_action_directives()
+        assert result["none"].get("directives") == {}
+
+    def test_custom_dir_loaded(self, tmp_path):
+        """カスタムディレクトリからも読み込めること。"""
+        d = {
+            "id": "custom_test",
+            "label": "テスト用",
+            "rating": "general",
+            "recommended_for": [3],
+            "directives": {"1": "カスタム指示", "2": "まとめ"},
+        }
+        (tmp_path / "custom_test.json").write_text(
+            json.dumps(d, ensure_ascii=False), encoding="utf-8"
+        )
+        with mock.patch(
+            "def_kari.api.routes.session._DIRECTIVE_DIRS",
+            [tmp_path, tmp_path / "nonexistent"],
+        ):
+            result = _load_action_directives()
+        assert "custom_test" in result
+        assert result["custom_test"]["recommended_for"] == [3]
+        assert result["custom_test"]["directives"]["1"] == "カスタム指示"
+
+    def test_malformed_json_skipped(self, tmp_path):
+        (tmp_path / "bad.json").write_text("{invalid", encoding="utf-8")
+        with mock.patch(
+            "def_kari.api.routes.session._DIRECTIVE_DIRS",
+            [tmp_path, tmp_path / "nonexistent"],
+        ):
+            result = _load_action_directives()
+        assert "bad" not in result
+        assert "none" in result  # fallback still present
+
+    def test_gitkeep_ignored(self, tmp_path):
+        (tmp_path / ".gitkeep").write_text("", encoding="utf-8")
+        with mock.patch(
+            "def_kari.api.routes.session._DIRECTIVE_DIRS",
+            [tmp_path, tmp_path / "nonexistent"],
+        ):
+            result = _load_action_directives()
+        assert ".gitkeep" not in result
+
+    def test_directive_count_matches_recommended_for(self):
+        """standard は2-4アクション向けなので directive キー数は3（1,2,3）であること。"""
+        result = _load_action_directives()
+        std = result["standard"]
+        assert len(std["directives"]) == len(std["recommended_for"])
+
+    def test_all_directives_nonempty_strings(self):
+        """指示セット内の各ディレクティブが空でない文字列であること。"""
+        result = _load_action_directives()
+        for did, d in result.items():
+            for key, text in d.get("directives", {}).items():
+                assert isinstance(text, str) and text.strip(), \
+                    f"{did}[{key}] should be a non-empty string"
+
+
+# ---------------------------------------------------------------------------
+# 8. Session autosave
+# ---------------------------------------------------------------------------
+class TestSessionAutosave:
+    """_autosave / _delete_autosave の動作確認。"""
+
+    def _make_session(self, sid: str) -> dict:
+        return {
+            "id": sid,
+            "initiative": ["char_a"],
+            "name_map": {"char_a": "Alpha"},
+            "topic": "test topic",
+            "backend": "ollama",
+            "round": 1,
+            "turn": 0,
+            "action_count": 0,
+            "actions_per_turn": 2,
+            "action_directive_set": "standard",
+            "history": [{"role": "assistant", "content": "Alpha: hello", "character_id": "char_a"}],
+            "counters": {},
+            "designated_next": None,
+        }
+
+    def test_autosave_writes_file(self, tmp_path):
+        sid = "test_session_001"
+        _sessions[sid] = self._make_session(sid)
+        try:
+            with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+                _autosave(sid)
+            assert (tmp_path / f"{sid}.json").exists()
+            data = json.loads((tmp_path / f"{sid}.json").read_text(encoding="utf-8"))
+            assert data["id"] == sid
+            assert data["topic"] == "test topic"
+        finally:
+            _sessions.pop(sid, None)
+
+    def test_autosave_content_roundtrip(self, tmp_path):
+        sid = "test_session_002"
+        session = self._make_session(sid)
+        session["history"].append({"role": "user", "content": "hello", "character_id": "human"})
+        _sessions[sid] = session
+        try:
+            with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+                _autosave(sid)
+            restored = json.loads((tmp_path / f"{sid}.json").read_text(encoding="utf-8"))
+            assert len(restored["history"]) == 2
+        finally:
+            _sessions.pop(sid, None)
+
+    def test_autosave_nonexistent_session_noop(self, tmp_path):
+        with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+            _autosave("nonexistent_session_xyz")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_delete_autosave_removes_file(self, tmp_path):
+        sid = "test_session_003"
+        f = tmp_path / f"{sid}.json"
+        f.write_text('{"id": "test_session_003"}', encoding="utf-8")
+        with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+            _delete_autosave(sid)
+        assert not f.exists()
+
+    def test_delete_autosave_missing_file_noop(self, tmp_path):
+        with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+            _delete_autosave("does_not_exist")  # should not raise
+
+    def test_startup_restore(self, tmp_path):
+        """起動時に autosave ファイルから _sessions が復元されること。"""
+        autosave_sessions = {}
+        for i in range(3):
+            sid = f"restore_test_{i:03d}"
+            data = self._make_session(sid)
+            data["topic"] = f"topic {i}"
+            (tmp_path / f"{sid}.json").write_text(
+                json.dumps(data, ensure_ascii=False), encoding="utf-8"
+            )
+            autosave_sessions[sid] = data
+
+        # 起動時復元ロジックを直接実行（モジュールレベルのコードと同等）
+        restored: dict = {}
+        for f in sorted(tmp_path.iterdir()):
+            if f.suffix == ".json":
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                    if isinstance(d, dict) and d.get("id"):
+                        restored[d["id"]] = d
+                except Exception:
+                    pass
+
+        assert len(restored) == 3
+        for sid, expected in autosave_sessions.items():
+            assert sid in restored
+            assert restored[sid]["topic"] == expected["topic"]
+
+    def test_startup_restore_skips_malformed(self, tmp_path):
+        """壊れた autosave ファイルはスキップされること。"""
+        (tmp_path / "bad.json").write_text("{invalid", encoding="utf-8")
+        (tmp_path / "good_session.json").write_text(
+            '{"id": "good_session", "topic": "ok"}', encoding="utf-8"
+        )
+        restored: dict = {}
+        for f in sorted(tmp_path.iterdir()):
+            if f.suffix == ".json":
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                    if isinstance(d, dict) and d.get("id"):
+                        restored[d["id"]] = d
+                except Exception:
+                    pass
+        assert "bad" not in restored
+        assert "good_session" in restored

@@ -2,22 +2,74 @@
 
 import os
 import sys
+import threading
 
 # Ensure def_kari package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i
+from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought
 
 from def_kari import __version__
+
+
+def _auto_start():
+    import time
+    try:
+        from def_kari.settings import load_settings
+        from def_kari.backends import auto_start_backends, is_tgw_running
+        s = load_settings()
+        llm_backend = s.get("llm_backend", "textgen_webui")
+        tts_backend = s.get("tts_backend", "voicevox")
+        t2i_backend = s.get("t2i_backend", "a1111")
+        results = auto_start_backends(llm_backend, tts_backend, t2i_backend)
+        for name, err in results.items():
+            if err:
+                print(f"[autostart] {name}: {err}")
+            else:
+                print(f"[autostart] {name}: ok")
+
+        if llm_backend == "textgen_webui":
+            autoload = s.get("tgw_autoload_model", "")
+            if autoload:
+                print(f"[autostart] waiting for TGW to be ready for model load: {autoload}")
+                for _ in range(36):  # 最大3分待つ
+                    if is_tgw_running():
+                        break
+                    time.sleep(5)
+                else:
+                    print("[autostart] TGW did not start in time, skipping model load")
+                    return
+                from def_kari.llm.adapters.tgw import load_model, get_current_model
+                current = get_current_model()
+                if current:
+                    print(f"[autostart] TGW model already loaded: {current}")
+                else:
+                    print(f"[autostart] loading TGW model: {autoload}")
+                    err = load_model(autoload)
+                    if err:
+                        print(f"[autostart] TGW model load error: {err}")
+                    else:
+                        print(f"[autostart] TGW model loaded ok")
+    except Exception as e:
+        print(f"[autostart] error: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    threading.Thread(target=_auto_start, daemon=True).start()
+    yield
+
 
 app = FastAPI(
     title="DEF(kari) API",
     version=__version__,
     description="DEF(kari) — Persistent Character Platform",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -94,6 +146,7 @@ app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
 app.include_router(novel.router, prefix="/api/novel", tags=["novel"])
 app.include_router(session.router, prefix="/api/session", tags=["session"])
 app.include_router(t2i.router, prefix="/api/t2i", tags=["t2i"])
+app.include_router(thought.router, prefix="/api/thought", tags=["thought"])
 
 
 @app.get("/api/health")

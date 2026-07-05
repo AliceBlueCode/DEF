@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useT } from '../i18n'
 
 type Character = { id: string; name: string }
 
@@ -22,6 +23,7 @@ type CharDetail = {
 type VVSpeaker = { id: number; label: string }
 
 export default function CharacterTab({ characters, selectedChar, onCharChange, onHistoryCleared, ttsBackend }: Props) {
+  const t = useT()
   const [char, setChar] = useState<CharDetail | null>(null)
   const [clearing, setClearing] = useState(false)
 
@@ -50,7 +52,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
   const [profileMsg, setProfileMsg] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [imageColor, setImageColor] = useState('#2a2a2a')
-  const [colorSaving, setColorSaving] = useState(false)
+  const [, setColorSaving] = useState(false)
 
   // キャラ詳細フェッチ
   useEffect(() => {
@@ -118,7 +120,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
 
   const clearHistory = async () => {
     if (!selectedChar) return
-    if (!window.confirm('このキャラクターのチャット履歴を削除しますか？')) return
+    if (!window.confirm(t('char.history.deleteConfirm'))) return
     setClearing(true)
     try {
       await fetch(`/api/chat/history/${selectedChar}`, { method: 'DELETE' })
@@ -139,7 +141,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
         body: JSON.stringify({ backend, speaker_id: speakerId }),
       })
       const data = await r.json()
-      setVoiceSaveMsg(data.status === 'ok' ? '保存しました' : (data.error || 'エラー'))
+      setVoiceSaveMsg(data.status === 'ok' ? t('char.msg.voiceSaved') : (data.error || t('char.msg.voiceError')))
     } finally {
       setSavingVoice(false)
     }
@@ -172,9 +174,9 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
     const data = await r.json()
     if (data.status === 'ok') {
       setImgRefresh(n => n + 1)
-      setImgMsg(`${kind === 'icon' ? 'アイコン' : '立ち絵'}を保存しました`)
+      setImgMsg(kind === 'icon' ? t('char.msg.iconSaved') : t('char.msg.standingSaved'))
     } else {
-      setImgMsg(data.error || 'アップロード失敗')
+      setImgMsg(data.error || t('char.msg.uploadFailed'))
     }
   }
 
@@ -191,9 +193,9 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
       const data = await r.json()
       if (data.status === 'ok') {
         setImgRefresh(n => n + 1)
-        setImgMsg(`${kind === 'icon' ? 'アイコン' : '立ち絵'}を生成しました`)
+        setImgMsg(kind === 'icon' ? t('char.msg.iconGenerated') : t('char.msg.standingGenerated'))
       } else {
-        setImgMsg(data.error || '生成失敗')
+        setImgMsg(data.error || t('char.msg.generateFailed'))
       }
     } finally {
       if (kind === 'icon') setGeneratingIcon(false)
@@ -209,7 +211,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
     try {
       parsed = JSON.parse(rawProfile)
     } catch {
-      setProfileMsg('JSONパースエラー')
+      setProfileMsg(t('char.msg.jsonParseError'))
       setSavingProfile(false)
       return
     }
@@ -220,7 +222,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
         body: JSON.stringify({ profile: parsed }),
       })
       const data = await r.json()
-      setProfileMsg(data.status === 'ok' ? '保存しました' : (data.error || 'エラー'))
+      setProfileMsg(data.status === 'ok' ? t('char.msg.voiceSaved') : (data.error || t('char.msg.voiceError')))
       if (data.status === 'ok') {
         // キャラ名等が変わった場合に再取得
         fetch(`/api/characters/${selectedChar}`)
@@ -242,7 +244,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
           {characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82em', color: '#aaa', flexShrink: 0 }}>
-          イメージカラー
+          {t('char.imageColor.label')}
           <input
             type="color"
             value={imageColor}
@@ -273,25 +275,25 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
       <div className="char-profile">
         {char.persona_description && (
           <div className="profile-section">
-            <h3>性格・背景</h3>
+            <h3>{t('char.profile.personality')}</h3>
             <p>{char.persona_description as string}</p>
           </div>
         )}
         {char.speech_style && (
           <div className="profile-section">
-            <h3>話し方</h3>
+            <h3>{t('char.profile.speechStyle')}</h3>
             <p>{char.speech_style as string}</p>
           </div>
         )}
         {char.appearance_tags && (
           <div className="profile-section">
-            <h3>外見タグ</h3>
+            <h3>{t('char.profile.appearanceTags')}</h3>
             <p className="appearance-tags">{char.appearance_tags as string}</p>
           </div>
         )}
         {char.image_name_tags && (
           <div className="profile-section">
-            <h3>キャラ名タグ</h3>
+            <h3>{t('char.profile.nameTags')}</h3>
             <p className="appearance-tags">{char.image_name_tags as string}</p>
           </div>
         )}
@@ -299,10 +301,10 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
 
       {/* ===== キャラ画像 + 音声設定 ===== */}
       <div className="char-section">
-        <h3 className="char-section-title">キャラ画像・音声設定</h3>
+        <h3 className="char-section-title">{t('char.section.imageVoice.title')}</h3>
         <div className="char-img-edit-row">
           <div className="char-img-edit-col">
-            <p className="char-img-label">アイコン (512×512)</p>
+            <p className="char-img-label">{t('char.icon.label')}</p>
             <img
               className="char-img-preview"
               src={`/api/characters/${selectedChar}/icon?r=${imgRefresh}`}
@@ -317,18 +319,18 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
               onChange={e => e.target.files?.[0] && uploadImage('icon', e.target.files[0])}
             />
             <button className="char-btn" onClick={() => iconInputRef.current?.click()}>
-              📁 アップロード
+              {t('char.uploadBtn')}
             </button>
             <button
               className="char-btn"
               onClick={() => generateImage('icon')}
               disabled={generatingIcon}
             >
-              {generatingIcon ? '生成中...' : '🎨 T2I生成'}
+              {generatingIcon ? t('char.generateBtn.loading') : t('char.generateBtn')}
             </button>
           </div>
           <div className="char-img-edit-col">
-            <p className="char-img-label">立ち絵 (832×1216)</p>
+            <p className="char-img-label">{t('char.standing.label')}</p>
             <img
               className="char-img-preview standing-preview"
               src={`/api/characters/${selectedChar}/standing?r=${imgRefresh}`}
@@ -343,24 +345,24 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
               onChange={e => e.target.files?.[0] && uploadImage('standing', e.target.files[0])}
             />
             <button className="char-btn" onClick={() => standingInputRef.current?.click()}>
-              📁 アップロード
+              {t('char.uploadBtn')}
             </button>
             <button
               className="char-btn"
               onClick={() => generateImage('standing')}
               disabled={generatingStanding}
             >
-              {generatingStanding ? '生成中...' : '🎨 T2I生成'}
+              {generatingStanding ? t('char.generateBtn.loading') : t('char.generateBtn')}
             </button>
           </div>
           <div className="char-img-edit-col voice-col">
-            <p className="char-img-label">音声設定</p>
+            <p className="char-img-label">{t('char.voice.label')}</p>
             {!vvRunning && !iroRunning && (
-              <p className="char-section-note">TTSバックエンドが起動していません</p>
+              <p className="char-section-note">{t('char.voice.ttsNotRunning')}</p>
             )}
             {showVv && (
               <div className="voice-settings-block">
-                <label className="voice-label">VOICEVOXスピーカー</label>
+                <label className="voice-label">{t('char.voice.vvSpeaker.label')}</label>
                 <select
                   value={selectedVvSpeaker}
                   onChange={e => setSelectedVvSpeaker(Number(e.target.value))}
@@ -375,21 +377,21 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
                     onClick={() => saveVoiceSettings('voicevox', selectedVvSpeaker)}
                     disabled={savingVoice}
                   >
-                    💾 保存
+                    {t('char.voice.saveBtn')}
                   </button>
                   <button
                     className="char-btn"
                     onClick={() => testVoice('voicevox', selectedVvSpeaker)}
                     disabled={testingVoice}
                   >
-                    🔊 テスト
+                    {t('char.voice.testBtn')}
                   </button>
                 </div>
               </div>
             )}
             {showIro && (
               <div className="voice-settings-block">
-                <label className="voice-label">Irodori-TTS ボイス</label>
+                <label className="voice-label">{t('char.voice.iroVoice.label')}</label>
                 <select
                   value={selectedIroVoice}
                   onChange={e => setSelectedIroVoice(e.target.value)}
@@ -402,14 +404,14 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
                     onClick={() => saveVoiceSettings('irodori', selectedIroVoice)}
                     disabled={savingVoice}
                   >
-                    💾 保存
+                    {t('char.voice.saveBtn')}
                   </button>
                   <button
                     className="char-btn"
                     onClick={() => testVoice('irodori', selectedIroVoice)}
                     disabled={testingVoice}
                   >
-                    🔊 テスト
+                    {t('char.voice.testBtn')}
                   </button>
                 </div>
               </div>
@@ -425,7 +427,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
 
       {/* ===== 3. プロファイルJSON編集 ===== */}
       <div className="char-section">
-        <h3 className="char-section-title">プロファイル編集 (JSON)</h3>
+        <h3 className="char-section-title">{t('char.profile.editTitle')}</h3>
         <textarea
           className="profile-json-editor"
           value={rawProfile}
@@ -437,7 +439,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
           onClick={saveRawProfile}
           disabled={savingProfile}
         >
-          {savingProfile ? '保存中...' : '💾 保存'}
+          {savingProfile ? t('char.profile.saveBtn.loading') : t('char.profile.saveBtn')}
         </button>
         {profileMsg && <p className="char-msg">{profileMsg}</p>}
       </div>
@@ -445,7 +447,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
 
       <div className="char-danger-zone">
         <button className="danger-btn" onClick={clearHistory} disabled={clearing || !selectedChar}>
-          {clearing ? '削除中...' : '🗑 チャット履歴を削除'}
+          {clearing ? t('char.history.deleteBtn.loading') : t('char.history.deleteBtn')}
         </button>
       </div>
     </div>

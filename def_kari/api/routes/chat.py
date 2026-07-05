@@ -81,6 +81,9 @@ def chat(req: ChatRequest):
             f"image_prompt_en にも \"{_forced_tag}\" タグを含めること。"
         )
 
+    from def_kari.resources.vram_lock import get_vram_lock
+    _vram_lock = get_vram_lock()
+    _vram_lock.acquire()
     try:
         result = generate_structured_reply(
             user_text=req.message,
@@ -95,25 +98,31 @@ def chat(req: ChatRequest):
     except Exception as e:
         _last_debug = {"error": str(e), "success": False, "attempts": []}
         return ChatResponse(text=str(e), raw=str(e))
+    finally:
+        _vram_lock.release()
 
     attempts = result.get("attempts", [])
     if result.get("success") and result.get("result"):
         parsed = result["result"]
         raw = attempts[-1]["raw"] if attempts else ""
         tags = parsed.get("tags", [])
+        if not isinstance(tags, list):
+            tags = []
         if _forced_tag:
             if _forced_tag not in tags:
                 tags = [_forced_tag] + [t for t in tags if t != _forced_tag]
         image_prompt_en = parsed.get("image_prompt_en", "")
+        _emotion_raw = parsed.get("emotion", "neutral")
+        emotion_str = (_emotion_raw[0] if _emotion_raw else "neutral") if isinstance(_emotion_raw, list) else str(_emotion_raw or "neutral")
         if _forced_tag and _forced_tag not in image_prompt_en:
             image_prompt_en = f"{image_prompt_en}, {_forced_tag}" if image_prompt_en else _forced_tag
         settings = load_settings()
         if settings.get("emotion_tag_enabled", True):
-            image_prompt_en = apply_emotion_tags(image_prompt_en, parsed.get("emotion", "neutral"))
+            image_prompt_en = apply_emotion_tags(image_prompt_en, _emotion_raw)
         _last_debug = {
             "success": True,
             "text": parsed.get("dialogue", ""),
-            "emotion": parsed.get("emotion", "neutral"),
+            "emotion": emotion_str,
             "image_prompt_en": image_prompt_en,
             "tags": tags,
             "raw": raw,
@@ -123,7 +132,7 @@ def chat(req: ChatRequest):
         }
         return ChatResponse(
             text=parsed.get("dialogue", ""),
-            emotion=parsed.get("emotion", "neutral"),
+            emotion=emotion_str,
             image_prompt_en=image_prompt_en,
             tags=tags,
             raw=raw,

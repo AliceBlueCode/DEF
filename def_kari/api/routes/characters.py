@@ -39,7 +39,8 @@ def list_characters():
     for cid, name in choices:
         char = get_character(cid, profiles)
         image_color = char.get("image_color") if char else None
-        result.append({"id": cid, "name": name, "image_color": image_color})
+        player_type = char.get("player_type", "ai") if char else "ai"
+        result.append({"id": cid, "name": name, "image_color": image_color, "player_type": player_type})
     return {"characters": result}
 
 

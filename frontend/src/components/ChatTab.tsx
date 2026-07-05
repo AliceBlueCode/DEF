@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useT } from '../i18n'
 
 type Character = { id: string; name: string }
 
@@ -42,17 +43,20 @@ type Props = {
 }
 
 export default function ChatTab({ characters, selectedChar, backend, ttsBackend, t2iBackend, reloadTrigger }: Props) {
+  const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [ttsEnabled, setTtsEnabled] = useState(true)
-  const [ttsHumanEnabled, setTtsHumanEnabled] = useState(false)
+  const [, setTtsHumanEnabled] = useState(false)
   const ttsHumanEnabledRef = useRef(false)
   const [undoMax, setUndoMax] = useState(5)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [hiddenHistory, setHiddenHistory] = useState<Message[]>([])
   const [allowedSexual, setAllowedSexual] = useState<string[]>(['general'])
   const [allowedViolence, setAllowedViolence] = useState<string[]>(['general'])
+  const [safetyLevel, setSafetyLevel] = useState('off')
   const [charColor, setCharColor] = useState('')
   const [userColor, setUserColor] = useState('#F0F8FF')
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -131,6 +135,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
         if ('undo_max_history' in s) setUndoMax(Number(s.undo_max_history) || 5)
         if (s.allowed_rating_sexual) setAllowedSexual(s.allowed_rating_sexual)
         if (s.allowed_rating_violence) setAllowedViolence(s.allowed_rating_violence)
+        if (s.safety_level) setSafetyLevel(s.safety_level === 'warn' ? 'off' : s.safety_level)
         if ('character_greeting' in s) characterGreetingRef.current = !!s.character_greeting
       })
       .catch(() => {})
@@ -140,6 +145,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       if (key === 'tts_enabled') setTtsEnabled(!!value)
       if (key === 'tts_human_enabled') { setTtsHumanEnabled(!!value); ttsHumanEnabledRef.current = !!value }
       if (key === 'character_greeting') characterGreetingRef.current = !!value
+      if (key === 'safety_level') setSafetyLevel(value === 'warn' ? 'off' : value)
     }
     window.addEventListener('def-settings-change', onSettingsChange)
     return () => window.removeEventListener('def-settings-change', onSettingsChange)
@@ -151,6 +157,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
     const wasFirstMount = isFirstMount.current
     isFirstMount.current = false
     setMessages([])
+    setHiddenHistory([])
     if (!selectedChar) return
 
     fetch(`/api/chat/history/${selectedChar}?tail=20`)
@@ -158,18 +165,18 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       .then(data => {
         setHasMore(!!data.has_more)
         const loaded = fromHistory(data.messages || [])
-        if (loaded.length > 0) {
-          setMessages(loaded)
+        if (wasFirstMount || !characterGreetingRef.current) {
+          if (loaded.length > 0) setMessages(loaded)
           return
         }
-        if (wasFirstMount || !characterGreetingRef.current) return
-        // 履歴なし + キャラ切り替え → 挨拶
+        // キャラ切り替え → 毎回挨拶（履歴は表示しない）
+        if (loaded.length > 0) setHiddenHistory(loaded)
         const charNameNew = characters.find(c => c.id === selectedChar)?.name || selectedChar
         const charNamePrev = characters.find(c => c.id === prevCharId)?.name || prevCharId
         const announcement: Message = {
           id: crypto.randomUUID(),
           role: 'user',
-          content: `（キャラクターが${charNamePrev}から${charNameNew}に切り替わりました）`,
+          content: t('chat.charSwitch.announce', { prev: charNamePrev, new: charNameNew }),
         }
         setMessages([announcement])
         setLoading(true)
@@ -177,7 +184,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            message: `こんにちは、${charNameNew}。調子はどう？`,
+            message: t('chat.charGreeting.message', { name: charNameNew }),
             character_id: selectedChar,
             backend,
             history: [],
@@ -482,10 +489,20 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
           />
         )}
       <div className="chat-area">
-        {hasMore && (
+        {hiddenHistory.length > 0 && (
+          <div className="load-more-wrap">
+            <button className="load-more-btn" onClick={() => {
+              setMessages(prev => [...hiddenHistory, ...prev])
+              setHiddenHistory([])
+            }}>
+              {t('chat.history.showBtn', { n: hiddenHistory.length })}
+            </button>
+          </div>
+        )}
+        {hasMore && hiddenHistory.length === 0 && (
           <div className="load-more-wrap">
             <button className="load-more-btn" onClick={loadMore} disabled={loadingMore}>
-              {loadingMore ? '読み込み中...' : '▲ 過去ログを読み込む'}
+              {loadingMore ? t('chat.loadMore.loading') : t('chat.loadMore.btn')}
             </button>
           </div>
         )}
@@ -510,7 +527,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
                     : undefined
                   }
                 >
-                  {m.role === 'user' ? 'あなた' : charName}
+                  {m.role === 'user' ? t('chat.sender.user') : charName}
                   {m.emotion && m.emotion !== 'neutral' && (
                     <span className="emotion"> ({m.emotion})</span>
                   )}
@@ -520,27 +537,27 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
                 )}
               </div>
               {(() => {
-                const blocked = m.role === 'assistant' && !m.isRevealed && !!m.tags && isContentBlocked(m.tags, allowedSexual, allowedViolence)
+                const blocked = safetyLevel !== 'off' && m.role === 'assistant' && !m.isRevealed && !!m.tags && isContentBlocked(m.tags, allowedSexual, allowedViolence)
                 if (blocked) {
                   return (
                     <div className="content-blocked">
-                      <span>🔞 フィルター中 [{m.tags!.join(', ')}]</span>
-                      <button className="turn-btn" onClick={() => setMessages(prev => prev.map((msg, j) => j === i ? { ...msg, isRevealed: true } : msg))}>表示する</button>
+                      <span>{t('chat.filter.blocked', { tags: m.tags!.join(', ') })}</span>
+                      <button className="turn-btn" onClick={() => setMessages(prev => prev.map((msg, j) => j === i ? { ...msg, isRevealed: true } : msg))}>{t('chat.filter.showBtn')}</button>
                     </div>
                   )
                 }
                 return (
                   <>
-                    {m.role === 'assistant' && m.isRevealed && !!m.tags && isContentBlocked(m.tags, allowedSexual, allowedViolence) && (
+                    {safetyLevel !== 'off' && m.role === 'assistant' && m.isRevealed && !!m.tags && isContentBlocked(m.tags, allowedSexual, allowedViolence) && (
                       <div className="content-revealed">
-                        <span>🔓 フィルター解除中 [{m.tags.join(', ')}]</span>
-                        <button className="turn-btn" onClick={() => setMessages(prev => prev.map((msg, j) => j === i ? { ...msg, isRevealed: false } : msg))}>隠す</button>
+                        <span>{t('chat.filter.released', { tags: m.tags.join(', ') })}</span>
+                        <button className="turn-btn" onClick={() => setMessages(prev => prev.map((msg, j) => j === i ? { ...msg, isRevealed: false } : msg))}>{t('chat.filter.hideBtn')}</button>
                       </div>
                     )}
                     <div className="message-text">{m.content}</div>
                     {/* T2I 画像 */}
                     {m.imageStatus === 'generating' && (
-                      <div className="t2i-status">🎨 生成中...</div>
+                      <div className="t2i-status">{t('chat.imageGenerating')}</div>
                     )}
                     {m.imageStatus === 'error' && (
                       <div className="t2i-status t2i-error">⚠ {m.imageError}</div>
@@ -563,22 +580,22 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
                     <button className="tts-btn" onClick={() => playTTS(m.content, i)}>🔊</button>
                   )}
                   <div className="turn-actions">
-                    <button className="turn-btn" onClick={() => regenTurn(i)} disabled={loading} title="サイクル再生成">🔄 サイクル再生成</button>
-                    <button className="turn-btn" onClick={() => playTTS(m.content, i)} title="音声を再生成">🔊 再生成</button>
+                    <button className="turn-btn" onClick={() => regenTurn(i)} disabled={loading} title={t('chat.actions.regenCycle.title')}>{t('chat.actions.regenCycle')}</button>
+                    <button className="turn-btn" onClick={() => playTTS(m.content, i)} title={t('chat.actions.regenAudio.title')}>{t('chat.actions.regenAudio')}</button>
                     {m.imagePromptEn && (
-                      <button className="turn-btn" onClick={() => regenImage(m, i)} title="イラストを再生成">🖼 再生成</button>
+                      <button className="turn-btn" onClick={() => regenImage(m, i)} title={t('chat.actions.regenImage.title')}>{t('chat.actions.regenImage')}</button>
                     )}
                     {(m.undoStack?.length ?? 0) > 0 && (
-                      <button className="turn-btn" onClick={() => undoTurn(i)} title="元に戻す">
-                        ↩️ 元に戻す ({m.undoStack!.length})
+                      <button className="turn-btn" onClick={() => undoTurn(i)} title={t('chat.actions.undo.title')}>
+                        {t('chat.actions.undo', { n: m.undoStack!.length })}
                       </button>
                     )}
                     {(m.redoStack?.length ?? 0) > 0 && (
-                      <button className="turn-btn" onClick={() => redoTurn(i)} title="やり直す">
-                        ↪️ やり直す ({m.redoStack!.length})
+                      <button className="turn-btn" onClick={() => redoTurn(i)} title={t('chat.actions.redo.title')}>
+                        {t('chat.actions.redo', { n: m.redoStack!.length })}
                       </button>
                     )}
-                    <button className="turn-btn turn-btn-delete" onClick={() => deleteTurn(i)} title="このサイクルを削除">🗑</button>
+                    <button className="turn-btn turn-btn-delete" onClick={() => deleteTurn(i)} title={t('chat.actions.delete.title')}>🗑</button>
                   </div>
                 </div>
               )}
@@ -602,10 +619,10 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          placeholder="メッセージを入力..."
+          placeholder={t('chat.input.placeholder')}
           disabled={loading}
         />
-        <button onClick={sendMessage} disabled={loading}>送信</button>
+        <button onClick={sendMessage} disabled={loading}>{t('chat.input.sendBtn')}</button>
       </div>
     </div>
   )

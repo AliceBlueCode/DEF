@@ -27,6 +27,7 @@ def generate_image(
     seed: int = -1,
     steps: int = 0,
     cfg_scale: float = 0.0,
+    workflow_name: str = "",
 ) -> str:
     fn = T2I_BACKENDS.get(backend)
     if fn is None:
@@ -44,5 +45,7 @@ def generate_image(
         kwargs["steps"] = steps
     if cfg_scale > 0:
         kwargs["cfg_scale"] = cfg_scale
+    if backend == "comfyui" and workflow_name:
+        kwargs["workflow_name"] = workflow_name
 
     return fn(**kwargs)

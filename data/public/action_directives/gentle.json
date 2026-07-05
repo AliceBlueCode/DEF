@@ -2,6 +2,7 @@
   "id": "gentle",
   "label": "穏やか（自由に語る）",
   "rating": "general",
+  "recommended_for": [5],
   "directives": {
     "1": "自分の考えを自由に深めてください。",
     "2": "他の参加者に語りかけてください。",

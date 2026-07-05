@@ -1,9 +1,12 @@
 """Settings API routes."""
 
 import os
+import threading
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+_settings_lock = threading.Lock()
 
 from def_kari.settings import load_settings, save_settings
 from def_kari.llm.backend import LLM_BACKENDS, LLM_BACKEND_LABELS, DEFAULT_LLM_BACKEND
@@ -49,13 +52,14 @@ class SaveSettingsRequest(BaseModel):
 def update_settings(req: SaveSettingsRequest):
     from def_kari.settings import PERSISTED_KEYS, DATA_DIR, SETTINGS_PATH
     import json as _j
-    existing = load_settings()
-    for k, v in req.settings.items():
-        if k in PERSISTED_KEYS:
-            existing[k] = v
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-        _j.dump(existing, f, ensure_ascii=False, indent=2)
+    with _settings_lock:
+        existing = load_settings()
+        for k, v in req.settings.items():
+            if k in PERSISTED_KEYS:
+                existing[k] = v
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            _j.dump(existing, f, ensure_ascii=False, indent=2)
     return {"status": "ok"}
 
 
@@ -367,6 +371,26 @@ def save_t2i_quality(req: SaveT2iQualityRequest):
         return {"error": "model required"}
     from def_kari.models.t2i_profiles import save_quality_settings
     save_quality_settings(req.model, req.quality_tags, req.negative_prompt)
+    return {"status": "ok"}
+
+
+@router.get("/t2i-profile")
+def get_t2i_profile(model: str = ""):
+    from def_kari.models.t2i_profiles import get_profile
+    return {"profile": get_profile(model or None)}
+
+
+class SaveT2iProfileRequest(BaseModel):
+    model: str
+    profile: dict
+
+
+@router.post("/t2i-profile")
+def save_t2i_profile(req: SaveT2iProfileRequest):
+    if not req.model:
+        return {"error": "model required"}
+    from def_kari.models.t2i_profiles import save_profile
+    save_profile(req.model, req.profile)
     return {"status": "ok"}
 
 

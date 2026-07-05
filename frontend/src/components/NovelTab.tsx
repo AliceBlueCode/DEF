@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+﻿import { useState, useEffect, useMemo, useRef } from 'react'
+import { useT } from '../i18n'
 
 type NovelItem = { title: string; file: string }
 type Novel = { title: string; body: string; plot?: string; [key: string]: unknown }
@@ -59,6 +60,7 @@ function chunkText(text: string, maxLen = 400): string[] {
 }
 
 export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBackend, selectedChar, llmBackends }: Props) {
+  const t = useT()
   const [novels, setNovels] = useState<NovelItem[]>([])
   const [selectedTitle, setSelectedTitle] = useState('')
   const [novel, setNovel] = useState<Novel | null>(null)
@@ -69,7 +71,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
   const [plotDraft, setPlotDraft] = useState('')
   const [plotFile, setPlotFile] = useState('')
   const [plotServerFiles, setPlotServerFiles] = useState<{ name: string }[]>([])
-  const [showPlotPicker, setShowPlotPicker] = useState(false)
+
   const [candidates, setCandidates] = useState<string[]>([])
   const [activeCandidate, setActiveCandidate] = useState(0)
   const [generating, setGenerating] = useState(false)
@@ -138,7 +140,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
   }
 
   useEffect(() => { if (!novelBackend && backend) setNovelBackend(backend) }, [backend])
-  useEffect(() => { if (!novelT2iBackend && t2iBackend) setNovelT2iBackend(t2iBackend) }, [t2iBackend])
+  useEffect(() => { if (t2iBackend) setNovelT2iBackend(t2iBackend) }, [t2iBackend])
   useEffect(() => { localStorage.setItem('novel_media_height', String(mediaHeight)) }, [mediaHeight])
   useEffect(() => { localStorage.setItem('novel_candidates_width', String(candidatesWidth)) }, [candidatesWidth])
 
@@ -151,6 +153,12 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
     fetch('/api/novel/').then(r => r.json()).then(data => setNovels(data.novels || []))
 
   useEffect(() => { loadList() }, [])
+  useEffect(() => {
+    fetch('/api/novel/plots')
+      .then(r => r.json())
+      .then(data => setPlotServerFiles(data.files || []))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     setCandidates([])
@@ -192,7 +200,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
 
   const deleteNovel = async () => {
     if (!selectedTitle) return
-    if (!confirm(`"${selectedTitle}" を削除しますか？`)) return
+    if (!confirm(t('novel.deleteConfirm', { title: selectedTitle }))) return
     await fetch(`/api/novel/${encodeURIComponent(selectedTitle)}`, { method: 'DELETE' })
     setSelectedTitle(''); setNovel(null); setBody(''); setTitleInput('')
     loadList()
@@ -324,24 +332,19 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
 
   const openPlotDialog = () => {
     setPlotDraft(plot)
-    setShowPlotPicker(false)
     setShowPlotDialog(true)
-    fetch('/api/novel/plots')
-      .then(r => r.json())
-      .then(data => setPlotServerFiles(data.files || []))
-      .catch(() => {})
   }
 
-  const loadServerPlot = async (name: string) => {
+  const loadServerPlot = async (name: string, applyImmediately = false) => {
     try {
       const res = await fetch(`/api/novel/plots/${encodeURIComponent(name)}`)
       const data = await res.json()
       if (data.content !== undefined) {
         setPlotDraft(data.content)
         setPlotFile(name)
+        if (applyImmediately) setPlot(data.content)
       }
     } catch (e) { console.error('plot load error:', e) }
-    setShowPlotPicker(false)
   }
 
   const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -391,28 +394,37 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
             value={selectedTitle}
             onChange={e => setSelectedTitle(e.target.value)}
           >
-            <option value="">＋ 新規作品</option>
+            <option value="">{t('novel.select.newWork')}</option>
             {novels.map(n => <option key={n.title} value={n.title}>{n.title}</option>)}
           </select>
         </div>
 
         <div className="novel-title-row">
-          <label className="novel-field-label">タイトル</label>
+          <label className="novel-field-label">{t('novel.field.titleLabel')}</label>
           <input
             className="novel-title-input"
             value={titleInput}
             onChange={e => setTitleInput(e.target.value)}
-            placeholder="タイトルを入力..."
+            placeholder={t('novel.field.titlePlaceholder')}
           />
         </div>
 
         <div className="novel-plot-row">
-          <button className="novel-hdr-btn" onClick={openPlotDialog}>
-            📝 プロット設定
-          </button>
-          <span className="novel-plot-status">
-            {plotFile ? `✅ ${plotFile}` : plot ? '✅ 設定済み' : '未設定'}
-          </span>
+          <select
+            className="novel-backend-sel"
+            value={plotFile}
+            onChange={e => {
+              const name = e.target.value
+              if (name) loadServerPlot(name, true)
+              else { setPlotFile(''); setPlot('') }
+            }}
+          >
+            <option value="">{t('novel.plot.noPlot')}</option>
+            {plotServerFiles.map(f => (
+              <option key={f.name} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+          <button className="novel-hdr-btn" onClick={openPlotDialog} title={t('novel.plot.editBtn.title')}>✏️</button>
           {backendList.length > 0 && (
             <select
               className="novel-backend-sel"
@@ -434,14 +446,14 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
             className="novel-editor"
             value={body}
             onChange={e => setBody(e.target.value)}
-            placeholder="ここに物語を書きましょう..."
+            placeholder={t('novel.editor.placeholder')}
           />
         </div>
 
         <div className="novel-col-resize-handle" onMouseDown={onColResizeStart} />
 
         <div className="novel-candidates" style={{ width: `${candidatesWidth}px`, flexShrink: 0 }}>
-          <h3>AI候補</h3>
+          <h3>{t('novel.candidates.heading')}</h3>
           {candidates.length > 0 ? (
             <>
               <div className="candidate-tabs">
@@ -463,12 +475,12 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
                 }}
               />
               <div className="candidate-actions">
-                <button onClick={() => appendCandidate(candidates[activeCandidate])}>⬇ 本文に追加</button>
-                <button onClick={() => setCandidates([])}>🗑 クリア</button>
+                <button onClick={() => appendCandidate(candidates[activeCandidate])}>{t('novel.candidates.addBtn')}</button>
+                <button onClick={() => setCandidates([])}>{t('novel.candidates.clearBtn')}</button>
               </div>
             </>
           ) : (
-            <p className="candidate-empty">「生成」で候補が表示されます。</p>
+            <p className="candidate-empty">{t('novel.candidates.empty')}</p>
           )}
         </div>
       </div>
@@ -476,26 +488,26 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
       {/* 下部バー: 編集操作（左） / TTS・T2I（右） */}
       <div className="novel-action-bar">
         <div className="novel-action-left">
-          <button onClick={saveNovel}>💾 保存</button>
+          <button onClick={saveNovel}>{t('novel.actionBar.saveBtn')}</button>
           <button onClick={generateCandidates} disabled={generating}>
-            {generating ? '✍ 生成中...' : '✍ 生成'}
+            {generating ? t('novel.actionBar.generateBtn.loading') : t('novel.actionBar.generateBtn')}
           </button>
-          <button onClick={() => insertMarker('chapter')}>新章</button>
-          <button onClick={() => insertMarker('scene')}>新場面</button>
+          <button onClick={() => insertMarker('chapter')}>{t('novel.actionBar.newChapterBtn')}</button>
+          <button onClick={() => insertMarker('scene')}>{t('novel.actionBar.newSceneBtn')}</button>
           {!isNew && (
-            <button className="delete-btn" onClick={deleteNovel}>🗑 削除</button>
+            <button className="delete-btn" onClick={deleteNovel}>{t('novel.actionBar.deleteBtn')}</button>
           )}
         </div>
         <div className="novel-action-right">
           {ttsPlaying ? (
-            <button onClick={stopTTS}>⏹ 停止</button>
+            <button onClick={stopTTS}>{t('novel.actionBar.stopTtsBtn')}</button>
           ) : (
             <button onClick={() => playNovelTTS(currentSceneText)} disabled={!currentSceneText || !selectedChar}>
-              🔊 現場面
+              {t('novel.actionBar.currentSceneTtsBtn')}
             </button>
           )}
           <button onClick={() => generateImage(currentSceneText)} disabled={generatingImage || !currentSceneText}>
-            🎨 現挿絵
+            {t('novel.actionBar.currentIllustBtn')}
           </button>
           {scenes.length > 0 && (
             <>
@@ -503,17 +515,17 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
                 {scenes.map((s, i) => <option key={i} value={i}>{s.label}</option>)}
               </select>
               <button onClick={() => playNovelTTS(scenes[selectedSceneIdx]?.text || '')} disabled={ttsPlaying || !selectedChar}>
-                🔊 選択読上
+                {t('novel.actionBar.selectedTtsBtn')}
               </button>
               <button onClick={() => generateImage(scenes[selectedSceneIdx]?.text || '')} disabled={generatingImage}>
-                🎨 選択挿絵
+                {t('novel.actionBar.selectedIllustBtn')}
               </button>
             </>
           )}
           {(generatingImage || ttsPlaying) && (
-            <span className="generating-label">{generatingImage ? '画像生成中...' : '読み上げ中...'}</span>
+            <span className="generating-label">{generatingImage ? t('novel.actionBar.generatingLabel') : t('novel.actionBar.ttsLabel')}</span>
           )}
-          <button className="novel-hdr-btn" onClick={openT2iDialog} title="T2I設定">⚙ T2I</button>
+          <button className="novel-hdr-btn" onClick={openT2iDialog} title={t('novel.actionBar.t2iSettingsBtn.title')}>⚙ T2I</button>
         </div>
       </div>
 
@@ -541,41 +553,21 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
         <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowPlotDialog(false) }}>
           <div className="plot-dialog">
             <div className="plot-dialog-header">
-              <span>プロット設定</span>
+              <span>{t('novel.plotDialog.header')}{plotFile ? ` — ${plotFile}` : ''}</span>
               <button className="plot-dialog-close" onClick={() => setShowPlotDialog(false)}>×</button>
             </div>
             <div className="plot-dialog-body">
-              <div className="plot-file-row">
-                <button className="novel-hdr-btn" onClick={() => setShowPlotPicker(v => !v)}>
-                  📂 開く
-                </button>
-                {plotFile && <span className="plot-file-name">{plotFile}</span>}
-              </div>
-              {showPlotPicker && (
-                <div className="plot-file-picker">
-                  {plotServerFiles.length === 0 ? (
-                    <p className="plot-file-empty">episode_prompts フォルダにファイルがありません</p>
-                  ) : (
-                    plotServerFiles.map(f => (
-                      <button key={f.name} className="plot-file-item" onClick={() => loadServerPlot(f.name)}>
-                        📄 {f.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-              <hr className="plot-dialog-divider" />
               <textarea
                 className="plot-dialog-textarea"
                 value={plotDraft}
                 onChange={e => setPlotDraft(e.target.value)}
-                placeholder="プロット（任意）..."
+                placeholder={t('novel.plotDialog.placeholder')}
                 rows={12}
               />
             </div>
             <div className="plot-dialog-footer">
-              <button className="novel-hdr-btn" onClick={savePlot}>💾 保存</button>
-              <button className="novel-hdr-btn apply-btn" onClick={applyPlot}>✅ 反映</button>
+              <button className="novel-hdr-btn" onClick={savePlot}>{t('novel.plotDialog.saveBtn')}</button>
+              <button className="novel-hdr-btn apply-btn" onClick={applyPlot}>{t('novel.plotDialog.applyBtn')}</button>
             </div>
           </div>
         </div>
@@ -585,14 +577,14 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
         <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowT2iDialog(false) }}>
           <div className="plot-dialog" style={{ maxWidth: 440 }}>
             <div className="plot-dialog-header">
-              <span>⚙ T2I設定（ノベル専用）</span>
+              <span>{t('novel.t2iDialog.header')}</span>
               <button onClick={() => setShowT2iDialog(false)}>✕</button>
             </div>
             <div className="plot-dialog-body" style={{ gap: 14 }}>
 
               {/* バックエンド */}
               <div className="t2i-dlg-row">
-                <label>バックエンド</label>
+                <label>{t('novel.t2iDialog.backendLabel')}</label>
                 <select
                   className="novel-backend-sel"
                   value={t2iDlgBackend}
@@ -607,13 +599,13 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
               {/* モデル (a1111 / comfyui / HF — リストあり) */}
               {t2iDlgModels.length > 0 && t2iDlgBackend !== 'civitai' && (
                 <div className="t2i-dlg-row">
-                  <label>モデル</label>
+                  <label>{t('novel.t2iDialog.modelLabel')}</label>
                   <select
                     className="novel-backend-sel"
                     value={t2iDlgModel}
                     onChange={e => { setT2iDlgModel(e.target.value); setT2iDlgCustom('') }}
                   >
-                    {t2iDlgBackend !== 'huggingface' && <option value="">（現在のモデル）</option>}
+                    {t2iDlgBackend !== 'huggingface' && <option value="">{t('novel.t2iDialog.modelCurrentOption')}</option>}
                     {t2iDlgModels.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
@@ -622,7 +614,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
               {/* ワークフロー (comfyui のみ) */}
               {t2iDlgWorkflows.length > 0 && (
                 <div className="t2i-dlg-row">
-                  <label>ワークフロー</label>
+                  <label>{t('novel.t2iDialog.workflowLabel')}</label>
                   <select
                     className="novel-backend-sel"
                     value={t2iDlgWorkflow}
@@ -636,7 +628,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
               {/* HuggingFace カスタム入力 */}
               {t2iDlgBackend === 'huggingface' && (
                 <div className="t2i-dlg-row">
-                  <label>カスタム</label>
+                  <label>{t('novel.t2iDialog.customLabel')}</label>
                   <input
                     className="novel-title-input"
                     value={t2iDlgCustom}
@@ -651,13 +643,13 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
                 <>
                   {t2iCivitaiModels.length > 0 && (
                     <div className="t2i-dlg-row">
-                      <label>モデル</label>
+                      <label>{t('novel.t2iDialog.modelLabel')}</label>
                       <select
                         className="novel-backend-sel"
                         value={t2iDlgModel}
                         onChange={e => { setT2iDlgModel(e.target.value); setT2iDlgCustom('') }}
                       >
-                        <option value="">選択...</option>
+                        <option value="">{t('novel.t2iDialog.civitaiSelect.empty')}</option>
                         {t2iCivitaiModels.map(m => (
                           <option key={m.model_air} value={m.model_air}>{m.label || m.model_air}</option>
                         ))}
@@ -665,7 +657,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
                     </div>
                   )}
                   <div className="t2i-dlg-row">
-                    <label>新規 AIR</label>
+                    <label>{t('novel.t2iDialog.newAirLabel')}</label>
                     <input
                       className="novel-title-input"
                       value={t2iDlgCustom}
@@ -679,12 +671,12 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
               {/* モデルなしバックエンド用テキスト入力 */}
               {t2iDlgModels.length === 0 && t2iDlgBackend !== 'civitai' && t2iDlgBackend !== 'huggingface' && (
                 <div className="t2i-dlg-row">
-                  <label>モデル名</label>
+                  <label>{t('novel.t2iDialog.modelNameLabel')}</label>
                   <input
                     className="novel-title-input"
                     value={t2iDlgModel}
                     onChange={e => setT2iDlgModel(e.target.value)}
-                    placeholder="（空=現在のモデル）"
+                    placeholder={t('novel.t2iDialog.modelNamePlaceholder')}
                   />
                 </div>
               )}
@@ -692,13 +684,12 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
               {/* 現在の設定表示 */}
               {novelT2iBackend && (
                 <p style={{ fontSize: '0.8em', color: '#888', margin: 0 }}>
-                  現在: {t2iBackendInfo?.labels[novelT2iBackend] || novelT2iBackend}
-                  {novelT2iModel ? ` / ${novelT2iModel}` : ''}
+                  {t('novel.t2iDialog.currentLabel', { backend: t2iBackendInfo?.labels[novelT2iBackend] || novelT2iBackend, model: novelT2iModel ? ` / ${novelT2iModel}` : '' })}
                 </p>
               )}
             </div>
             <div className="plot-dialog-footer">
-              <button className="novel-hdr-btn apply-btn" onClick={applyT2iSettings}>✅ 反映</button>
+              <button className="novel-hdr-btn apply-btn" onClick={applyT2iSettings}>{t('novel.t2iDialog.applyBtn')}</button>
             </div>
           </div>
         </div>

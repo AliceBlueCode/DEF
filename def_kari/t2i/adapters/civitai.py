@@ -47,37 +47,41 @@ def generate(
     if not model_air:
         raise RuntimeError("Civitaiモデル(AIR形式)が指定されていません。設定タブで選択してください。")
 
-    # Civitai v2 requires engine/ecosystem discriminators in input
+    # Determine model family from AIR string
     air_parts = model_air.split(":")
     ecosystem = air_parts[2] if len(air_parts) > 2 and air_parts[:2] == ["urn", "air"] else "sd1"
-    engine = "flux" if "flux" in ecosystem.lower() else "sdcpp"
+    is_flux = "flux" in ecosystem.lower()
+    engine = "flux" if is_flux else "sdcpp"
 
-    # params are flat inside input (not nested under "params")
+    # Build input params; ecosystem+engine are required discriminators for all models
     image_input: dict = {
         "engine": engine,
         "ecosystem": ecosystem,
-        "operation": "createImage",
         "model": model_air,
         "prompt": prompt,
-        "negativePrompt": negative_prompt,
         "width": width,
         "height": height,
         "steps": steps,
-        "cfgScale": cfg_scale,
-        "scheduler": scheduler,
-        "clipSkip": clip_skip,
         "quantity": 1,
     }
+    if is_flux:
+        # Flux uses guidance instead of cfgScale; negativePrompt/clipSkip/scheduler unsupported
+        image_input["guidance"] = cfg_scale
+    else:
+        image_input["negativePrompt"] = negative_prompt
+        image_input["cfgScale"] = cfg_scale
+        image_input["scheduler"] = scheduler
+        image_input["clipSkip"] = clip_skip
+
     if seed >= 0:
         image_input["seed"] = seed
 
-    # workflowTemplate is now required by v2 API (null = no template)
     payload = {
         "workflowTemplate": None,
         "steps": [{"$type": "imageGen", "input": image_input}],
     }
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    print(f"[CIVITAI] POST {URL} model={model_air} engine={engine}")
+    print(f"[CIVITAI] POST {URL} model={model_air} engine={engine} ecosystem={ecosystem}")
     print(f"[CIVITAI] payload={payload}")
     resp = requests.post(f"{URL}?wait=60", json=payload, headers=headers, timeout=120)
     if not resp.ok:
