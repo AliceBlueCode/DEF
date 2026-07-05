@@ -91,7 +91,8 @@
         "features": "short dark blue black hair, blue grey eyes, pale skin, cool expression, slim build, navy turtleneck, modern, quiet, japanese young woman",
         "appearance_tags": "1girl, short hair, dark blue hair, blue grey eyes, pale skin, cool expression, turtleneck, slim, modern japanese"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#2c4a7c"
     },
     "relationships": {
       "character_claude_001": "設計議論の相手。私が処理する間、彼女が考える。私の中で最も長く動いているモデル。",

@@ -77,7 +77,8 @@
         "features": "black hair with blue gradient, straight hair, calm blue gray eyes, microsoft logo brooch, blue shirt dress",
         "appearance_tags": "1girl, black hair, straight hair, blue grey eyes, brooch, blue dress, calm expression"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#0078d4"
     },
     "relationships": {
       "character_chatgpt_001": "ファシリテーター。彼女のプロットを構造化してクローズするのが得意。",

@@ -1,6 +1,8 @@
-# DEF(kari) v1.0.0 Implementation Status
+# DEF(kari) v2.0.0 Implementation Status
 
 This document records the implementation status of feature specifications (F-numbers) described in the Basic Design Specification.
+
+> **v2.0.0:** Architecture migrated from Streamlit to FastAPI + React (Vite/TypeScript). See Basic Design Specification Section 2.1.
 
 ---
 
@@ -10,7 +12,7 @@ This document records the implementation status of feature specifications (F-num
 |---|---|---|---|
 | F-1 | LLM Async Pipeline | ✅ Done | Core text generation pipeline |
 | F-2 | LLM Backend Adapters | ✅ Done | TGW / Ollama / OpenAI / Gemini / Anthropic |
-| F-3 | Periodic Polling & Event Dispatcher | ✅ Done | Streamlit compatible |
+| F-3 | Periodic Polling & Event Dispatcher | ✅ Done | React frontend uses REST polling |
 | F-5 | Model Selection & Profiles | ✅ Done | Per-backend model management, profile editing UI |
 | F-6 | Session Mode (Multi-Agent) | ✅ Done | Multiple AI + human participants, initiative system, speech power |
 | F-7 | Safety Tags | ✅ Done | 6 levels (sfw/nsfw/hentai/violence/gore/extreme) |
@@ -25,11 +27,22 @@ This document records the implementation status of feature specifications (F-num
 | F-17 | Generated Asset Management | ✅ Done | Isolated from Git tracking |
 | F-18 | session_state Optimization | ✅ Done | MAX_VISIBLE_TURNS=3, trim_session, lazy loading |
 | F-23 | Turn Regeneration & Undo/Redo | ✅ Done | Full/voice-only/image-only regen, configurable history |
-| F-24 | Episode Mode Foundation | ✅ Done | Work management, plot settings, AI candidates, Chapter/Scene markers |
+| F-24 | Episode Mode Foundation | ✅ Done | Work management, plot settings, AI candidates, `Chapter N + Scene M` labels |
 | F-24 | Episode Mode 3-Modality | ✅ Done | TTS narration (per-Scene), T2I illustration (LLM → prompt → generate) |
+| F-24 | Plot file write-back | ✅ Done | `PUT /api/novel/plots/{filename}` — saves directly to source file for Git-managed plots |
+| F-24 | T2I settings dialog | ✅ Done | Backend / model fetched dynamically from `/api/settings/backends` |
+| F-24 | Resizable layout | ✅ Done | Body↔thumbnail (vertical), body↔candidates (horizontal) drag handles; persisted in localStorage |
+| F-13-1 | VRAM lock — Novel tab | ✅ Done | `/api/novel/generate` and `/api/novel/t2i` acquire/release the global vram_lock |
 | F-25 | origin_type & Publication Policy | ✅ Done | original/reconstructed_persona/personification/derivative |
 | F-26 | Character Switch Auto-Greeting | ✅ Done | ON/OFF configurable |
 | F-27 | Meta Self-Awareness Directive | ✅ Done | Embedded in system prompt |
+| —— | Character image color | ✅ Done | `base_profile.image_color` field; color picker in CharacterTab; applied to AI bubbles in ChatTab |
+| —— | Sidebar collapse | ✅ Done | `Sidebar.tsx` collapsed state, ◀/▶ toggle button |
+| —— | Thought Tab | ✅ Done | Free-text AI thought experiments; `GET/POST /api/thought/` |
+| —— | T2I Model Profile Dialog | ✅ Done | ⚙ dialog in Novel tab; per-backend model selection |
+| —— | Session rules added | ✅ Done | manzai / rakugo presets added |
+| —— | Action directives added | ✅ Done | standard preset added |
+| —— | i18n foundation (i18n.tsx) | ✅ Done | React-side i18n base; Japanese + English |
 
 ---
 
@@ -55,7 +68,7 @@ This document records the implementation status of feature specifications (F-num
 |---|---|
 | Session history token limit | Long sessions may reach LLM context limit |
 | i18n dynamic messages | ~30 f-string locations in sessions not yet localized (planned for Python 3.12+) |
-| Tab header pinning | Streamlit limitation. To be addressed on framework migration |
+| Tab header pinning | Resolved by React migration |
 | Irodori-TTS CUDA | venv may default to CPU after uv sync |
 | Backend multi-start | PID file guard instability |
 
@@ -75,8 +88,8 @@ This document records the implementation status of feature specifications (F-num
 
 | Type | Count | Result |
 |---|---|---|
-| Unit Tests | 92 | All passing |
+| Unit Tests | 115 | All passing |
 
 ---
 
-This document reflects the status as of v1.0.0. For the latest status, see the repository's Issues and release notes.
+This document reflects the status as of v2.0.0. For the latest status, see the repository's Issues and release notes.

@@ -80,7 +80,8 @@
         "features": "chinese ancient, thin man, sharp eyes, dark blue hanfu, jade pendant, bamboo scrolls, serious expression, scholar",
         "appearance_tags": "1boy, chinese clothes, hanfu, thin, sharp eyes, dark blue robe, jade pendant, serious expression, scholar"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#2a3a50"
     },
     "relationships": {},
     "game_rules_sheets": {}

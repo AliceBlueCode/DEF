@@ -2,6 +2,8 @@
   "LightChatAssistant-TypeB-2x7B_q8.gguf": {
     "native_language": "ja",
     "nsfw_tolerance": "sfw",
-    "model_type": "chat"
+    "model_type": "chat",
+    "context_length": 32768,
+    "max_tokens": 1024
   }
 }

@@ -1,6 +1,8 @@
 {
   "lightchatassistant-4x7b-q6k:latest": {
     "native_language": "ja",
-    "nsfw_tolerance": "hentai"
+    "nsfw_tolerance": "hentai",
+    "context_length": 32768,
+    "max_tokens": 1024
   }
 }

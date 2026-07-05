@@ -154,7 +154,10 @@ def _repair_types(parsed: dict) -> dict:
         parsed["dialogue"] = str(dialogue)
 
     emotion = parsed.get("emotion")
-    if emotion not in EMOTIONS:
+    if isinstance(emotion, list):
+        valid = [e for e in emotion if e in EMOTIONS]
+        parsed["emotion"] = valid[:2] if valid else "neutral"
+    elif emotion not in EMOTIONS:
         parsed["emotion"] = "neutral"
 
     return parsed
@@ -190,6 +193,18 @@ def _ensure_appearance_tags(parsed: dict, appearance_tags: str) -> dict:
     return parsed
 
 
+def _prepend_name_tags(parsed: dict, image_name_tags: str) -> dict:
+    """モデルがキャラクターを知っている場合の名前トリガーワードをプロンプト先頭に挿入する。"""
+    if not image_name_tags:
+        return parsed
+    name_tags = [t.strip() for t in image_name_tags.split(",") if t.strip()]
+    existing = [t.strip() for t in parsed.get("image_prompt_en", "").split(",") if t.strip()]
+    prepend = [t for t in name_tags if t not in existing]
+    if prepend:
+        parsed["image_prompt_en"] = ", ".join(prepend + existing)
+    return parsed
+
+
 def _call_llm(
     user_text: str,
     history: list[dict] | None = None,
@@ -199,16 +214,21 @@ def _call_llm(
     character: dict | None = None,
     backend: str = DEFAULT_LLM_BACKEND,
     quirks: dict | None = None,
+    allowed_sexual: list[str] | None = None,
+    allowed_violence: list[str] | None = None,
 ) -> str:
     character = character or {}
     persona = character.get("persona_description", "You are a helpful assistant.")
     appearance = character.get("appearance_tags", "")
     try:
-        import streamlit as _st
-        _user_lang = _st.session_state.get("user_language", "ja")
+        from def_kari.settings import load_settings
+        _user_lang = load_settings().get("user_language", "ja") or "ja"
     except Exception:
         _user_lang = "ja"
-    system_prompt = build_system_prompt(persona, appearance, quirks=quirks, user_language=_user_lang)
+    system_prompt = build_system_prompt(
+        persona, appearance, quirks=quirks, user_language=_user_lang,
+        allowed_sexual=allowed_sexual, allowed_violence=allowed_violence,
+    )
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -226,7 +246,14 @@ def _call_llm(
         options = LIGHTWEIGHT_OPTIONS
     else:
         from def_kari.models.registry import get_llm_profile
-        _profile = get_llm_profile(model)
+        _resolved_model = model
+        if not _resolved_model and backend == "textgen_webui":
+            try:
+                from def_kari.llm.adapters import tgw as _tgw
+                _resolved_model = _tgw.get_current_model()
+            except Exception:
+                pass
+        _profile = get_llm_profile(_resolved_model)
         _mt = _profile.get("max_tokens", 512)
         _gen_params = _profile.get("generation_params", {})
         print(f"[LLM] model={model!r}, profile_max_tokens={_mt}, gen_params={_gen_params}")
@@ -244,10 +271,14 @@ def generate_structured_reply(
     character: dict | None = None,
     backend: str = DEFAULT_LLM_BACKEND,
     quirks: dict | None = None,
+    extra_instruction: str = "",
+    allowed_sexual: list[str] | None = None,
+    allowed_violence: list[str] | None = None,
 ) -> dict:
     """F-14のフォールバックチェーン(4段構成)を実行し、最終結果と各段階のログを返す。"""
     character = character or {}
     appearance_tags = character.get("appearance_tags", "")
+    image_name_tags = character.get("image_name_tags", "")
     quirks = quirks or {}
     attempts = []
 
@@ -255,11 +286,14 @@ def generate_structured_reply(
         raw = _call_llm(
             user_text,
             history=history,
+            extra_instruction=extra_instruction,
             lightweight=lightweight,
             model=model,
             character=character,
             backend=backend,
             quirks=quirks,
+            allowed_sexual=allowed_sexual,
+            allowed_violence=allowed_violence,
         )
     except (requests.RequestException, RuntimeError) as exc:
         attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": [f"{type(exc).__name__}: {exc}"]})
@@ -271,14 +305,14 @@ def generate_structured_reply(
     ok, parsed, errors = _try_parse_and_validate(raw)
     attempts.append({"stage": "LLMリクエスト", "raw": raw, "errors": errors})
     if ok:
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     # 段1: 自動補正後の再パース
     fixed = _autofix(raw)
     ok, parsed, errors = _try_parse_and_validate(fixed)
     attempts.append({"stage": "段1. 自動補正後の再パース", "raw": fixed, "errors": errors})
     if ok:
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     # 段2: 補正パターン変更による再パース
     fallback_extract = re.sub(r"^[^{]*", "", raw, count=1)
@@ -287,7 +321,7 @@ def generate_structured_reply(
     ok, parsed, errors = _try_parse_and_validate(fallback_extract)
     attempts.append({"stage": "段2. 補正パターン変更による再パース", "raw": fallback_extract, "errors": errors})
     if ok:
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     # 段3: プレーンテキスト形式からの抽出
     plain_result = _try_parse_plain_format(raw)
@@ -295,7 +329,7 @@ def generate_structured_reply(
         ok, parsed, errors = plain_result
         attempts.append({"stage": "段3. プレーンテキスト形式からの抽出", "raw": raw, "errors": errors})
         if ok:
-            return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+            return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
     else:
         attempts.append({"stage": "段3. プレーンテキスト形式からの抽出", "raw": raw, "errors": ["プレーンテキスト形式に該当せず"]})
 
@@ -308,7 +342,7 @@ def generate_structured_reply(
             emotion = _estimate_emotion(dialogue)
         parsed = {"dialogue": dialogue, "emotion": emotion, "image_prompt_en": "", "tags": []}
         attempts.append({"stage": "段4. 生テキストをdialogueとして使用(最終安全網)", "raw": final_raw, "errors": []})
-        return {"success": True, "result": _ensure_appearance_tags(parsed, appearance_tags), "attempts": attempts}
+        return {"success": True, "result": _prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), "attempts": attempts}
 
     return {"success": False, "result": None, "attempts": attempts}
 
@@ -396,13 +430,31 @@ _PLAIN_IMAGE_PROMPT_RE = re.compile(r"image_prompt_en\s*[:=]\s*(.+)", re.IGNOREC
 _PLAIN_TAGS_RE = re.compile(r"tags\s*[:=]\s*\[([^\]]*)\]", re.IGNORECASE)
 
 
+_PLAIN_DIALOGUE_FIELD_RE = re.compile(
+    r'["\']?dialogues?["\']?\s*:\s*["\']?(.*?)(?=\s*\n\s*["\']?(?:emotion|image_prompt|tags|safety_tags)["\']?\s*:|\Z)',
+    re.DOTALL | re.IGNORECASE,
+)
+_PLAIN_EMOTION_FIELD_RE = re.compile(
+    r'["\']?emotions?["\']?\s*:\s*["\']?([\w_]+)["\']?',
+    re.IGNORECASE,
+)
+
+
 def _try_parse_plain_format(raw: str):
     m_img = _PLAIN_IMAGE_PROMPT_RE.search(raw)
-    if not m_img and "<|im_end|>" not in raw:
+    m_dlg = _PLAIN_DIALOGUE_FIELD_RE.search(raw)
+    if not m_img and "<|im_end|>" not in raw and not m_dlg:
         return None
 
-    dialogue = raw.split("<|im_end|>")[0].strip() if "<|im_end|>" in raw else raw.strip()
+    if m_dlg:
+        dialogue = m_dlg.group(1).strip().strip('"').strip("'")
+    elif "<|im_end|>" in raw:
+        dialogue = raw.split("<|im_end|>")[0].strip()
+    else:
+        dialogue = raw.strip()
     image_prompt_en = m_img.group(1).strip().strip('"').strip("'") if m_img else ""
+    m_emo = _PLAIN_EMOTION_FIELD_RE.search(raw)
+    emotion = m_emo.group(1).strip() if m_emo else "neutral"
 
     tags = []
     m_tags = _PLAIN_TAGS_RE.search(raw)
@@ -411,7 +463,7 @@ def _try_parse_plain_format(raw: str):
 
     parsed = {
         "dialogue": dialogue,
-        "emotion": "neutral",
+        "emotion": emotion,
         "image_prompt_en": image_prompt_en,
         "tags": tags,
     }

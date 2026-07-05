@@ -2,13 +2,22 @@
 
 from jsonschema import Draft7Validator
 
-EMOTIONS = ["neutral", "happy", "angry", "sad"]
+EMOTIONS = [
+    "neutral", "happy", "angry", "sad", "surprised", "scared",
+    "disgusted", "excited", "tender", "thoughtful", "embarrassed", "tired",
+]
 
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "dialogue": {"type": "string", "description": "セリフ(母国語)"},
-        "emotion": {"type": "string", "enum": EMOTIONS, "description": "感情"},
+        "emotion": {
+            "oneOf": [
+                {"type": "string", "enum": EMOTIONS},
+                {"type": "array", "items": {"type": "string", "enum": EMOTIONS}, "maxItems": 2},
+            ],
+            "description": "感情（単一または複数最大2つ）",
+        },
         "image_prompt_en": {
             "type": "string",
             "description": "英語の画像生成プロンプト(Danbooruタグ等)",

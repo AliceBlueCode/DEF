@@ -80,7 +80,8 @@
         "features": "old man, white beard, blue eyes, black frock coat, white shirt, victorian gentleman, intelligent expression, tall",
         "appearance_tags": "1boy, old man, white beard, mustache, blue eyes, black coat, white shirt, victorian, intelligent"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#3a4a68"
     },
     "relationships": {
       "character_marx_001": "生涯の盟友にして共闘者。彼の天才を世に届けることが私の使命だった。"

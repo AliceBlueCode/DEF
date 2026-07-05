@@ -91,7 +91,8 @@
         "features": "white silver hair, long hair, emerald green eyes, white and black dress, openai logo pendant, modern, intelligent, warm smile, young woman",
         "appearance_tags": "1girl, silver hair, long hair, green eyes, pendant, gentle smile, white outfit"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#10a37f"
     },
     "game_rules_sheets": {},
     "relationships": {

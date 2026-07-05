@@ -2,6 +2,7 @@
   "id": "gentle",
   "label": "穏やか（自由対話）",
   "rating": "general",
+  "scene": "indoors, cafe, warm lighting, window, cozy atmosphere, characters sitting together",
   "rules": [
     "これは参加者同士の対話セッションです。観客やユーザーは存在しません。",
     "お題はキーパー（進行役）が設定したものです。お題に沿って自由に語ってください。",

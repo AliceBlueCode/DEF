@@ -86,37 +86,52 @@ def _civitai_generate(
     if not api_token:
         raise RuntimeError("Civitai APIキーが設定されていません。APIキー管理から設定してください。")
 
+    if not model_name:
+        try:
+            from def_kari.settings import load_settings
+            model_name = load_settings().get("t2i_model_civitai", "")
+        except Exception:
+            pass
     model_air = model_name or os.environ.get("CIVITAI_DEFAULT_MODEL_AIR", "")
     if not model_air:
         raise RuntimeError("Civitaiモデル(AIR形式)が指定されていません。")
 
     air_parts = model_air.split(":")
     ecosystem = air_parts[2] if len(air_parts) > 2 and air_parts[:2] == ["urn", "air"] else "sd1"
-    raw_ecosystem = ecosystem
-    ecosystem = _load_ecosystem_map().get(ecosystem, ecosystem)
-    if raw_ecosystem != ecosystem and model_air.startswith("urn:air:"):
-        model_air = model_air.replace(f"urn:air:{raw_ecosystem}:", f"urn:air:{ecosystem}:", 1)
+    is_flux = "flux" in ecosystem.lower()
 
-    image_input = {
-        "engine": "sdcpp",
+    image_input: dict = {
+        "engine": "flux" if is_flux else "sdcpp",
         "ecosystem": ecosystem,
         "operation": "createImage",
         "model": model_air,
         "prompt": prompt,
-        "negativePrompt": negative_prompt,
         "width": width,
         "height": height,
-        "cfgScale": cfg_scale,
         "steps": steps,
         "quantity": 1,
     }
+    if is_flux:
+        image_input["guidance"] = cfg_scale
+    else:
+        image_input["negativePrompt"] = negative_prompt
+        image_input["cfgScale"] = cfg_scale
+        image_input["scheduler"] = "EulerA"
+        image_input["clipSkip"] = 2
     if seed >= 0:
         image_input["seed"] = seed
 
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
-    resp = requests.post(f"{CIVITAI_URL}?wait=60", json={"steps": [{"$type": "imageGen", "input": image_input}]}, headers=headers, timeout=90)
-    resp.raise_for_status()
+    payload = {"steps": [{"$type": "imageGen", "input": image_input}]}
+    print(f"[CIVITAI] POST {CIVITAI_URL} model={model_air} ecosystem={image_input.get('ecosystem')} engine={image_input.get('engine')}")
+    print(f"[CIVITAI] payload={payload}")
+    resp = requests.post(f"{CIVITAI_URL}?wait=60", json=payload, headers=headers, timeout=120)
+    if not resp.ok:
+        body = resp.text[:1000]
+        print(f"[CIVITAI] {resp.status_code}: {body}")
+        raise RuntimeError(f"Civitai {resp.status_code}: {body}")
     workflow = resp.json()
+    print(f"[CIVITAI] response status={workflow.get('status')} id={workflow.get('id')}")
 
     elapsed = 0
     while workflow.get("status") not in ("succeeded", "failed", "canceled"):
@@ -133,10 +148,13 @@ def _civitai_generate(
 
     image_url = None
     for step in workflow.get("steps", []):
-        for img in step.get("output", {}).get("images", []):
+        output = step.get("output") or {}
+        for img in output.get("images", []):
             if img.get("url"):
                 image_url = img["url"]
                 break
+        if image_url:
+            break
 
     if not image_url:
         raise RuntimeError("Civitai応答に画像URLがありません。")
@@ -152,7 +170,7 @@ def _civitai_generate(
 
 
 HF_INFERENCE_URL = "https://router.huggingface.co"
-HF_DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell"
+HF_DEFAULT_MODEL = os.environ.get("HF_DEFAULT_MODEL", "black-forest-labs/FLUX.1-schnell")
 
 
 def _get_hf_token() -> str:
@@ -172,6 +190,12 @@ def _huggingface_generate(
     prompt: str, width: int, height: int, model_name: str | None,
     negative_prompt: str, seed: int, steps: int, cfg_scale: float,
 ) -> str:
+    if not model_name:
+        try:
+            from def_kari.settings import load_settings
+            model_name = load_settings().get("t2i_model_huggingface", "")
+        except Exception:
+            pass
     model = model_name or HF_DEFAULT_MODEL
     body = {"inputs": prompt}
     params = {}
@@ -240,15 +264,25 @@ def _comfyui_generate(
     import copy
 
     try:
-        import streamlit as _st
-        _wf_name = _st.session_state.get("comfyui_workflow", "default")
+        from def_kari.settings import load_settings
+        _wf_name = load_settings().get("comfyui_workflow", "default") or "default"
     except Exception:
         _wf_name = "default"
     workflow = copy.deepcopy(_load_comfyui_workflow(_wf_name))
     if not workflow:
         raise RuntimeError(f"ComfyUIワークフローが見つかりません: data/comfyui_workflows/{_wf_name}.json")
+    current_ckpt = workflow.get("4", {}).get("inputs", {}).get("ckpt_name", "")
     if model_name:
         workflow["4"]["inputs"]["ckpt_name"] = model_name
+    elif not current_ckpt:
+        try:
+            info = requests.get(f"{COMFYUI_URL}/object_info/CheckpointLoaderSimple", timeout=5).json()
+            choices = info.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+            if choices:
+                workflow["4"]["inputs"]["ckpt_name"] = choices[0]
+                print(f"[COMFYUI T2I] auto-selected model: {choices[0]}")
+        except Exception as _e:
+            print(f"[COMFYUI T2I] model auto-detect failed: {_e}")
     workflow["5"]["inputs"]["width"] = width or 512
     workflow["5"]["inputs"]["height"] = height or 768
     workflow["6"]["inputs"]["text"] = prompt

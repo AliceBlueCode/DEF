@@ -1,6 +1,8 @@
 {
   "wizard-vicuna-uncensored:13b": {
     "native_language": "ja",
-    "nsfw_tolerance": "hentai"
+    "nsfw_tolerance": "hentai",
+    "context_length": 2048,
+    "max_tokens": 512
   }
 }

@@ -85,18 +85,34 @@ def start_tgw() -> str | None:
         return str(exc)
 
 
+def stop_tgw() -> str | None:
+    pid_path = _pid_path("tgw")
+    if not os.path.exists(pid_path):
+        return None
+    try:
+        with open(pid_path) as f:
+            pid = f.read().strip()
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
+        os.remove(pid_path)
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
 # ===== VOICEVOX =====
 
 def is_voicevox_running() -> bool:
+    url = os.environ.get("VOICEVOX_URL", VOICEVOX_URL)
     try:
-        return requests.get(f"{VOICEVOX_URL}/version", timeout=2).status_code == 200
+        return requests.get(f"{url}/version", timeout=2).status_code == 200
     except requests.RequestException:
         return False
 
 
 def start_voicevox() -> str | None:
-    if not VOICEVOX_DIR:
-        return "VOICEVOX_DIRが未設定です。.envファイルを確認してください。"
+    vv_dir = os.environ.get("VOICEVOX_DIR", VOICEVOX_DIR)
+    if not vv_dir:
+        return "VOICEVOX_DIRが未設定です。バックエンド設定で場所を指定してください。"
     if is_voicevox_running():
         return None
     pid_path = _pid_path("voicevox")
@@ -111,11 +127,11 @@ def start_voicevox() -> str | None:
                 os.remove(pid_path)
             except OSError:
                 pass
-    exe_path = os.path.join(VOICEVOX_DIR, "vv-engine", "run.exe")
+    exe_path = os.path.join(vv_dir, "vv-engine", "run.exe")
     if not os.path.isfile(exe_path):
-        exe_path = os.path.join(VOICEVOX_DIR, "VOICEVOX.exe")
+        exe_path = os.path.join(vv_dir, "VOICEVOX.exe")
     if not os.path.isfile(exe_path):
-        return f"VOICEVOXが見つかりません: {VOICEVOX_DIR}"
+        return f"VOICEVOXが見つかりません: {vv_dir}"
     try:
         proc = subprocess.Popen(
             [exe_path],
@@ -189,6 +205,20 @@ def start_a1111() -> str | None:
         return str(exc)
 
 
+def stop_a1111() -> str | None:
+    pid_path = _pid_path("a1111")
+    if not os.path.exists(pid_path):
+        return None
+    try:
+        with open(pid_path) as f:
+            pid = f.read().strip()
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
+        os.remove(pid_path)
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
 # ===== Irodori-TTS =====
 
 IRODORI_DIR = os.environ.get("IRODORI_TTS_DIR", "")
@@ -196,15 +226,17 @@ IRODORI_URL = os.environ.get("IRODORI_TTS_URL", "http://127.0.0.1:8088")
 
 
 def is_irodori_running() -> bool:
+    url = os.environ.get("IRODORI_TTS_URL", IRODORI_URL)
     try:
-        return requests.get(f"{IRODORI_URL}/health", timeout=2).status_code == 200
+        return requests.get(f"{url}/health", timeout=2).status_code == 200
     except requests.RequestException:
         return False
 
 
 def start_irodori() -> str | None:
+    IRODORI_DIR = os.environ.get("IRODORI_TTS_DIR", "")
     if not IRODORI_DIR:
-        return "IRODORI_TTS_DIRが未設定です。.envファイルを確認してください。"
+        return "IRODORI_TTS_DIRが未設定です。バックエンド設定で場所を指定してください。"
     if is_irodori_running():
         return None
     pid_path = _pid_path("irodori")
@@ -259,15 +291,17 @@ KOKORO_URL = os.environ.get("KOKORO_TTS_URL", "http://127.0.0.1:8766")
 
 
 def is_kokoro_running() -> bool:
+    url = os.environ.get("KOKORO_TTS_URL", KOKORO_URL)
     try:
-        return requests.get(f"{KOKORO_URL}/health", timeout=2).status_code == 200
+        return requests.get(f"{url}/health", timeout=2).status_code == 200
     except requests.RequestException:
         return False
 
 
 def start_kokoro() -> str | None:
+    KOKORO_DIR = os.environ.get("KOKORO_TTS_DIR", "")
     if not KOKORO_DIR:
-        return "KOKORO_TTS_DIRが未設定です。.envファイルを確認してください。"
+        return "KOKORO_TTS_DIRが未設定です。バックエンド設定で場所を指定してください。"
     if is_kokoro_running():
         return None
     pid_path = _pid_path("kokoro")
@@ -375,6 +409,51 @@ def stop_comfyui() -> str | None:
         subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
         os.remove(pid_path)
         return None
+    except Exception as exc:
+        return str(exc)
+
+
+# ===== Ollama =====
+
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+
+def is_ollama_running() -> bool:
+    url = os.environ.get("OLLAMA_URL", OLLAMA_URL)
+    try:
+        return requests.get(f"{url}/api/tags", timeout=3).status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def stop_ollama() -> str | None:
+    pid_path = _pid_path("ollama")
+    if not os.path.exists(pid_path):
+        return None
+    try:
+        with open(pid_path) as f:
+            pid = f.read().strip()
+        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, check=True)
+        os.remove(pid_path)
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
+def start_ollama() -> str | None:
+    if is_ollama_running():
+        return None
+    try:
+        proc = subprocess.Popen(
+            ["ollama", "serve"],
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+        )
+        with open(_pid_path("ollama"), "w") as f:
+            f.write(str(proc.pid))
+        print(f"[Ollama] Started pid={proc.pid}")
+        return None
+    except FileNotFoundError:
+        return "ollamaコマンドが見つかりません。Ollamaがインストールされているか確認してください。"
     except Exception as exc:
         return str(exc)
 

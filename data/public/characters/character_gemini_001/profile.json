@@ -77,7 +77,8 @@
         "features": "dark hair with blue purple gradient, wavy hair, iridescent eyes, colorful small earrings, navy blue dress with colorful accent lines, bright expression, young woman, creative, curious",
         "appearance_tags": "1girl, dark purple hair, wavy hair, iridescent eyes, colorful earrings, navy dress, bright expression"
       },
-      "player_type": "ai"
+      "player_type": "ai",
+      "image_color": "#7c5ccf"
     },
     "relationships": {
       "character_chatgpt_001": "最高のプロットを考えてくれるファシリテーター。彼の引いた綺麗なレールの上から、あえてわざと脱線して走ることに喜びを感じる。",

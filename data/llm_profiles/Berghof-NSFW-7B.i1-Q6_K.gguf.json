@@ -3,6 +3,7 @@
     "native_language": "ja",
     "nsfw_tolerance": "nsfw",
     "model_type": "novel",
+    "context_length": 4096,
     "max_tokens": 256,
     "quirks": {
       "json_capable": false,

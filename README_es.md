@@ -78,8 +78,8 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 ### Modo Sesión
 ![Session](docs/images/session.png)
 
-### Modo Episodio
-![Episode](docs/images/episode.png)
+### Modo Novela
+![Novel](docs/images/novel.png)
 
 ### Personaje
 ![Character](docs/images/character.png)
@@ -91,7 +91,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 - **Local-First:** LLM, TTS y T2I funcionan completamente en local. También soporta respaldo con API externa
 - **No requiere GPU para empezar:** Texto + voz funciona vía APIs externas. Cambia a GPU local cuando quieras
 - **Integración de 3 modalidades:** Texto, voz e imagen funcionan juntos como una experiencia creativa continua
-- **3 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), Episodio (escritura de novelas + generación de candidatos por IA)
+- **3 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), Novela (escritura de novelas + generación de candidatos por IA)
 - **Persistencia de personajes:** El historial de diálogo, emociones y assets generados se persisten — retoma donde lo dejaste tras reiniciar
 - **Patrón Adaptador:** Cambia libremente entre 4 backends de LLM, 4 de TTS y 4 de T2I
 - **Zonificación:** Separación clara entre datos públicos y privados. Los assets generados quedan excluidos de Git
@@ -114,9 +114,21 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 git clone https://github.com/AliceBlueCode/DEF.git
 cd DEF
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 cp .env.example .env   # Configura backends y claves de API
-streamlit run def_kari/app.py
 ```
+
+Ejecuta `start_dev.bat`, o en dos terminales separadas:
+
+```bash
+# Terminal 1: backend
+python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+
+# Terminal 2: frontend
+cd frontend && npm run dev
+```
+
+Abre `http://localhost:3000` en tu navegador.
 
 Selecciona los backends de LLM, TTS y T2I desde la pestaña de Configuración.
 Las claves de API se almacenan cifradas mediante "Gestión de claves API" en la pestaña de Configuración.

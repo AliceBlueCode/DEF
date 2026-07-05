@@ -1,0 +1,10 @@
+{
+  "paruparu_illustrious_v5.safetensors": {
+    "quality_tags": "masterpiece, best quality",
+    "negative_prompt": "lowres, bad anatomy, worst quality"
+  },
+  "hassakuXLIllustrious_v21fix.safetensors": {
+    "quality_tags": "masterpiece, best quality",
+    "negative_prompt": "lowres, bad anatomy, worst quality"
+  }
+}
