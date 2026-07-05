@@ -39,6 +39,7 @@ data/mvp_settings.json
 
 # Session history (even public-character sessions are user-specific)
 data/public/session_history/
+data/sessions/
 
 # Public characters excluded from release (dev/test only)
 data/public/characters/character_aoi_001/
