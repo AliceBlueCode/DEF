@@ -38,6 +38,11 @@ This document records the implementation status of feature specifications (F-num
 | F-27 | Meta Self-Awareness Directive | ✅ Done | Embedded in system prompt |
 | —— | Character image color | ✅ Done | `base_profile.image_color` field; color picker in CharacterTab; applied to AI bubbles in ChatTab |
 | —— | Sidebar collapse | ✅ Done | `Sidebar.tsx` collapsed state, ◀/▶ toggle button |
+| —— | Thought Tab | ✅ Done | Free-text AI thought experiments; `GET/POST /api/thought/` |
+| —— | T2I Model Profile Dialog | ✅ Done | ⚙ dialog in Novel tab; per-backend model selection |
+| —— | Session rules added | ✅ Done | manzai / rakugo presets added |
+| —— | Action directives added | ✅ Done | standard preset added |
+| —— | i18n foundation (i18n.tsx) | ✅ Done | React-side i18n base; Japanese + English |
 
 ---
 
@@ -83,7 +88,7 @@ This document records the implementation status of feature specifications (F-num
 
 | Type | Count | Result |
 |---|---|---|
-| Unit Tests | 92 | All passing |
+| Unit Tests | 115 | All passing |
 
 ---
 

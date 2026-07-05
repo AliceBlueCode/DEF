@@ -221,8 +221,8 @@ def _call_llm(
     persona = character.get("persona_description", "You are a helpful assistant.")
     appearance = character.get("appearance_tags", "")
     try:
-        import streamlit as _st
-        _user_lang = _st.session_state.get("user_language", "ja")
+        from def_kari.settings import load_settings
+        _user_lang = load_settings().get("user_language", "ja") or "ja"
     except Exception:
         _user_lang = "ja"
     system_prompt = build_system_prompt(
