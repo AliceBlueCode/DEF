@@ -67,7 +67,6 @@ This document records the implementation status of feature specifications (F-num
 | Item | Description |
 |---|---|
 | Session history token limit | Long sessions may reach LLM context limit |
-| i18n dynamic messages | ~30 f-string locations in sessions not yet localized (planned for Python 3.12+) |
 | Tab header pinning | Resolved by React migration |
 | Irodori-TTS CUDA | venv may default to CPU after uv sync |
 | Backend multi-start | PID file guard instability |
