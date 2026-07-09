@@ -1,4 +1,4 @@
-{
+﻿{
   "character_marx_001": {
     "_note": "【テスト用】実在人物(カール・マルクス)のis_real_personパターン検証用。再配布禁止。",
     "base_profile": {
@@ -19,7 +19,7 @@
         "ip_rightholder": null,
         "deceased_year": 1883,
         "copyright_expired": true,
-        "publish_restriction": "none",
+        "visibility": "public",
         "mentions_real_person": true,
         "mentioned_persons": [
           "フリードリヒ・エンゲルス"

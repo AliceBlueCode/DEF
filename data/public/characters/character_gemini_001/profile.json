@@ -1,4 +1,4 @@
-{
+﻿{
   "character_gemini_001": {
     "_note": "【テスト用】GoogleのGeminiの擬人化キャラクター。リレー小説セッションのフィードバック反映Ver1.1.0。",
     "base_profile": {
@@ -24,7 +24,7 @@
         "ip_rightholder": "Google LLC",
         "deceased_year": null,
         "copyright_expired": false,
-        "publish_restriction": "private",
+        "visibility": "private",
         "mentions_real_person": false,
         "mentioned_persons": [],
         "origin_type": "personification"
