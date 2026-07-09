@@ -24,6 +24,18 @@ _SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 def _find_char_dir(character_id: str) -> Path | None:
     if not _SAFE_ID_RE.match(character_id):
         return None
+    # DEF-Character リポジトリ（2階層: public/<Group>/<CharacterID>/）を優先検索
+    _repo = os.environ.get("CHARACTER_REPO_PATH", "").strip()
+    if _repo:
+        _public = Path(_repo) / "public"
+        if _public.exists():
+            for _group in _public.iterdir():
+                if not _group.is_dir():
+                    continue
+                p = _group / character_id
+                if p.is_dir():
+                    return p
+    # フォールバック: DEF自身の data/
     for d in _CHAR_DIRS:
         p = d / character_id
         if p.is_dir():
@@ -53,13 +65,16 @@ def get_character_detail(character_id: str):
     return {"character": char}
 
 
+_NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
 @router.get("/{character_id}/icon")
 def get_character_icon(character_id: str):
     d = _find_char_dir(character_id)
     if d:
         icon = d / "icon.png"
         if icon.exists():
-            return FileResponse(str(icon), media_type="image/png")
+            return FileResponse(str(icon), media_type="image/png", headers=_NO_CACHE_HEADERS)
     return {"error": "Icon not found"}
 
 
@@ -69,7 +84,7 @@ def get_character_standing(character_id: str):
     if d:
         standing = d / "standing.png"
         if standing.exists():
-            return FileResponse(str(standing), media_type="image/png")
+            return FileResponse(str(standing), media_type="image/png", headers=_NO_CACHE_HEADERS)
     return {"error": "Standing image not found"}
 
 
