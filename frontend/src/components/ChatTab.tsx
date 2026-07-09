@@ -48,6 +48,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [ttsEnabled, setTtsEnabled] = useState(true)
+  const ttsEnabledRef = useRef(true)
   const [, setTtsHumanEnabled] = useState(false)
   const ttsHumanEnabledRef = useRef(false)
   const [undoMax, setUndoMax] = useState(5)
@@ -69,6 +70,13 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   useEffect(() => { messagesRef.current = messages }, [messages])
 
   const [standingVisible, setStandingVisible] = useState(true)
+  const [standingKey, setStandingKey] = useState(0)
+
+  useEffect(() => {
+    const handler = () => { setStandingVisible(true); setStandingKey(k => k + 1) }
+    window.addEventListener('characterStandingRefresh', handler)
+    return () => window.removeEventListener('characterStandingRefresh', handler)
+  }, [])
 
   useEffect(() => {
     fetch('/api/characters/character_i_001/raw-profile')
@@ -130,7 +138,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       .then(r => r.json())
       .then(data => {
         const s = data.settings || {}
-        if ('tts_enabled' in s) setTtsEnabled(!!s.tts_enabled)
+        if ('tts_enabled' in s) { setTtsEnabled(!!s.tts_enabled); ttsEnabledRef.current = !!s.tts_enabled }
         if ('tts_human_enabled' in s) { setTtsHumanEnabled(!!s.tts_human_enabled); ttsHumanEnabledRef.current = !!s.tts_human_enabled }
         if ('undo_max_history' in s) setUndoMax(Number(s.undo_max_history) || 5)
         if (s.allowed_rating_sexual) setAllowedSexual(s.allowed_rating_sexual)
@@ -142,7 +150,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
 
     const onSettingsChange = (e: Event) => {
       const { key, value } = (e as CustomEvent).detail
-      if (key === 'tts_enabled') setTtsEnabled(!!value)
+      if (key === 'tts_enabled') { setTtsEnabled(!!value); ttsEnabledRef.current = !!value }
       if (key === 'tts_human_enabled') { setTtsHumanEnabled(!!value); ttsHumanEnabledRef.current = !!value }
       if (key === 'character_greeting') characterGreetingRef.current = !!value
       if (key === 'safety_level') setSafetyLevel(value === 'warn' ? 'off' : value)
@@ -203,7 +211,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
             const greetMsgs = [announcement, greetMsg]
             setMessages(greetMsgs)
             saveHistory(selectedChar, greetMsgs)
-            if (ttsEnabled && data.text) playTTS(data.text, 1)
+            if (ttsEnabledRef.current && data.text) playTTS(data.text, 1)
             if (data.image_prompt_en && t2iBackend) generateImage(data.image_prompt_en, 1)
           })
           .catch(() => {})
@@ -475,13 +483,14 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   const charName = characters.find(c => c.id === selectedChar)?.name || ''
   const iconUrl = selectedChar ? `/api/characters/${selectedChar}/icon` : ''
 
-  const standingUrl = selectedChar ? `/api/characters/${selectedChar}/standing` : ''
+  const standingUrl = selectedChar ? `/api/characters/${selectedChar}/standing?v=${standingKey}` : ''
 
   return (
     <div className="tab-content chat-tab">
       <div className="chat-body">
         {standingVisible && standingUrl && (
           <img
+            key={`standing-${selectedChar}-${standingKey}`}
             src={standingUrl}
             alt=""
             className="chat-standing"

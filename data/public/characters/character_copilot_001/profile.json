@@ -1,4 +1,4 @@
-{
+﻿{
   "character_copilot_001": {
     "_note": "【テスト用】MicrosoftのCopilotの擬人化キャラクター。開発・検証用途のみ。再配布。",
     "base_profile": {
@@ -24,7 +24,7 @@
         "ip_rightholder": "Microsoft Corporation",
         "deceased_year": null,
         "copyright_expired": false,
-        "publish_restriction": "private",
+        "visibility": "private",
         "mentions_real_person": false,
         "mentioned_persons": [],
         "origin_type": "personification"

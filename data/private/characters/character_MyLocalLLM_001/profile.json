@@ -1,4 +1,4 @@
-{
+﻿{
   "character_MyLocalLLM_001": {
     "_note": "DEF(kari) privateキャラクター配置のサンプル。開発環境PCの擬人化キャラクター「霧嶋蒼」。自由に改変してください。",
     "base_profile": {
@@ -24,7 +24,7 @@
         "ip_rightholder": null,
         "deceased_year": null,
         "copyright_expired": false,
-        "publish_restriction": "private",
+        "visibility": "private",
         "mentions_real_person": false,
         "mentioned_persons": [],
         "origin_type": "original"

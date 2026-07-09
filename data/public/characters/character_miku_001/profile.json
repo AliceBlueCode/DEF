@@ -1,4 +1,4 @@
-{
+﻿{
   "character_miku_001": {
     "_note": "【既存IP・テスト用】image_name_tags 動作検証用キャラクター。Crypton Future Media, Inc. の著作物。",
     "base_profile": {
@@ -24,7 +24,7 @@
         "ip_rightholder": "Crypton Future Media, Inc.",
         "deceased_year": null,
         "copyright_expired": false,
-        "publish_restriction": "public",
+        "visibility": "public",
         "mentions_real_person": false,
         "mentioned_persons": [],
         "origin_type": "existing_ip"

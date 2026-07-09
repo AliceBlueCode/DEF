@@ -1,4 +1,4 @@
-{
+﻿{
   "character_i_001": {
     "_note": "デフォルト人間プレイヤーキャラクター。DEF環境に1人のみ存在する。",
     "base_profile": {
@@ -19,7 +19,7 @@
         "ip_rightholder": null,
         "deceased_year": null,
         "copyright_expired": false,
-        "publish_restriction": "private",
+        "visibility": "private",
         "mentions_real_person": false,
         "mentioned_persons": [],
         "origin_type": "original"

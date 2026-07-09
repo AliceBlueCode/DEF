@@ -1,4 +1,4 @@
-{
+﻿{
   "character_machiavelli_001": {
     "_note": "Public Persona: ニッコロ・マキャヴェッリ。公的記録から再構築された知的人格モデル。",
     "base_profile": {
@@ -24,7 +24,7 @@
         "ip_rightholder": null,
         "deceased_year": 1527,
         "copyright_expired": true,
-        "publish_restriction": "none",
+        "visibility": "public",
         "mentions_real_person": true,
         "mentioned_persons": [
           "チェーザレ・ボルジア",

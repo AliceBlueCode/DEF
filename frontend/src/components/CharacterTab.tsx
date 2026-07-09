@@ -175,6 +175,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
     if (data.status === 'ok') {
       setImgRefresh(n => n + 1)
       setImgMsg(kind === 'icon' ? t('char.msg.iconSaved') : t('char.msg.standingSaved'))
+      if (kind === 'standing') window.dispatchEvent(new CustomEvent('characterStandingRefresh'))
     } else {
       setImgMsg(data.error || t('char.msg.uploadFailed'))
     }
@@ -194,6 +195,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
       if (data.status === 'ok') {
         setImgRefresh(n => n + 1)
         setImgMsg(kind === 'icon' ? t('char.msg.iconGenerated') : t('char.msg.standingGenerated'))
+        if (kind === 'standing') window.dispatchEvent(new CustomEvent('characterStandingRefresh'))
       } else {
         setImgMsg(data.error || t('char.msg.generateFailed'))
       }

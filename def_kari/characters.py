@@ -1,6 +1,7 @@
 """キャラクタープロフィール管理（基本設計12章②準拠のbase_profile型のみ）"""
 
 import json
+import os
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -12,24 +13,58 @@ POC_PROFILES_PATH = Path(__file__).parent.parent / "poc" / "data" / "character_p
 DEFAULT_CHARACTER_ID = "character_luna_001"
 
 
+def _load_from_flat_dir(char_dir: Path, profiles: dict) -> None:
+    """旧形式: char_dir/{character_id}/profile.json"""
+    if not char_dir.exists():
+        return
+    for entry in sorted(char_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        pf = entry / "profile.json"
+        if not pf.exists():
+            continue
+        try:
+            with open(pf, encoding="utf-8") as f:
+                data = json.load(f)
+            if data:
+                profiles[entry.name] = next(iter(data.values()))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+
+def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
+    """新形式: repo/public/{GroupName}/{character_id}/profile.json
+    DEF-Character リポジトリ形式。新IDが旧IDより優先される。"""
+    public_dir = repo_path / "public"
+    if not public_dir.exists():
+        return
+    for group_dir in sorted(public_dir.iterdir()):
+        if not group_dir.is_dir():
+            continue
+        for char_dir in sorted(group_dir.iterdir()):
+            if not char_dir.is_dir():
+                continue
+            pf = char_dir / "profile.json"
+            if not pf.exists():
+                continue
+            try:
+                with open(pf, encoding="utf-8") as f:
+                    data = json.load(f)
+                if data:
+                    profiles[char_dir.name] = next(iter(data.values()))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+
 def load_profiles() -> dict[str, dict]:
     profiles = {}
-    # ディレクトリ方式（{character_id}/profile.json）— ディレクトリ名をIDとして使用
+    # 新形式優先: CHARACTER_REPO_PATH
+    _repo = os.environ.get("CHARACTER_REPO_PATH", "").strip()
+    if _repo:
+        _load_from_character_repo(Path(_repo), profiles)
+    # 旧形式: data/public/characters, data/private/characters
     for _cdir in (CHARACTERS_DIR, PRIVATE_CHARACTERS_DIR):
-        if _cdir.exists():
-            for _entry in sorted(_cdir.iterdir()):
-                if _entry.is_dir():
-                    _pf = _entry / "profile.json"
-                    if _pf.exists():
-                        try:
-                            with open(_pf, encoding="utf-8") as f:
-                                _data = json.load(f)
-                            _char_id = _entry.name
-                            if _data:
-                                _first_val = next(iter(_data.values()))
-                                profiles[_char_id] = _first_val
-                        except (json.JSONDecodeError, OSError):
-                            pass
+        _load_from_flat_dir(_cdir, profiles)
     # フォールバック: 旧一括ファイル
     if not profiles:
         for path in (PROFILES_PATH, POC_PROFILES_PATH):
