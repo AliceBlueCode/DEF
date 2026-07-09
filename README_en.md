@@ -136,6 +136,23 @@ To use local backends (TGW, VOICEVOX, A1111, etc.), set directory paths in `.env
 
 -----
 
+## Character Repository — DEF(Character)
+
+Character data can be managed in a repository separate from DEF itself.
+
+```
+DEF/              ← The execution environment (this repository)
+DEF-Character/    ← Character data (your asset)
+```
+
+Even if DEF changes, even if services end — your characters remain in your repository.
+
+**→ [DEF(Character)](https://github.com/AliceBlueCode/DEF-Character)**
+
+Set the path to DEF-Character in `CHARACTER_REPO_PATH` in your `.env` to connect.
+
+-----
+
 ## Our Stance on Creative Freedom
 
 **Creators are free to create whatever they wish. However, creators bear full responsibility for their creations.**

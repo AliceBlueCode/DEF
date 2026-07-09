@@ -136,6 +136,23 @@ Para usar backends locales (TGW, VOICEVOX, A1111, etc.), configura las rutas de 
 
 -----
 
+## Repositorio de personajes — DEF(Character)
+
+Los datos de personajes se pueden gestionar en un repositorio independiente de DEF.
+
+```
+DEF/              ← El entorno de ejecución (este repositorio)
+DEF-Character/    ← Datos de personajes (tu activo)
+```
+
+Aunque DEF cambie, aunque los servicios terminen — tus personajes permanecen en tu repositorio.
+
+**→ [DEF(Character)](https://github.com/AliceBlueCode/DEF-Character)**
+
+Configura la ruta a DEF-Character en `CHARACTER_REPO_PATH` en tu `.env` para conectar.
+
+-----
+
 ## Nuestra postura sobre la libertad creativa
 
 **Los creadores son libres de crear lo que deseen. Sin embargo, los creadores asumen toda la responsabilidad de sus creaciones.**
