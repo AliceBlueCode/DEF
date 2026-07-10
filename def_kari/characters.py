@@ -221,18 +221,29 @@ def get_tts_speaker_id(character: dict, tts_backend: str):
 
 
 def apply_name_reading(text: str, character: dict) -> str:
-    """TTS合成前にキャラクター名をカタカナ読みに置換する(VOICEVOX誤読対策)。"""
+    """TTS合成前にキャラクター名をカナ読みに置換する(VOICEVOX誤読対策)。
+    フルネーム→名→姓の順で置換。family_name_kana/given_name_kanaがあれば新形式、
+    なければfamily_name/given_nameをカナとして扱う（旧形式との後方互換）。"""
     if not text:
         return text or ""
     reading = character.get("name_reading")
     if not isinstance(reading, dict):
         return text
-    family = reading.get("family_name") if reading.get("family_name") else ""
-    given = reading.get("given_name") if reading.get("given_name") else ""
-    kana = family + given
+    family_kanji = reading.get("family_name") or ""
+    given_kanji = reading.get("given_name") or ""
+    family_kana = reading.get("family_name_kana") or family_kanji
+    given_kana = reading.get("given_name_kana") or given_kanji
+    # 1. フルネーム
     name = character.get("name", "")
-    if kana and name:
-        return text.replace(name, kana)
+    full_kana = family_kana + given_kana
+    if full_kana and name and full_kana != name:
+        text = text.replace(name, full_kana)
+    # 2. 名のみ
+    if given_kana and given_kanji and given_kana != given_kanji:
+        text = text.replace(given_kanji, given_kana)
+    # 3. 姓のみ
+    if family_kana and family_kanji and family_kana != family_kanji:
+        text = text.replace(family_kanji, family_kana)
     return text
 
 
