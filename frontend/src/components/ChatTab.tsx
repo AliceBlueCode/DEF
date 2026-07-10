@@ -153,7 +153,10 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
 
     const onSettingsChange = (e: Event) => {
       const { key, value } = (e as CustomEvent).detail
-      if (key === 'tts_enabled') { setTtsEnabled(!!value); ttsEnabledRef.current = !!value }
+      if (key === 'tts_enabled') {
+        setTtsEnabled(!!value); ttsEnabledRef.current = !!value
+        if (!value) setMessages(prev => prev.map(m => ({ ...m, audioUrl: undefined, autoPlayAudio: false })))
+      }
       if (key === 'tts_human_enabled') { setTtsHumanEnabled(!!value); ttsHumanEnabledRef.current = !!value }
       if (key === 'character_greeting') characterGreetingRef.current = !!value
       if (key === 'safety_level') setSafetyLevel(value === 'warn' ? 'off' : value)

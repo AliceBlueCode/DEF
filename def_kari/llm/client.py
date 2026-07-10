@@ -216,28 +216,42 @@ def _call_llm(
     quirks: dict | None = None,
     allowed_sexual: list[str] | None = None,
     allowed_violence: list[str] | None = None,
+    current_emotion: str = "",
+    session_context: str = "",
 ) -> str:
     character = character or {}
     persona = character.get("persona_description", "You are a helpful assistant.")
     appearance = character.get("appearance_tags", "")
+    relationships = character.get("relationships") or {}
     try:
         from def_kari.settings import load_settings
         _user_lang = load_settings().get("user_language", "ja") or "ja"
     except Exception:
         _user_lang = "ja"
+    _emotion_str = (
+        ", ".join(current_emotion) if isinstance(current_emotion, list) else current_emotion
+    )
     system_prompt = build_system_prompt(
         persona, appearance, quirks=quirks, user_language=_user_lang,
         allowed_sexual=allowed_sexual, allowed_violence=allowed_violence,
         content_policy=character.get("content_policy", {}),
         character_name=character.get("name", ""),
+        relationships=relationships or None,
+        current_emotion=_emotion_str,
+        session_context=session_context,
     )
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     if history:
         for turn in history[-MAX_CHAT_HISTORY_TURNS:]:
-            messages.append({"role": "user", "content": turn.get("user_text", "")})
-            messages.append({"role": "assistant", "content": turn.get("dialogue", "")})
+            if "role" in turn:
+                # session形式（OpenAI-style）: メッセージをそのまま追加
+                messages.append({"role": turn["role"], "content": turn.get("content", "")})
+            else:
+                # chat形式（DEFペア形式）: user + assistant ペアに展開
+                messages.append({"role": "user", "content": turn.get("user_text", "")})
+                messages.append({"role": "assistant", "content": turn.get("dialogue", "")})
 
     if extra_instruction:
         messages.append({"role": "system", "content": extra_instruction})
@@ -276,6 +290,8 @@ def generate_structured_reply(
     extra_instruction: str = "",
     allowed_sexual: list[str] | None = None,
     allowed_violence: list[str] | None = None,
+    current_emotion: str = "",
+    session_context: str = "",
 ) -> dict:
     """F-14のフォールバックチェーン(4段構成)を実行し、最終結果と各段階のログを返す。"""
     character = character or {}
@@ -296,6 +312,8 @@ def generate_structured_reply(
             quirks=quirks,
             allowed_sexual=allowed_sexual,
             allowed_violence=allowed_violence,
+            current_emotion=current_emotion,
+            session_context=session_context,
         )
     except (requests.RequestException, RuntimeError) as exc:
         attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": [f"{type(exc).__name__}: {exc}"]})

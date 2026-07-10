@@ -2474,8 +2474,8 @@
 
 .message-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 4px;
 }
 
@@ -2486,9 +2486,10 @@
 }
 
 .chat-msg-audio {
-  height: 24px;
-  width: 75%;
-  min-width: 0;
+  display: block;
+  width: 100%;
+  height: 32px;
+  margin: 4px 0;
 }
 
 .message.user .message-sender {

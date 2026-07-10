@@ -81,6 +81,10 @@ def chat(req: ChatRequest):
             f"image_prompt_en にも \"{_forced_tag}\" タグを含めること。"
         )
 
+    _last_emotion = req.history[-1].get("emotion", "neutral") if req.history else "neutral"
+    if isinstance(_last_emotion, list):
+        _last_emotion = ", ".join(_last_emotion)
+
     from def_kari.resources.vram_lock import get_vram_lock
     _vram_lock = get_vram_lock()
     _vram_lock.acquire()
@@ -94,6 +98,7 @@ def chat(req: ChatRequest):
             extra_instruction=_force_directive,
             allowed_sexual=_allowed_sexual,
             allowed_violence=_allowed_violence,
+            current_emotion=_last_emotion,
         )
     except Exception as e:
         _last_debug = {"error": str(e), "success": False, "attempts": []}

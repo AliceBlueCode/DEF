@@ -139,6 +139,12 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
 
     dmc = bp.get("default_model_config", {})
 
+    _rels_raw = raw.get("relationships", {})
+    relationships = {
+        (profiles.get(cid, {}).get("base_profile", {}).get("name") or cid): desc
+        for cid, desc in _rels_raw.items()
+    } if isinstance(_rels_raw, dict) else {}
+
     return {
         "name": bp.get("name", character_id or ""),
         "name_reading": bp.get("name_reading", {}),
@@ -153,6 +159,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "gemini_tts_voice": dmc.get("gemini_tts_voice"),
         "kokoro_voice": dmc.get("kokoro_voice"),
         "content_policy": bp.get("content_policy", {}),
+        "relationships": relationships,
     }
 
 

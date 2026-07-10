@@ -17,10 +17,89 @@ from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.llm.client import generate_structured_reply
 from def_kari.image_prompt.emotion_tags import apply_emotion_tags
+from def_kari.settings import load_settings
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
 
 router = APIRouter()
 
+
+
+_LANG_LABELS = {
+    "ja": "日本語", "en": "English", "zh": "中文",
+    "ko": "한국어", "es": "Español", "fr": "Français", "de": "Deutsch",
+}
+
+
+def _build_session_context(
+    topic: str, rules: list[str], initiative: list[str],
+    name_map: dict, speaker_name: str, user_language: str,
+) -> str:
+    other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
+    if user_language == "ja":
+        parts = ["【セッション情報】"]
+        if topic:
+            parts.append(f"お題: 「{topic}」")
+        parts.append(f"参加者: {', '.join(name_map.get(c, c) for c in initiative)}")
+        parts.append(f"あなたの役割: {speaker_name}")
+        if other_names:
+            parts.append(f"対話相手: {', '.join(other_names)}")
+        if rules:
+            parts.append("ルール:\n" + "\n".join(f"・{r}" for r in rules))
+    else:
+        parts = ["[Session Info]"]
+        if topic:
+            parts.append(f"Topic: \"{topic}\"")
+        parts.append(f"Participants: {', '.join(name_map.get(c, c) for c in initiative)}")
+        parts.append(f"Your role: {speaker_name}")
+        if other_names:
+            parts.append(f"Others: {', '.join(other_names)}")
+        if rules:
+            parts.append("Rules:\n" + "\n".join(f"- {r}" for r in rules))
+    return "\n".join(parts)
+
+
+def _build_turn_instruction(
+    action_count: int, speaker_name: str, other_names: list[str],
+    topic: str, session_history: list[dict], current_char_id: str,
+    session: dict, directives: dict, user_language: str,
+) -> str:
+    _is_ja = user_language == "ja"
+    if not session_history:
+        if _is_ja:
+            return "まず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。"
+        return "Start with a brief self-introduction, then state your position on the topic."
+    if action_count == 0:
+        # 他キャラの発言が実際にあるか確認（hallucination防止）
+        others_have_spoken = any(
+            h.get("role") == "assistant" and h.get("character_id") != current_char_id
+            for h in session_history
+        )
+        if _is_ja:
+            if others_have_spoken:
+                return "上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から意見を述べてください。"
+            return "上記の発言記録を踏まえ、あなた自身の立場から意見を述べてください。"
+        if others_have_spoken:
+            return "Based on the discussion above, respond to what other participants have said and express your own position."
+        return "Based on the discussion above, express your own position."
+    # ターン内2アクション目以降
+    _cur_round = session.get("round", 1)
+    _cur_turn = session.get("turn", 0)
+    turn_actions = [
+        h["content"].split(": ", 1)[-1]
+        for h in session_history
+        if h.get("character_id") == current_char_id
+        and h.get("round") == _cur_round
+        and h.get("turn") == _cur_turn
+    ]
+    prev_block = "\n".join(f"・{a}" for a in turn_actions) if turn_actions else ""
+    directive = directives.get(str(action_count), "")
+    if _is_ja:
+        text = f"このターンであなたは既に以下の発言をしています:\n{prev_block}\n\n"
+        text += f"【アクション{action_count + 1}の指示】{directive}" if directive else "続けて発言してください。"
+    else:
+        text = f"You have already said the following this turn:\n{prev_block}\n\n"
+        text += f"[Action {action_count + 1} directive] {directive}" if directive else "Please continue."
+    return text
 
 
 _MAX_SESSIONS = int(os.environ.get("DEF_MAX_SESSIONS", "1000"))
@@ -316,56 +395,49 @@ def next_turn(req: SessionNextRequest):
 
     history = []
     for h in session["history"][-20:]:
-        history.append({"role": h["role"], "content": h["content"]})
+        raw_content = h["content"]
+        h_role = h.get("role", "user")
+        h_char_id = h.get("character_id")
+        if h_role == "assistant" and h_char_id:
+            # "Name: text" → strip prefix
+            text = raw_content.split(": ", 1)[-1] if ": " in raw_content else raw_content
+            if h_char_id == current_char_id:
+                history.append({"role": "assistant", "content": text})
+            else:
+                other_name = name_map.get(h_char_id, h_char_id)
+                history.append({"role": "user", "content": f"[{other_name}] {text}"})
+        else:
+            history.append({"role": h_role, "content": raw_content})
+
+    _settings = load_settings()
+    _user_lang = _settings.get("user_language", "ja") or "ja"
+    _allowed_sexual = _settings.get("allowed_rating_sexual", ["general"])
+    _allowed_violence = _settings.get("allowed_rating_violence", ["general"])
 
     rules = session.get("rules", [])
-    rule_block = ("【セッションルール】\n" + "\n".join(f"・{r}" for r in rules) + "\n") if rules else ""
-    other_names = [name_map.get(c, c) for c in initiative if c != current_char_id]
     speaker_name = name_map.get(current_char_id, current_char_id)
     topic = session.get("topic", "")
-
     action_count = session.get("action_count", 0)
-    lang_rule = "【重要】必ず日本語で発言してください。英語で考えた内容も、出力は日本語にしてください。dialogue フィールドに思考プロセスや推論を書かないでください。\n"
+    other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
 
-    if not session["history"]:
-        # 最初のアクション（セッション開始直後）
-        user_text = lang_rule + rule_block
-        user_text += "\nこれは複数の参加者による討論セッションです。"
-        if topic:
-            user_text += f"\n今日のお題: 「{topic}」"
-        user_text += f"\n参加者: {', '.join(name_map.get(c, c) for c in initiative)}"
-        user_text += f"\nあなたは{speaker_name}です。対話相手は{', '.join(other_names)}です。"
-        user_text += "\nまず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。"
-    elif action_count == 0:
-        # ターン先頭アクション（2ターン目以降）
-        user_text = lang_rule + rule_block
-        user_text += f"\nあなたは{speaker_name}です。対話相手は{', '.join(other_names)}です。"
-        if topic:
-            user_text += f"\nお題: 「{topic}」"
-        user_text += "\n上記の発言記録を踏まえ、他の参加者の発言を具体的に引用しながら、あなた自身の立場から意見を述べてください。"
-    else:
-        # ターン内の2アクション目以降 — directive を適用
-        _cur_round = session.get("round", 1)
-        _cur_turn = session.get("turn", 0)
-        turn_actions = [
-            h["content"].split(": ", 1)[-1]
-            for h in session["history"]
-            if h.get("character_id") == current_char_id
-            and h.get("round") == _cur_round
-            and h.get("turn") == _cur_turn
-        ]
-        prev_block = "\n".join(f"・{a}" for a in turn_actions) if turn_actions else ""
+    directive_set_id = session.get("action_directive_set", "default")
+    _directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
 
-        directive_set_id = session.get("action_directive_set", "default")
-        _directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
-        directive = _directives.get(str(action_count), "")
+    session_ctx = _build_session_context(
+        topic, rules, initiative, name_map, speaker_name, _user_lang,
+    )
+    user_text = _build_turn_instruction(
+        action_count, speaker_name, other_names, topic,
+        session["history"], current_char_id, session, _directives, _user_lang,
+    )
 
-        user_text = lang_rule
-        user_text += f"あなたは{speaker_name}です。このターンであなたは既に以下の発言をしています:\n{prev_block}\n\n"
-        if directive:
-            user_text += f"【アクション{action_count + 1}の指示】{directive}"
-        else:
-            user_text += "続けて発言してください。"
+    prev_emotion = next(
+        (h.get("emotion", "neutral") for h in reversed(session["history"])
+         if h.get("character_id") == current_char_id),
+        "neutral",
+    )
+    if isinstance(prev_emotion, list):
+        prev_emotion = ", ".join(prev_emotion)
 
     global _last_session_debug
     from def_kari.resources.vram_lock import get_vram_lock
@@ -378,6 +450,10 @@ def next_turn(req: SessionNextRequest):
             model=model,
             character=char,
             backend=backend_id,
+            allowed_sexual=_allowed_sexual,
+            allowed_violence=_allowed_violence,
+            current_emotion=prev_emotion,
+            session_context=session_ctx,
         )
     except Exception as e:
         _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
@@ -816,6 +892,11 @@ def vote_deliberate(session_id: str, req: VoteRequest):
         })
         session["_pending_vote"]["deliberation_texts"][req.proposer_id] = req.proposer_text
 
+    _v_settings = load_settings()
+    _v_lang = _v_settings.get("user_language", "ja") or "ja"
+    _v_allowed_sexual = _v_settings.get("allowed_rating_sexual", ["general"])
+    _v_allowed_violence = _v_settings.get("allowed_rating_violence", ["general"])
+
     for char_id in initiative:
         char = get_character(char_id, profiles)
         char_name = name_map.get(char_id, char_id)
@@ -835,13 +916,42 @@ def vote_deliberate(session_id: str, req: VoteRequest):
             f"あなたのキャラクターとして、率直に意見を述べてください。"
         )
 
+        _v_prev_emotion = next(
+            (h.get("emotion", "neutral") for h in reversed(session["history"])
+             if h.get("character_id") == char_id),
+            "neutral",
+        )
+        if isinstance(_v_prev_emotion, list):
+            _v_prev_emotion = ", ".join(_v_prev_emotion)
+        _v_session_ctx = _build_session_context(
+            session.get("topic", ""), session.get("rules", []),
+            initiative, name_map, char_name, _v_lang,
+        )
+        _v_history = []
+        for h in session["history"][-20:]:
+            _raw = h["content"]
+            _h_role = h.get("role", "user")
+            _h_cid = h.get("character_id")
+            if _h_role == "assistant" and _h_cid:
+                _text = _raw.split(": ", 1)[-1] if ": " in _raw else _raw
+                if _h_cid == char_id:
+                    _v_history.append({"role": "assistant", "content": _text})
+                else:
+                    _oname = name_map.get(_h_cid, _h_cid)
+                    _v_history.append({"role": "user", "content": f"[{_oname}] {_text}"})
+            else:
+                _v_history.append({"role": _h_role, "content": _raw})
         try:
             result = generate_structured_reply(
                 user_text=deliberation_prompt,
-                history=list(session["history"]),
+                history=_v_history,
                 model=model,
                 character=char,
                 backend=bid,
+                allowed_sexual=_v_allowed_sexual,
+                allowed_violence=_v_allowed_violence,
+                current_emotion=_v_prev_emotion,
+                session_context=_v_session_ctx,
             )
             dialogue = ""
             emotion = "neutral"

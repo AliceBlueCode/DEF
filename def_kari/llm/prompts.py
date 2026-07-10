@@ -152,6 +152,17 @@ def _build_rating_instruction(
     )
 
 
+_RELATIONSHIPS_LABEL = {
+    "ja": "【関係性】",
+    "en": "[Relationships]",
+}
+
+_EMOTION_LABEL = {
+    "ja": "【現在の感情状態】",
+    "en": "[Current emotional state] ",
+}
+
+
 def build_system_prompt(
     persona_description: str,
     appearance_tags: str = "",
@@ -161,6 +172,9 @@ def build_system_prompt(
     allowed_violence: list[str] | None = None,
     content_policy: dict | None = None,
     character_name: str = "",
+    relationships: dict | None = None,
+    current_emotion: str = "",
+    session_context: str = "",
 ) -> str:
     quirks = quirks or {}
     json_capable = quirks.get("json_capable", True)
@@ -170,11 +184,24 @@ def build_system_prompt(
 
     # F-27: メタ自己認識ディレクティブ（identity_promptより上位に強制挿入）
     directive = _build_meta_directive(content_policy or {}, character_name, user_language)
-    parts = [directive, persona_description]
+    # session_context（セッションルール）はペルソナより前に挿入して優先度を上げる
+    parts = [directive]
+    if session_context:
+        parts.append(session_context)
+    parts.append(persona_description)
 
     if appearance_tags:
         _app_label = _APPEARANCE_LABEL.get(user_language, _APPEARANCE_LABEL["en"])
         parts.append(f"{_app_label}: {appearance_tags}")
+
+    if relationships:
+        _rel_label = _RELATIONSHIPS_LABEL.get(user_language, _RELATIONSHIPS_LABEL["en"])
+        _rel_lines = "\n".join(f"・{name}: {desc}" for name, desc in relationships.items())
+        parts.append(f"{_rel_label}\n{_rel_lines}")
+
+    if current_emotion and current_emotion != "neutral":
+        _emo_label = _EMOTION_LABEL.get(user_language, _EMOTION_LABEL["en"])
+        parts.append(f"{_emo_label}{current_emotion}")
 
     if _is_ja:
         _lang_rule = f"【言語ルール】応答は必ず{_lang_name}で行うこと。他の言語に切り替えてはならない。"
