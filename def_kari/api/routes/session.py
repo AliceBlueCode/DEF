@@ -438,7 +438,9 @@ def next_turn(req: SessionNextRequest):
 
     # A6 リピートペナルティ
     from def_kari.settings import load_settings as _load_settings
-    _repeat_threshold = int(_load_settings().get("session_repeat_penalty_count", 3))
+    _s = _load_settings()
+    _repeat_threshold = int(_s.get("session_repeat_penalty_count", 3))
+    _lang = _s.get("user_language", "ja")
     if _repeat_threshold > 0:
         _char_contents = [
             h["content"] for h in session["history"]
@@ -447,7 +449,12 @@ def next_turn(req: SessionNextRequest):
         penalty_message = ""
     if len(_char_contents) >= _repeat_threshold and len(set(_char_contents)) == 1:
             counters[current_char_id] = counters.get(current_char_id, 0) - 1
-            penalty_message = f"⚠ {name_map.get(current_char_id, current_char_id)} が同一発言を{_repeat_threshold}回繰り返した [発言力-1]"
+            _char_label = name_map.get(current_char_id, current_char_id)
+            penalty_message = (
+                f"⚠ {_char_label} repeated the same message {_repeat_threshold} times [speech power -1]"
+                if _lang == "en" else
+                f"⚠ {_char_label} が同一発言を{_repeat_threshold}回繰り返した [発言力-1]"
+            )
 
     actions_per_turn = session.get("actions_per_turn", 2)
     action_count = session.get("action_count", 0) + 1
@@ -745,10 +752,12 @@ def vote_deliberate(session_id: str, req: VoteRequest):
     default_backend = session.get("backend", DEFAULT_LLM_BACKEND)
     profiles = load_profiles()
 
+    from def_kari.settings import load_settings as _load_settings_v
+    _vlang = _load_settings_v().get("user_language", "ja")
     vote_labels = {
-        "topic_change": "お題変更",
-        "expel": "参加者退場",
-        "end_session": "セッション終了",
+        "topic_change": "Change Topic" if _vlang == "en" else "お題変更",
+        "expel": "Expel Participant" if _vlang == "en" else "参加者退場",
+        "end_session": "End Session" if _vlang == "en" else "セッション終了",
     }
     vote_label = vote_labels.get(req.vote_type, req.vote_type)
     detail_text = f" — {req.detail}" if req.detail else ""
@@ -774,8 +783,9 @@ def vote_deliberate(session_id: str, req: VoteRequest):
     deliberations: list[dict] = []
 
     vote_announce = (
-        f"[投票提案] {vote_label}{detail_text}\n"
-        f"参加者全員に意見を求めます。"
+        f"[Vote Proposal] {vote_label}{detail_text}\nAll participants are asked for their opinion."
+        if _vlang == "en" else
+        f"[投票提案] {vote_label}{detail_text}\n参加者全員に意見を求めます。"
     )
     session["history"].append({
         "role": "user",
@@ -996,20 +1006,38 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         elif len(new_init) == 0:
             session["turn"] = 0
 
-    human_vote_label = "賛成" if req.keeper_vote else "反対"
-    keeper_llm_label = "賛成" if results.get("_keeper") else "反対"
-    if proposer_id:
-        vote_detail_str = (
-            f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
-            f"キーパー: {keeper_llm_label}"
+    from def_kari.settings import load_settings as _load_settings_vc
+    _vclang = _load_settings_vc().get("user_language", "ja")
+    if _vclang == "en":
+        human_vote_label = "For" if req.keeper_vote else "Against"
+        keeper_llm_label = "For" if results.get("_keeper") else "Against"
+        if proposer_id:
+            vote_detail_str = (
+                f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
+                f"Keeper: {keeper_llm_label}"
+            )
+        else:
+            vote_detail_str = f"Keeper: {human_vote_label}"
+        result_text = (
+            f"🗳 Vote Result: {vote_label}{detail_text} — "
+            f"For {yes_count} / Against {no_count}（{vote_detail_str}）"
+            f" → {'✅ Passed' if passed else '❌ Rejected'}"
         )
     else:
-        vote_detail_str = f"キーパー: {human_vote_label}"
-    result_text = (
-        f"🗳 投票結果: {vote_label}{detail_text} — "
-        f"賛成{yes_count}/反対{no_count}（{vote_detail_str}）"
-        f" → {'✅ 可決' if passed else '❌ 否決'}"
-    )
+        human_vote_label = "賛成" if req.keeper_vote else "反対"
+        keeper_llm_label = "賛成" if results.get("_keeper") else "反対"
+        if proposer_id:
+            vote_detail_str = (
+                f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
+                f"キーパー: {keeper_llm_label}"
+            )
+        else:
+            vote_detail_str = f"キーパー: {human_vote_label}"
+        result_text = (
+            f"🗳 投票結果: {vote_label}{detail_text} — "
+            f"賛成{yes_count}/反対{no_count}（{vote_detail_str}）"
+            f" → {'✅ 可決' if passed else '❌ 否決'}"
+        )
     session["history"].append({
         "role": "user",
         "content": result_text,
