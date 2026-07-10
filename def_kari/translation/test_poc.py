@@ -94,13 +94,22 @@ def test_custom_registration():
 
 
 def test_deepl_init():
+    from unittest import mock
     from deepl_provider import DeepLTranslationProvider
 
-    try:
-        DeepLTranslationProvider(api_key="")
-        assert False, "Should have raised ValueError"
-    except ValueError:
-        pass
+    # secrets_store にキーがある場合でも空キー渡しは ValueError になること
+    with mock.patch("def_kari.secrets_store.get_api_key", return_value=None), \
+         mock.patch.dict("os.environ", {}, clear=False):
+        import os
+        saved = os.environ.pop("DEEPL_API_KEY", None)
+        try:
+            DeepLTranslationProvider(api_key="")
+            assert False, "Should have raised ValueError"
+        except ValueError:
+            pass
+        finally:
+            if saved is not None:
+                os.environ["DEEPL_API_KEY"] = saved
 
     p = DeepLTranslationProvider(api_key="test-key:fx")
     assert p.provider_name == "deepl"
