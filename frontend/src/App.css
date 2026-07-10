@@ -901,9 +901,60 @@
   gap: 10px;
 }
 
+.backend-dir-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.backend-dir-input-row .backend-dir-input {
+  flex: 1;
+  width: auto;
+}
+
+.backend-dir-browse-btn {
+  padding: 5px 8px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 1em;
+  flex-shrink: 0;
+}
+
+.backend-dir-browse-btn:hover { border-color: #a8d8f0; }
+.backend-dir-browse-btn:disabled { opacity: 0.5; cursor: default; }
+
+.backend-dir-test-btn {
+  padding: 5px 10px;
+  background: #1a2a3a;
+  border: 1px solid #4a7a9b;
+  border-radius: 4px;
+  color: #a8d8f0;
+  cursor: pointer;
+  font-size: 0.8em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.backend-dir-test-btn:hover { background: #1e3a5a; }
+.backend-dir-test-btn:disabled { opacity: 0.5; cursor: default; }
+
+.backend-dir-test-result {
+  font-size: 0.8em;
+  padding: 3px 6px;
+  border-radius: 3px;
+}
+
+.backend-dir-test-result.ok { color: #6fcf97; }
+.backend-dir-test-result.fail { color: #eb5757; }
+
 .light-mode .backend-dir-form { border-top-color: #d0d0d0; }
 .light-mode .backend-dir-label { color: #666; }
 .light-mode .backend-dir-input { background: #ffffff; border-color: #cccccc; color: #262730; }
+.light-mode .backend-dir-browse-btn { background: #f0f0f0; border-color: #ccc; color: #333; }
+.light-mode .backend-dir-test-btn { background: #e8f4fc; border-color: #7ab4d4; color: #2a6a9a; }
 
 /* Model profile dialog */
 .model-profile-body {

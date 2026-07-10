@@ -446,3 +446,41 @@ def save_backend_dirs(req: SaveBackendDirsRequest):
         else:
             os.environ.pop(k, None)
     return {"status": "ok"}
+
+
+@router.get("/browse-dir")
+def browse_dir():
+    import subprocess
+    import sys
+    script = (
+        "import tkinter; from tkinter import filedialog; "
+        "root = tkinter.Tk(); root.withdraw(); "
+        "root.wm_attributes('-topmost', True); "
+        "path = filedialog.askdirectory(title='フォルダを選択'); "
+        "print(path if path else '', end='')"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=60,
+        )
+        return {"path": result.stdout.strip()}
+    except Exception as e:
+        return {"path": "", "error": str(e)}
+
+
+class TestBackendRequest(BaseModel):
+    url: str
+
+
+@router.post("/test-backend")
+def test_backend(req: TestBackendRequest):
+    import time
+    import urllib.request
+    try:
+        start = time.time()
+        with urllib.request.urlopen(req.url, timeout=5) as r:
+            ms = int((time.time() - start) * 1000)
+            return {"ok": True, "status": r.status, "ms": ms}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

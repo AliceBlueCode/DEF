@@ -381,6 +381,10 @@ const ja: Record<string, string> = {
   'backendDir.list.header': 'バックエンド一覧',
   'backendDir.installDir': 'インストールディレクトリ',
   'backendDir.msg.saved': '保存しました（再起動後に反映）',
+  'backendDir.browseBtn': '参照',
+  'backendDir.testBtn': '接続テスト',
+  'backendDir.test.ok': '接続OK ({ms}ms)',
+  'backendDir.test.fail': '接続失敗',
 
   // CivitaiDialog
   'civitai.heading': '🎨 Civitai モデル管理',
@@ -814,6 +818,10 @@ const en: Record<string, string> = {
   'backendDir.list.header': 'Backend List',
   'backendDir.installDir': 'Install Directory',
   'backendDir.msg.saved': 'Saved (takes effect after restart)',
+  'backendDir.browseBtn': 'Browse',
+  'backendDir.testBtn': 'Test Connection',
+  'backendDir.test.ok': 'Connected ({ms}ms)',
+  'backendDir.test.fail': 'Connection failed',
 
   // CivitaiDialog
   'civitai.heading': '🎨 Civitai Model Management',

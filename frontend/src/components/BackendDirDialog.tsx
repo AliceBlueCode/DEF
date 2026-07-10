@@ -20,6 +20,9 @@ export default function BackendDirDialog({ onClose }: Props) {
   const [selectedId, setSelectedId] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [testResult, setTestResult] = useState<{ ok: boolean; ms?: number; error?: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
 
   useEffect(() => {
     fetch('/api/settings/backend-dirs')
@@ -46,6 +49,33 @@ export default function BackendDirDialog({ onClose }: Props) {
     })
     showMsg(t('backendDir.msg.saved'))
     setSaving(false)
+  }
+
+  const browse = async (envKey: string) => {
+    setBrowsing(true)
+    try {
+      const res = await fetch('/api/settings/browse-dir')
+      const data = await res.json()
+      if (data.path) setValues(prev => ({ ...prev, [envKey]: data.path }))
+    } finally {
+      setBrowsing(false)
+    }
+  }
+
+  const testConnection = async (url: string) => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await fetch('/api/settings/test-backend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      })
+      const data = await res.json()
+      setTestResult(data)
+    } finally {
+      setTesting(false)
+    }
   }
 
   const selected = backends.find(b => b.id === selectedId)
@@ -83,25 +113,47 @@ export default function BackendDirDialog({ onClose }: Props) {
             {selected.dir_env && (
               <div className="backend-dir-row">
                 <label className="backend-dir-label">{t('backendDir.installDir')}</label>
-                <input
-                  type="text"
-                  className="backend-dir-input"
-                  placeholder="例: C:\tools\textgen-webui"
-                  value={values[selected.dir_env] ?? ''}
-                  onChange={e => setValues(prev => ({ ...prev, [selected.dir_env!]: e.target.value }))}
-                />
+                <div className="backend-dir-input-row">
+                  <input
+                    type="text"
+                    className="backend-dir-input"
+                    placeholder="例: C:\tools\textgen-webui"
+                    value={values[selected.dir_env] ?? ''}
+                    onChange={e => setValues(prev => ({ ...prev, [selected.dir_env!]: e.target.value }))}
+                  />
+                  <button
+                    className="backend-dir-browse-btn"
+                    onClick={() => browse(selected.dir_env!)}
+                    disabled={browsing}
+                    title={t('backendDir.browseBtn')}
+                  >📁</button>
+                </div>
               </div>
             )}
             {selected.url_env && (
               <div className="backend-dir-row">
                 <label className="backend-dir-label">URL</label>
-                <input
-                  type="text"
-                  className="backend-dir-input"
-                  placeholder={selected.default_url ?? ''}
-                  value={values[selected.url_env] ?? ''}
-                  onChange={e => setValues(prev => ({ ...prev, [selected.url_env!]: e.target.value }))}
-                />
+                <div className="backend-dir-input-row">
+                  <input
+                    type="text"
+                    className="backend-dir-input"
+                    placeholder={selected.default_url ?? ''}
+                    value={values[selected.url_env] ?? ''}
+                    onChange={e => { setValues(prev => ({ ...prev, [selected.url_env!]: e.target.value })); setTestResult(null) }}
+                  />
+                  <button
+                    className="backend-dir-test-btn"
+                    onClick={() => testConnection(values[selected.url_env!] || selected.default_url || '')}
+                    disabled={testing}
+                  >{testing ? '…' : t('backendDir.testBtn')}</button>
+                </div>
+                {testResult && (
+                  <div className={`backend-dir-test-result ${testResult.ok ? 'ok' : 'fail'}`}>
+                    {testResult.ok
+                      ? t('backendDir.test.ok').replace('{ms}', String(testResult.ms))
+                      : t('backendDir.test.fail')}
+                  </div>
+                )}
               </div>
             )}
             <div className="backend-dir-actions">
