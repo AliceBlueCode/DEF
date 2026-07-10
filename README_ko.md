@@ -118,7 +118,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env   # 백엔드 설정・API 키 등을 입력
 ```
 
-`start_dev.bat`을 더블클릭하거나, 두 개의 터미널에서 각각 실행하세요:
+`start_def.bat`을 더블클릭하거나, 두 개의 터미널에서 각각 실행하세요:
 
 ```bash
 # 터미널 1: 백엔드

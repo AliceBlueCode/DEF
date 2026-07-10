@@ -118,7 +118,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env   # Configura backends y claves de API
 ```
 
-Ejecuta `start_dev.bat`, o en dos terminales separadas:
+Ejecuta `start_def.bat`, o en dos terminales separadas:
 
 ```bash
 # Terminal 1: backend

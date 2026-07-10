@@ -118,7 +118,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env   # Set backend paths and API keys
 ```
 
-Launch with `start_dev.bat`, or run in two separate terminals:
+Launch with `start_def.bat`, or run in two separate terminals:
 
 ```bash
 # Terminal 1: backend

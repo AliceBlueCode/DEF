@@ -118,7 +118,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env   # 设置后端与 API 密钥等
 ```
 
-运行 `start_dev.bat`，或在两个终端分别执行：
+运行 `start_def.bat`，或在两个终端分别执行：
 
 ```bash
 # 终端 1：后端
