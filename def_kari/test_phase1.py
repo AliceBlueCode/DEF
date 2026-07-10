@@ -88,7 +88,7 @@ def test_llm_backend_registry():
     from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 
     assert DEFAULT_LLM_BACKEND in LLM_BACKENDS
-    assert len(LLM_BACKENDS) == 4
+    assert len(LLM_BACKENDS) == 5
     for name, backend in LLM_BACKENDS.items():
         assert "chat" in backend, f"{name} missing chat"
         assert "list_models" in backend, f"{name} missing list_models"

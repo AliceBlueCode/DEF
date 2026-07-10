@@ -228,6 +228,8 @@ def _call_llm(
     system_prompt = build_system_prompt(
         persona, appearance, quirks=quirks, user_language=_user_lang,
         allowed_sexual=allowed_sexual, allowed_violence=allowed_violence,
+        content_policy=character.get("content_policy", {}),
+        character_name=character.get("name", ""),
     )
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
