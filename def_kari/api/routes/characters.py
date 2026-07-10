@@ -24,18 +24,15 @@ _SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 def _find_char_dir(character_id: str) -> Path | None:
     if not _SAFE_ID_RE.match(character_id):
         return None
-    # DEF-Character リポジトリ（複数対応、先勝ち）
+    # DEF-Character リポジトリ（再帰走査、先勝ち）
     from def_kari.characters import _get_repo_paths
     for _repo in _get_repo_paths():
         _public = _repo / "public"
         if not _public.exists():
             continue
-        for _group in _public.iterdir():
-            if not _group.is_dir():
-                continue
-            p = _group / character_id
-            if p.is_dir():
-                return p
+        for pf in sorted(_public.rglob("profile.json")):
+            if pf.parent.name == character_id:
+                return pf.parent
     # フォールバック: DEF自身の data/
     for d in _CHAR_DIRS:
         p = d / character_id

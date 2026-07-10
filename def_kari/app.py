@@ -26,6 +26,7 @@ from def_kari.config import (
     T2I_MODE_END, T2I_MODE_START, T2I_MODE_MANUAL, T2I_MODE_INTERVAL,
     T2I_MODES, T2I_MODE_LABELS, DEFAULT_T2I_MODE,
     T2I_PROMPT_FORMATS, T2I_PROMPT_FORMAT_LABELS, DEFAULT_T2I_PROMPT_FORMAT,
+    T2I_PROMPT_MODES, T2I_PROMPT_MODE_LABELS, DEFAULT_T2I_PROMPT_MODE,
     T2I_BACKENDS, T2I_BACKEND_LABELS, DEFAULT_T2I_BACKEND,
     DEFAULT_STATUS_POLL_SEC,
 )
@@ -228,6 +229,7 @@ _DEFAULTS = {
     "undo_max_history": 5,
     "character_greeting": True,
     "t2i_prompt_format": DEFAULT_T2I_PROMPT_FORMAT,
+    "t2i_prompt_mode": DEFAULT_T2I_PROMPT_MODE,
     "t2i_backend": DEFAULT_T2I_BACKEND,
     "t2i_model": None,
     "t2i_width": 512,
@@ -3172,6 +3174,29 @@ with tab_settings:
         _t("settings_repeat_penalty"),
         min_value=0, max_value=10,
         key="session_repeat_penalty_count",
+    )
+
+    st.subheader("Session Image Prompt Mode" if _ui_lang == "en" else "セッション画像プロンプトモード")
+    _t2i_prompt_mode_labels = {
+        "current": ("LLM generate (current)" if _ui_lang == "en" else "LLMで生成 (current)"),
+        "passthrough": ("Use conversation prompt (passthrough)" if _ui_lang == "en" else "会話から流用 (passthrough)"),
+        "dedicated": ("Enhanced LLM generate (dedicated)" if _ui_lang == "en" else "強化LLM生成 (dedicated)"),
+    }
+    st.session_state.t2i_prompt_mode = st.radio(
+        "Session image prompt mode" if _ui_lang == "en" else "セッション画像プロンプトモード",
+        T2I_PROMPT_MODES,
+        index=T2I_PROMPT_MODES.index(st.session_state.get("t2i_prompt_mode", DEFAULT_T2I_PROMPT_MODE)),
+        format_func=lambda k: _t2i_prompt_mode_labels.get(k, k),
+        label_visibility="collapsed",
+        help=(
+            "current: LLM generates Danbooru tags from scene + dialogue.\n"
+            "passthrough: Reuse image_prompt_en from conversation history (no LLM call).\n"
+            "dedicated: LLM generation with stricter output constraints (for thinking models)."
+            if _ui_lang == "en" else
+            "current: LLMがシーン+会話からDanbooruタグを生成。\n"
+            "passthrough: 会話のimage_prompt_enを流用（LLM不要）。\n"
+            "dedicated: 出力制約を強化したLLM生成（thinkingモデル対策）。"
+        ),
     )
 
     st.caption(_t("settings_session_img_size"))

@@ -16,6 +16,7 @@ PERSISTED_KEYS = [
     "c2_method",
     "active_character",
     "t2i_trigger_mode",
+    "t2i_prompt_mode",
     "undo_max_history",
     "character_greeting",
     "t2i_prompt_format",

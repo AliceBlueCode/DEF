@@ -1309,6 +1309,7 @@ class SessionGenerateImageRequest(BaseModel):
     backend: str = DEFAULT_LLM_BACKEND
     t2i_backend: str = ""
     t2i_model: str = ""
+    t2i_prompt_mode: str = ""
 
 
 @router.post("/{session_id}/generate-image")
@@ -1327,68 +1328,110 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
     # 直近ラウンドの発言を取得
     round_size = max(len(initiative) * actions_per_turn, 1)
     last_round = [h for h in history[-round_size * 2:] if h.get("role") == "assistant"][-round_size:]
-    dialogue_block = "\n".join(
-        f"{name_map.get(h.get('character_id', ''), h.get('character_id', ''))}: "
-        f"{h.get('content', '').split(': ', 1)[-1]}"
-        for h in last_round
-    ) if last_round else ""
 
-    # scene を軸にしたプロンプト
-    scene_line = f"Base scene tags: {scene}" if scene else ""
-    topic_line = f"Session topic: {topic}" if topic else ""
-    dialogue_line = f"Recent dialogue (for character count and mood):\n{dialogue_block}" if dialogue_block else ""
+    from def_kari.settings import load_settings as _load_settings
+    _settings = _load_settings()
+    t2i_prompt_mode = req.t2i_prompt_mode or _settings.get("t2i_prompt_mode", "current")
 
-    user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
-        "\n\nOutput ONLY Danbooru-style image tags in English, comma-separated. "
-        "Start from the base scene tags above and add character count, emotions, and mood from the dialogue. "
-        "No explanation. No reasoning. Tags only."
-    )
-
-    system_prompt = (
-        "You are an image prompt generator for Stable Diffusion. "
-        "Output ONLY Danbooru-style image tags, comma-separated. "
-        "Do NOT think out loud. Do NOT explain. Output tags immediately."
-    )
-
-    backend_id = req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
-    if backend_id not in LLM_BACKENDS:
-        backend_id = DEFAULT_LLM_BACKEND
-
-    try:
-        chat_fn = LLM_BACKENDS[backend_id]["chat"]
-        model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ]
-        from def_kari.resources.vram_lock import get_vram_lock
-        _vram_lock_llm = get_vram_lock()
-        _vram_lock_llm.acquire()
-        try:
-            image_prompt = chat_fn(messages, model, json_mode=False, options={"num_predict": 512})
-        finally:
-            _vram_lock_llm.release()
-        image_prompt = re.sub(r'#(\w)', r'\1', image_prompt).strip().strip('"').strip("'")
-        # 最終発言キャラの容姿タグを末尾に追加
-        _last_char_id = last_round[-1].get("character_id") if last_round else None
-        if _last_char_id:
-            _profiles = load_profiles()
-            _char = get_character(_last_char_id, _profiles)
-            _app_tags = _char.get("appearance_tags", "").strip()
-            if _app_tags:
-                image_prompt = image_prompt + ", " + _app_tags if image_prompt else _app_tags
-        # 重複除去・最大30タグ
-        _raw_tags = [t.strip() for t in image_prompt.split(',') if t.strip()]
-        _seen: set[str] = set()
-        _unique: list[str] = []
-        for t in _raw_tags:
+    def _dedup_tags(prompt: str, max_tags: int = 256) -> str:
+        raw = [t.strip() for t in prompt.split(',') if t.strip()]
+        seen: set[str] = set()
+        unique: list[str] = []
+        for t in raw:
             k = t.lower()
-            if k not in _seen:
-                _seen.add(k)
-                _unique.append(t)
-        image_prompt = ', '.join(_unique[:256])
-    except Exception as e:
-        return {"error": f"image prompt generation failed: {e}"}
+            if k not in seen:
+                seen.add(k)
+                unique.append(t)
+        return ', '.join(unique[:max_tags])
+
+    def _append_appearance_tags(prompt: str, last_char_id: str | None) -> str:
+        if not last_char_id:
+            return prompt
+        _profiles = load_profiles()
+        _char = get_character(last_char_id, _profiles)
+        _app_tags = _char.get("appearance_tags", "").strip()
+        if _app_tags:
+            return prompt + ", " + _app_tags if prompt else _app_tags
+        return prompt
+
+    _last_char_id = last_round[-1].get("character_id") if last_round else None
+
+    if t2i_prompt_mode == "passthrough":
+        # LLM不使用: history の image_prompt_en を直接流用
+        try:
+            _ip_parts = [h.get("image_prompt_en", "") for h in last_round if h.get("image_prompt_en")]
+            image_prompt = ", ".join(_ip_parts)
+            if not image_prompt and scene:
+                image_prompt = scene
+            image_prompt = _append_appearance_tags(image_prompt, _last_char_id)
+            image_prompt = _dedup_tags(image_prompt)
+        except Exception as e:
+            return {"error": f"image prompt (passthrough) failed: {e}"}
+
+    else:
+        # current / dedicated: LLM経由でタグ生成
+        dialogue_block = "\n".join(
+            f"{name_map.get(h.get('character_id', ''), h.get('character_id', ''))}: "
+            f"{h.get('content', '').split(': ', 1)[-1]}"
+            for h in last_round
+        ) if last_round else ""
+
+        scene_line = f"Base scene tags: {scene}" if scene else ""
+        topic_line = f"Session topic: {topic}" if topic else ""
+        dialogue_line = f"Recent dialogue (for character count and mood):\n{dialogue_block}" if dialogue_block else ""
+
+        if t2i_prompt_mode == "dedicated":
+            # dedicated: 出力制約を強化（thinkingモデル対策）
+            user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+                "\n\nIMMEDIATELY output 10-20 Danbooru image tags, comma-separated. "
+                "Visual tags only (characters, setting, mood, lighting). "
+                "NO words like 'courageous', 'bold', 'daring' — only what can be SEEN. "
+                "NO explanation. NO reasoning. First token must be a tag."
+            )
+            system_prompt = (
+                "Image tag generator. Output comma-separated Danbooru tags ONLY. "
+                "Start your response with the first tag immediately. "
+                "No prose, no reasoning, no abstract concepts. "
+                "Only visual descriptors: people, objects, setting, lighting, color, composition."
+            )
+            num_predict = 128
+        else:
+            # current: 既存のプロンプト
+            user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+                "\n\nOutput ONLY Danbooru-style image tags in English, comma-separated. "
+                "Start from the base scene tags above and add character count, emotions, and mood from the dialogue. "
+                "No explanation. No reasoning. Tags only."
+            )
+            system_prompt = (
+                "You are an image prompt generator for Stable Diffusion. "
+                "Output ONLY Danbooru-style image tags, comma-separated. "
+                "Do NOT think out loud. Do NOT explain. Output tags immediately."
+            )
+            num_predict = 512
+
+        backend_id = req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
+        if backend_id not in LLM_BACKENDS:
+            backend_id = DEFAULT_LLM_BACKEND
+
+        try:
+            chat_fn = LLM_BACKENDS[backend_id]["chat"]
+            model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text},
+            ]
+            from def_kari.resources.vram_lock import get_vram_lock
+            _vram_lock_llm = get_vram_lock()
+            _vram_lock_llm.acquire()
+            try:
+                image_prompt = chat_fn(messages, model, json_mode=False, options={"num_predict": num_predict})
+            finally:
+                _vram_lock_llm.release()
+            image_prompt = re.sub(r'#(\w)', r'\1', image_prompt).strip().strip('"').strip("'")
+            image_prompt = _append_appearance_tags(image_prompt, _last_char_id)
+            image_prompt = _dedup_tags(image_prompt)
+        except Exception as e:
+            return {"error": f"image prompt generation failed: {e}"}
 
     if not image_prompt:
         return {"error": "empty image prompt"}
@@ -1411,6 +1454,7 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             "backend": t2i_backend,
             "model": t2i_model or "",
             "workflow": workflow,
+            "t2i_prompt_mode": t2i_prompt_mode,
             "prompt_input": image_prompt,
             "quality_tags": quality_tags,
             "prompt_final": prompt_final,

@@ -40,6 +40,7 @@ const LANG_OPTIONS = [
 const C2_OPTION_VALUES = ['none', 'argos', 'library', 'deepl', 'llm']
 const T2I_TRIGGER_VALUES = ['end', 'start', 'manual', 'interval']
 const T2I_FORMAT_VALUES = ['danbooru', 'natural', 'e621', 'other']
+const T2I_PROMPT_MODE_VALUES = ['current', 'passthrough', 'dedicated']
 
 const SIZE_PRESETS = [
   { label: '512×512',   w: 512,  h: 512 },
@@ -476,6 +477,17 @@ export default function SettingsTab({
             value={get('session_repeat_penalty_count', 2)}
             onChange={e => set('session_repeat_penalty_count', Number(e.target.value))}
           />
+        </div>
+        <div className="settings-row">
+          <label>{t('settings.label.t2iPromptMode')}</label>
+          <select
+            value={get('t2i_prompt_mode', 'current')}
+            onChange={e => set('t2i_prompt_mode', e.target.value)}
+          >
+            {T2I_PROMPT_MODE_VALUES.map(v => (
+              <option key={v} value={v}>{t(`settings.t2iPromptMode.${v}`)}</option>
+            ))}
+          </select>
         </div>
         <div className="settings-row">
           <label>{t('settings.label.sessionIllustSize')}</label>

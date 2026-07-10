@@ -51,7 +51,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   const ttsEnabledRef = useRef(true)
   const [, setTtsHumanEnabled] = useState(false)
   const ttsHumanEnabledRef = useRef(false)
-  const [t2iTriggerMode, setT2iTriggerMode] = useState('end')
+  const [, setT2iTriggerMode] = useState('end')
   const t2iTriggerModeRef = useRef('end')
   const [undoMax, setUndoMax] = useState(5)
   const [hasMore, setHasMore] = useState(false)

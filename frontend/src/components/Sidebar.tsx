@@ -115,7 +115,7 @@ export default function Sidebar() {
           <span>{t('sidebar.safetyLevel.label')}</span>
           <select
             className="sidebar-select"
-            value={get('safety_level', 'off') === 'warn' ? 'off' : get('safety_level', 'off')}
+            value={(get('safety_level', 'off') as string) === 'warn' ? 'off' : get('safety_level', 'off')}
             onChange={e => set('safety_level', e.target.value)}
           >
             <option value="off">{t('sidebar.safetyLevel.off')}</option>

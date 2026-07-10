@@ -31,6 +31,14 @@ T2I_PROMPT_FORMAT_LABELS = {
 }
 DEFAULT_T2I_PROMPT_FORMAT = "danbooru"
 
+T2I_PROMPT_MODES = ["current", "passthrough", "dedicated"]
+T2I_PROMPT_MODE_LABELS = {
+    "current": "LLMで生成 (current)",
+    "passthrough": "会話から流用 (passthrough)",
+    "dedicated": "強化LLM生成 (dedicated)",
+}
+DEFAULT_T2I_PROMPT_MODE = "current"
+
 T2I_BACKENDS = ["a1111", "comfyui", "civitai", "huggingface"]
 T2I_BACKEND_LABELS = {
     "a1111": "A1111 (ローカル)",
