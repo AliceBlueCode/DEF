@@ -32,8 +32,25 @@ def _load_from_flat_dir(char_dir: Path, profiles: dict) -> None:
             pass
 
 
+def _load_char_dir(char_dir: Path, profiles: dict) -> None:
+    """profile.json を持つ1キャラクターディレクトリを読み込む。先勝ち。"""
+    if char_dir.name in profiles:
+        return
+    pf = char_dir / "profile.json"
+    if not pf.exists():
+        return
+    try:
+        with open(pf, encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if data:
+            profiles[char_dir.name] = next(iter(data.values()))
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
 def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
-    """新形式: repo/public/{GroupName}/{character_id}/profile.json
+    """新形式: repo/public/{Group}/{character_id}/profile.json
+    または repo/public/{Group}/{SubGroup}/{character_id}/profile.json（3階層）
     DEF-Character リポジトリ形式。先勝ち（既登録IDは上書きしない）。"""
     public_dir = repo_path / "public"
     if not public_dir.exists():
@@ -41,21 +58,17 @@ def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
     for group_dir in sorted(public_dir.iterdir()):
         if not group_dir.is_dir():
             continue
-        for char_dir in sorted(group_dir.iterdir()):
-            if not char_dir.is_dir():
+        for entry in sorted(group_dir.iterdir()):
+            if not entry.is_dir():
                 continue
-            if char_dir.name in profiles:
-                continue
-            pf = char_dir / "profile.json"
-            if not pf.exists():
-                continue
-            try:
-                with open(pf, encoding="utf-8-sig") as f:
-                    data = json.load(f)
-                if data:
-                    profiles[char_dir.name] = next(iter(data.values()))
-            except (json.JSONDecodeError, OSError):
-                pass
+            if (entry / "profile.json").exists():
+                # 2階層: public/{Group}/{character_id}/
+                _load_char_dir(entry, profiles)
+            else:
+                # 3階層: public/{Group}/{SubGroup}/{character_id}/
+                for char_dir in sorted(entry.iterdir()):
+                    if char_dir.is_dir():
+                        _load_char_dir(char_dir, profiles)
 
 
 def _get_repo_paths() -> list[Path]:
