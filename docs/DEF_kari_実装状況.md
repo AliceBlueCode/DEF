@@ -32,6 +32,7 @@
 | F-24 | プロットファイル書き戻し | ✅ 実装済み | `PUT /api/novel/plots/{filename}` でGit管理プロットを直接保存 |
 | F-24 | T2I設定ダイアログ | ✅ 実装済み | バックエンド・モデルを `/api/settings/backends` から動的取得 |
 | F-24 | リサイズ対応レイアウト | ✅ 実装済み | 本文↔サムネ（縦）・本文↔AI候補（横）ドラッグリサイズ、localStorage保存 |
+| F-24-2 | シーン・チャプター・エピソード単位の永続化データ構造 | ✅ 実装済み | Episode > Chapter > Scene 3階層構造、`data/private/episode_data/{タイトル}.json` で永続化 |
 | F-13-1 | VRAM排他制御（ノベルタブ） | ✅ 実装済み | `/api/novel/generate` と `/api/novel/t2i` が vram_lock を取得・解放 |
 | F-25 | origin_type・公開ポリシー | ✅ 実装済み | original/reconstructed_persona/personification/derivative |
 | F-26 | キャラクター切替時の自動挨拶 | ✅ 実装済み | ON/OFF設定可能 |
@@ -51,6 +52,7 @@
 | F番号 | 機能名 | 状態 | 備考 |
 |---|---|---|---|
 | F-4 | 動的生成（Consistency Provider） | ❌ 未実装 | 視覚的一貫性の自動維持。手動T2I生成で代替可能 |
+| F-12 | スマート・リソースマネージャー | ⏸ 保留 | F-13-1（vram_lock）で主要目的を達成済み。CPU/GPUハイブリッド推論の自動判別は現アーキテクチャでは不要 |
 | F-13-2 | 軽量レスポンスモード | ⏸ 保留 | 現アーキテクチャでは不要 |
 | F-13-3 | Diffusersオフロード制御 | ⏸ 保留 | 現アーキテクチャでは不要 |
 | F-19 | エクスポート/インポート | ⏸ 保留 | データ構造が固まるまで保留 |

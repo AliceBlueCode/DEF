@@ -32,6 +32,7 @@ This document records the implementation status of feature specifications (F-num
 | F-24 | Plot file write-back | ✅ Done | `PUT /api/novel/plots/{filename}` — saves directly to source file for Git-managed plots |
 | F-24 | T2I settings dialog | ✅ Done | Backend / model fetched dynamically from `/api/settings/backends` |
 | F-24 | Resizable layout | ✅ Done | Body↔thumbnail (vertical), body↔candidates (horizontal) drag handles; persisted in localStorage |
+| F-24-2 | Scene/Chapter/Episode persistent data structure | ✅ Done | Episode > Chapter > Scene 3-tier hierarchy; persisted as `data/private/episode_data/{title}.json` |
 | F-13-1 | VRAM lock — Novel tab | ✅ Done | `/api/novel/generate` and `/api/novel/t2i` acquire/release the global vram_lock |
 | F-25 | origin_type & Publication Policy | ✅ Done | original/reconstructed_persona/personification/derivative |
 | F-26 | Character Switch Auto-Greeting | ✅ Done | ON/OFF configurable |
@@ -51,6 +52,7 @@ This document records the implementation status of feature specifications (F-num
 | F# | Feature | Status | Notes |
 |---|---|---|---|
 | F-4 | Dynamic Generation (Consistency Provider) | ❌ Not implemented | Automatic visual consistency. Manual T2I generation available as workaround |
+| F-12 | Smart Resource Manager | ⏸ On hold | Core concern covered by F-13-1 (vram_lock). CPU/GPU hybrid auto-detection not needed with current architecture |
 | F-13-2 | Lightweight Response Mode | ⏸ On hold | Not needed with current architecture |
 | F-13-3 | Diffusers Offload Control | ⏸ On hold | Not needed with current architecture |
 | F-19 | Export/Import | ⏸ On hold | Pending data structure stabilization |
