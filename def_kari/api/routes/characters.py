@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from def_kari.characters import load_profiles, get_character, list_character_choices, get_raw_profile, save_profile
+from def_kari.characters import load_profiles, get_character, list_character_choices, get_raw_profile, save_profile, build_lora_prompt
 from def_kari.settings import load_settings
 
 router = APIRouter()
@@ -24,17 +24,18 @@ _SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 def _find_char_dir(character_id: str) -> Path | None:
     if not _SAFE_ID_RE.match(character_id):
         return None
-    # DEF-Character リポジトリ（2階層: public/<Group>/<CharacterID>/）を優先検索
-    _repo = os.environ.get("CHARACTER_REPO_PATH", "").strip()
-    if _repo:
-        _public = Path(_repo) / "public"
-        if _public.exists():
-            for _group in _public.iterdir():
-                if not _group.is_dir():
-                    continue
-                p = _group / character_id
-                if p.is_dir():
-                    return p
+    # DEF-Character リポジトリ（複数対応、先勝ち）
+    from def_kari.characters import _get_repo_paths
+    for _repo in _get_repo_paths():
+        _public = _repo / "public"
+        if not _public.exists():
+            continue
+        for _group in _public.iterdir():
+            if not _group.is_dir():
+                continue
+            p = _group / character_id
+            if p.is_dir():
+                return p
     # フォールバック: DEF自身の data/
     for d in _CHAR_DIRS:
         p = d / character_id
@@ -173,7 +174,10 @@ def generate_icon(character_id: str, req: GenerateCharImageRequest):
     if not backend:
         return {"error": "T2Iバックエンドが未設定です"}
     model = req.model or settings.get(f"t2i_model_{backend}") or None
+    lora_str = build_lora_prompt(char.get("lora", []))
     prompt = f"portrait, face close-up, {appearance_tags}, white background, simple background"
+    if lora_str:
+        prompt = f"{prompt} {lora_str}"
     try:
         from def_kari.t2i.backend import generate_image
         image_path = generate_image(prompt=prompt, backend=backend, model=model, width=512, height=512)
@@ -199,7 +203,10 @@ def generate_standing(character_id: str, req: GenerateCharImageRequest):
     if not backend:
         return {"error": "T2Iバックエンドが未設定です"}
     model = req.model or settings.get(f"t2i_model_{backend}") or None
+    lora_str = build_lora_prompt(char.get("lora", []))
     prompt = f"full body, standing, {appearance_tags}, white background, simple background"
+    if lora_str:
+        prompt = f"{prompt} {lora_str}"
     try:
         from def_kari.t2i.backend import generate_image
         image_path = generate_image(prompt=prompt, backend=backend, model=model, width=832, height=1216)

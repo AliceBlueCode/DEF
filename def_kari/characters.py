@@ -34,7 +34,7 @@ def _load_from_flat_dir(char_dir: Path, profiles: dict) -> None:
 
 def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
     """新形式: repo/public/{GroupName}/{character_id}/profile.json
-    DEF-Character リポジトリ形式。新IDが旧IDより優先される。"""
+    DEF-Character リポジトリ形式。先勝ち（既登録IDは上書きしない）。"""
     public_dir = repo_path / "public"
     if not public_dir.exists():
         return
@@ -43,6 +43,8 @@ def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
             continue
         for char_dir in sorted(group_dir.iterdir()):
             if not char_dir.is_dir():
+                continue
+            if char_dir.name in profiles:
                 continue
             pf = char_dir / "profile.json"
             if not pf.exists():
@@ -56,12 +58,17 @@ def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
                 pass
 
 
+def _get_repo_paths() -> list[Path]:
+    """CHARACTER_REPO_PATH / CHARACTER_REPO_PATHS をセミコロン区切りで複数パス返す。"""
+    raw = os.environ.get("CHARACTER_REPO_PATHS") or os.environ.get("CHARACTER_REPO_PATH", "")
+    return [Path(p.strip()) for p in raw.split(";") if p.strip()]
+
+
 def load_profiles() -> dict[str, dict]:
     profiles = {}
-    # 新形式優先: CHARACTER_REPO_PATH
-    _repo = os.environ.get("CHARACTER_REPO_PATH", "").strip()
-    if _repo:
-        _load_from_character_repo(Path(_repo), profiles)
+    # 新形式優先: CHARACTER_REPO_PATHS (セミコロン区切り複数対応)
+    for _repo in _get_repo_paths():
+        _load_from_character_repo(_repo, profiles)
     # 旧形式: data/public/characters, data/private/characters
     for _cdir in (CHARACTERS_DIR, PRIVATE_CHARACTERS_DIR):
         _load_from_flat_dir(_cdir, profiles)
@@ -138,6 +145,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
     image_name_tags = bp.get("image_name_tags") or vr.get("image_name_tags", "")
 
     dmc = bp.get("default_model_config", {})
+    lora = dmc.get("lora", [])
 
     _rels_raw = raw.get("relationships", {})
     relationships = {
@@ -158,6 +166,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "irodori_speaker_id": dmc.get("irodori_speaker_id"),
         "gemini_tts_voice": dmc.get("gemini_tts_voice"),
         "kokoro_voice": dmc.get("kokoro_voice"),
+        "lora": lora,
         "content_policy": bp.get("content_policy", {}),
         "relationships": relationships,
     }
@@ -178,6 +187,26 @@ _TTS_DEFAULT_SPEAKERS = {
     "kokoro": "jf_alpha",
     "openai_tts": "alloy",
 }
+
+
+def build_lora_prompt(lora: list) -> str:
+    """LoRAリストからプロンプト用文字列を生成する。trigger_tags先頭、<lora:...>末尾。"""
+    trigger_tags: list[str] = []
+    lora_syntax: list[str] = []
+    for item in lora:
+        if not item.get("name"):
+            continue
+        for t in (item.get("trigger_tags") or "").split(","):
+            t = t.strip()
+            if t:
+                trigger_tags.append(t)
+        lora_syntax.append(f"<lora:{item['name']}:{item.get('weight', 0.8)}>")
+    parts = []
+    if trigger_tags:
+        parts.append(", ".join(trigger_tags))
+    if lora_syntax:
+        parts.append(" ".join(lora_syntax))
+    return " ".join(parts)
 
 
 def get_tts_speaker_id(character: dict, tts_backend: str):
