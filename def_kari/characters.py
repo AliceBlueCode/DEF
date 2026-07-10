@@ -24,7 +24,7 @@ def _load_from_flat_dir(char_dir: Path, profiles: dict) -> None:
         if not pf.exists():
             continue
         try:
-            with open(pf, encoding="utf-8") as f:
+            with open(pf, encoding="utf-8-sig") as f:
                 data = json.load(f)
             if data:
                 profiles[entry.name] = next(iter(data.values()))
@@ -48,7 +48,7 @@ def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
             if not pf.exists():
                 continue
             try:
-                with open(pf, encoding="utf-8") as f:
+                with open(pf, encoding="utf-8-sig") as f:
                     data = json.load(f)
                 if data:
                     profiles[char_dir.name] = next(iter(data.values()))
@@ -70,7 +70,7 @@ def load_profiles() -> dict[str, dict]:
         for path in (PROFILES_PATH, POC_PROFILES_PATH):
             if path.exists():
                 try:
-                    with open(path, encoding="utf-8") as f:
+                    with open(path, encoding="utf-8-sig") as f:
                         profiles.update(json.load(f))
                 except (json.JSONDecodeError, OSError):
                     pass
@@ -134,8 +134,8 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
     if speech_style and speech_style not in persona:
         persona = f"{persona}\n口調: {speech_style}"
 
-    appearance_tags = vr.get("appearance_tags") or vr.get("features") or ""
-    image_name_tags = vr.get("image_name_tags", "")
+    appearance_tags = bp.get("appearance_tags") or vr.get("appearance_tags") or vr.get("features") or ""
+    image_name_tags = bp.get("image_name_tags") or vr.get("image_name_tags", "")
 
     dmc = bp.get("default_model_config", {})
 
@@ -151,6 +151,8 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "voicevox_speaker_id": dmc.get("voicevox_speaker_id"),
         "irodori_speaker_id": dmc.get("irodori_speaker_id"),
         "gemini_tts_voice": dmc.get("gemini_tts_voice"),
+        "kokoro_voice": dmc.get("kokoro_voice"),
+        "content_policy": bp.get("content_policy", {}),
     }
 
 
@@ -231,7 +233,7 @@ def save_profile(character_id: str, base_profile: dict) -> None:
     existing = {}
     if char_path.exists():
         try:
-            with open(char_path, encoding="utf-8") as f:
+            with open(char_path, encoding="utf-8-sig") as f:
                 data = json.load(f)
                 existing = data.get(character_id, {})
         except (json.JSONDecodeError, OSError):
