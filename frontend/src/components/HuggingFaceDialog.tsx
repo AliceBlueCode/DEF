@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useT } from '../i18n'
 
 type HfModel = {
   label: string
@@ -12,6 +13,7 @@ type Props = {
 }
 
 export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: Props) {
+  const t = useT()
   const [models, setModels] = useState<HfModel[]>([])
   const [input, setInput] = useState('')
   const [label, setLabel] = useState('')
@@ -42,18 +44,18 @@ export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: P
     })
     const data = await res.json()
     if (data.status === 'already_exists') {
-      showMsg('すでに登録済みです')
+      showMsg(t('dialog.msg.alreadyExists'))
     } else {
       setInput('')
       setLabel('')
-      showMsg('登録しました')
+      showMsg(t('dialog.msg.registered'))
       load()
     }
     setSaving(false)
   }
 
   const remove = async (index: number, modelLabel: string) => {
-    if (!confirm(`「${modelLabel}」を削除しますか？`)) return
+    if (!confirm(t('dialog.confirm.deleteModel', { label: modelLabel }))) return
     await fetch(`/api/settings/hf-models/${index}`, { method: 'DELETE' })
     load()
   }
@@ -62,14 +64,14 @@ export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: P
     <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog apikey-dialog">
         <div className="dialog-header">
-          <h3>🤗 HuggingFace モデル管理</h3>
+          <h3>{t('hf.heading')}</h3>
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="model-profile-body">
-          <div className="profile-section-title">モデル追加</div>
+          <div className="profile-section-title">{t('hf.addSection')}</div>
           <div className="backend-dir-row">
-            <label className="backend-dir-label">モデルID (例: black-forest-labs/FLUX.1-schnell)</label>
+            <label className="backend-dir-label">{t('hf.modelIdLabel')}</label>
             <input
               type="text"
               className="backend-dir-input"
@@ -80,7 +82,7 @@ export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: P
             />
           </div>
           <div className="backend-dir-row">
-            <label className="backend-dir-label">表示名（省略時はモデルIDをそのまま使用）</label>
+            <label className="backend-dir-label">{t('hf.displayName')}</label>
             <input
               type="text"
               className="backend-dir-input"
@@ -91,13 +93,13 @@ export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: P
             />
           </div>
           <div className="backend-dir-actions">
-            <button onClick={add} disabled={!input.trim() || saving}>追加</button>
+            <button onClick={add} disabled={!input.trim() || saving}>{t('dialog.addBtn')}</button>
             {msg && <span className="apikey-msg">{msg}</span>}
           </div>
 
-          <div className="profile-section-title" style={{ marginTop: 16 }}>登録済みモデル</div>
+          <div className="profile-section-title" style={{ marginTop: 16 }}>{t('hf.registeredSection')}</div>
           {models.length === 0
-            ? <div className="profile-empty">登録なし</div>
+            ? <div className="profile-empty">{t('dialog.noEntries')}</div>
             : models.map((m, i) => (
               <div
                 key={i}
@@ -117,14 +119,14 @@ export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: P
                 <button
                   className="delete-btn"
                   onClick={e => { e.stopPropagation(); remove(i, m.label) }}
-                >削除</button>
+                >{t('dialog.deleteBtn')}</button>
               </div>
             ))
           }
         </div>
 
         <div className="dialog-footer">
-          <button onClick={onClose}>閉じる</button>
+          <button onClick={onClose}>{t('dialog.closeBtn')}</button>
         </div>
       </div>
     </div>

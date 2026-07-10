@@ -354,6 +354,89 @@ const ja: Record<string, string> = {
   'sidebar.voteForceApprove': '投票強制賛成',
   'sidebar.vram.locked': '⚡ vram_lock 保持中',
   'sidebar.vram.free': '✅ vram_lock 解放中',
+
+  // Dialogs — shared
+  'dialog.closeBtn': '閉じる',
+  'dialog.saveBtn': '💾 保存',
+  'dialog.addBtn': '追加',
+  'dialog.deleteBtn': '削除',
+  'dialog.registerBtn': '登録',
+  'dialog.status.unset': '未設定',
+  'dialog.msg.saved': '保存しました',
+  'dialog.msg.deleted': '削除しました',
+  'dialog.msg.registered': '登録しました',
+  'dialog.msg.alreadyExists': 'すでに登録済みです',
+  'dialog.noEntries': '登録なし',
+  'dialog.confirm.deleteModel': '「{label}」を削除しますか？',
+
+  // ApiKeyDialog
+  'apikey.heading': '🔑 APIキー管理',
+  'apikey.placeholder.change': '変更する場合は入力...',
+  'apikey.placeholder.new': 'APIキーを入力...',
+  'apikey.list.header': '設定済みキー一覧',
+  'apikey.confirm.delete': '{label} のAPIキーを削除しますか？',
+
+  // BackendDirDialog
+  'backendDir.heading': '📁 バックエンド設定',
+  'backendDir.list.header': 'バックエンド一覧',
+  'backendDir.installDir': 'インストールディレクトリ',
+  'backendDir.msg.saved': '保存しました（再起動後に反映）',
+
+  // CivitaiDialog
+  'civitai.heading': '🎨 Civitai モデル管理',
+  'civitai.addSection': 'モデル追加',
+  'civitai.airLabel': 'AIR (例: urn:air:illustrious:checkpoint:civitai:12345@67890)',
+  'civitai.displayName': '表示名（省略時はAIRをそのまま使用）',
+  'civitai.registeredSection': '登録済みモデル',
+
+  // HuggingFaceDialog
+  'hf.heading': '🤗 HuggingFace モデル管理',
+  'hf.addSection': 'モデル追加',
+  'hf.modelIdLabel': 'モデルID (例: black-forest-labs/FLUX.1-schnell)',
+  'hf.displayName': '表示名（省略時はモデルIDをそのまま使用）',
+  'hf.registeredSection': '登録済みモデル',
+
+  // RatingDialog
+  'rating.heading': '🚫 レーティング設定',
+  'rating.sexual.heading': '性的コンテンツ',
+  'rating.violence.heading': '暴力コンテンツ',
+  'rating.sexual.general': '全年齢',
+  'rating.sexual.general.desc': '性的表現なし',
+  'rating.sexual.sfw': 'R-15相当',
+  'rating.sexual.sfw.desc': '水着・下着等、示唆あり',
+  'rating.sexual.nsfw': 'R-18相当',
+  'rating.sexual.nsfw.desc': '性的表現あり（露骨でない）',
+  'rating.sexual.hentai': '変態 R-20+',
+  'rating.sexual.hentai.desc': '露骨な性的表現',
+  'rating.violence.general': '全年齢',
+  'rating.violence.general.desc': '暴力表現なし',
+  'rating.violence.violence': 'アクション',
+  'rating.violence.violence.desc': '一般的な暴力表現',
+  'rating.violence.gore': 'ホラー',
+  'rating.violence.gore.desc': '流血・グロ表現あり',
+  'rating.violence.extreme': '無制限',
+  'rating.violence.extreme.desc': '過激な暴力表現',
+
+  // ModelProfileDialog
+  'modelProfile.heading': '📋 モデルプロファイル',
+  'modelProfile.section.basic': '基本設定',
+  'modelProfile.label.nativeLang': '主言語',
+  'modelProfile.label.nsfwTolerance': 'NSFW耐性',
+  'modelProfile.label.modelType': 'モデル種別',
+  'modelProfile.label.maxTokens': '最大出力トークン',
+  'modelProfile.quirk.jsonCapable': 'JSON出力可能',
+  'modelProfile.quirk.appendsMeta': 'メタテキスト付与',
+  'modelProfile.quirk.outputsUrl': 'URLを出力する',
+  'modelProfile.quirk.emotionInText': 'テキスト中に感情表現',
+  'modelProfile.section.genParams': '生成パラメータ',
+
+  // T2IModelProfileDialog
+  't2iProfile.heading': '🎨 T2I モデルプロファイル',
+  't2iProfile.section.prompt': 'プロンプト',
+  't2iProfile.label.tagFormat': 'タグ形式',
+  't2iProfile.label.qualityTags': 'クオリティタグ',
+  't2iProfile.label.negative': 'ネガティブ',
+  't2iProfile.section.genParams': '生成パラメータ',
 }
 
 const en: Record<string, string> = {
@@ -704,6 +787,89 @@ const en: Record<string, string> = {
   'sidebar.voteForceApprove': 'Force vote approval',
   'sidebar.vram.locked': '⚡ vram_lock held',
   'sidebar.vram.free': '✅ vram_lock released',
+
+  // Dialogs — shared
+  'dialog.closeBtn': 'Close',
+  'dialog.saveBtn': '💾 Save',
+  'dialog.addBtn': 'Add',
+  'dialog.deleteBtn': 'Delete',
+  'dialog.registerBtn': 'Register',
+  'dialog.status.unset': 'Not set',
+  'dialog.msg.saved': 'Saved',
+  'dialog.msg.deleted': 'Deleted',
+  'dialog.msg.registered': 'Registered',
+  'dialog.msg.alreadyExists': 'Already registered',
+  'dialog.noEntries': 'No entries',
+  'dialog.confirm.deleteModel': 'Delete "{label}"?',
+
+  // ApiKeyDialog
+  'apikey.heading': '🔑 API Key Management',
+  'apikey.placeholder.change': 'Enter to change...',
+  'apikey.placeholder.new': 'Enter API key...',
+  'apikey.list.header': 'Configured Keys',
+  'apikey.confirm.delete': 'Delete API key for {label}?',
+
+  // BackendDirDialog
+  'backendDir.heading': '📁 Backend Settings',
+  'backendDir.list.header': 'Backend List',
+  'backendDir.installDir': 'Install Directory',
+  'backendDir.msg.saved': 'Saved (takes effect after restart)',
+
+  // CivitaiDialog
+  'civitai.heading': '🎨 Civitai Model Management',
+  'civitai.addSection': 'Add Model',
+  'civitai.airLabel': 'AIR (e.g. urn:air:illustrious:checkpoint:civitai:12345@67890)',
+  'civitai.displayName': 'Display name (defaults to AIR if empty)',
+  'civitai.registeredSection': 'Registered Models',
+
+  // HuggingFaceDialog
+  'hf.heading': '🤗 HuggingFace Model Management',
+  'hf.addSection': 'Add Model',
+  'hf.modelIdLabel': 'Model ID (e.g. black-forest-labs/FLUX.1-schnell)',
+  'hf.displayName': 'Display name (defaults to model ID if empty)',
+  'hf.registeredSection': 'Registered Models',
+
+  // RatingDialog
+  'rating.heading': '🚫 Rating Settings',
+  'rating.sexual.heading': 'Sexual Content',
+  'rating.violence.heading': 'Violence Content',
+  'rating.sexual.general': 'All Ages',
+  'rating.sexual.general.desc': 'No sexual content',
+  'rating.sexual.sfw': 'R-15 equivalent',
+  'rating.sexual.sfw.desc': 'Swimwear, underwear, suggestive content',
+  'rating.sexual.nsfw': 'R-18 equivalent',
+  'rating.sexual.nsfw.desc': 'Sexual content (non-explicit)',
+  'rating.sexual.hentai': 'Explicit R-20+',
+  'rating.sexual.hentai.desc': 'Explicit sexual content',
+  'rating.violence.general': 'All Ages',
+  'rating.violence.general.desc': 'No violent content',
+  'rating.violence.violence': 'Action',
+  'rating.violence.violence.desc': 'General violent content',
+  'rating.violence.gore': 'Horror',
+  'rating.violence.gore.desc': 'Blood and gore content',
+  'rating.violence.extreme': 'Unrestricted',
+  'rating.violence.extreme.desc': 'Extreme violent content',
+
+  // ModelProfileDialog
+  'modelProfile.heading': '📋 Model Profile',
+  'modelProfile.section.basic': 'Basic Settings',
+  'modelProfile.label.nativeLang': 'Native Language',
+  'modelProfile.label.nsfwTolerance': 'NSFW Tolerance',
+  'modelProfile.label.modelType': 'Model Type',
+  'modelProfile.label.maxTokens': 'Max Output Tokens',
+  'modelProfile.quirk.jsonCapable': 'JSON capable',
+  'modelProfile.quirk.appendsMeta': 'Appends meta text',
+  'modelProfile.quirk.outputsUrl': 'Outputs URL in prompt',
+  'modelProfile.quirk.emotionInText': 'Emotion expressed in text',
+  'modelProfile.section.genParams': 'Generation Parameters',
+
+  // T2IModelProfileDialog
+  't2iProfile.heading': '🎨 T2I Model Profile',
+  't2iProfile.section.prompt': 'Prompt',
+  't2iProfile.label.tagFormat': 'Tag Format',
+  't2iProfile.label.qualityTags': 'Quality Tags',
+  't2iProfile.label.negative': 'Negative',
+  't2iProfile.section.genParams': 'Generation Parameters',
 }
 
 const dicts: Record<Lang, Record<string, string>> = { ja, en }

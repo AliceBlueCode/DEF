@@ -41,23 +41,25 @@ type T2IDebugInfo = {
   error?: string
 }
 
-function buildSummaryText(debug: DebugInfo, label: string): string {
+type TFn = (key: string, vars?: Record<string, string | number>) => string
+
+function buildSummaryText(debug: DebugInfo, label: string, t: TFn): string {
   const lines: string[] = []
-  lines.push(`=== [${label}] LLM 生応答 ===`)
-  lines.push(debug.raw || '(なし)')
+  lines.push(t('debug.summary.rawResponse', { label }))
+  lines.push(debug.raw || t('debug.none'))
   lines.push('')
-  lines.push('=== 加工後 ===')
+  lines.push(t('debug.summary.processed'))
   lines.push(`text: ${debug.text ?? ''}`)
   lines.push(`emotion: ${debug.emotion ?? ''}`)
   lines.push(`image_prompt_en: ${debug.image_prompt_en ?? ''}`)
   lines.push(`tags: ${JSON.stringify(debug.tags ?? [])}`)
-  lines.push(`判定: ${debug.success ? '✅ 成功' : '❌ 失敗'}`)
+  lines.push(t('debug.summary.verdict', { result: debug.success ? t('debug.status.success') : t('debug.status.failure') }))
   lines.push('')
-  lines.push('=== フォールバックチェーン ===')
+  lines.push(t('debug.summary.fallbackChain'))
   for (const a of debug.attempts ?? []) {
     lines.push(`[${a.stage ?? ''}]`)
     if (a.raw) lines.push(a.raw.slice(0, 500))
-    for (const e of a.errors ?? []) lines.push(`  エラー: ${e}`)
+    for (const e of a.errors ?? []) lines.push(`  ${t('debug.error', { message: e })}`)
     lines.push('')
   }
   return lines.join('\n')
@@ -66,7 +68,7 @@ function buildSummaryText(debug: DebugInfo, label: string): string {
 function DebugSection({ debug, label }: { debug: DebugInfo; label: string }) {
   const t = useT()
   const [copied, setCopied] = useState(false)
-  const summaryText = buildSummaryText(debug, label)
+  const summaryText = buildSummaryText(debug, label, t)
 
   const copy = () => {
     navigator.clipboard.writeText(summaryText).then(() => {
@@ -151,15 +153,15 @@ function T2IDebugSection({ debug }: { debug: T2IDebugInfo }) {
     `size: ${debug.width ?? ''}x${debug.height ?? ''}`,
     `seed: ${debug.seed ?? -1}  steps: ${debug.steps ?? ''}  cfg: ${debug.cfg_scale ?? ''}`,
     '',
-    '=== 入力プロンプト ===',
+    t('debug.summary.inputPrompt'),
     debug.prompt_input ?? '',
     '',
-    `quality_tags: ${debug.quality_tags ?? '(なし)'}`,
+    `quality_tags: ${debug.quality_tags ?? t('debug.none')}`,
     '',
-    '=== 最終プロンプト ===',
+    t('debug.summary.finalPrompt'),
     debug.prompt_final ?? '',
     '',
-    '=== ネガティブプロンプト ===',
+    t('debug.summary.negativePrompt'),
     debug.negative_prompt ?? '',
   ].join('\n')
 

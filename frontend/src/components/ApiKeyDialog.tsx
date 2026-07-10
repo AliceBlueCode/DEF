@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useT } from '../i18n'
 
 type ApiService = {
   id: string
@@ -12,6 +13,7 @@ type Props = {
 }
 
 export default function ApiKeyDialog({ onClose }: Props) {
+  const t = useT()
   const [services, setServices] = useState<ApiService[]>([])
   const [keyStatus, setKeyStatus] = useState<Record<string, boolean>>({})
   const [selectedId, setSelectedId] = useState('')
@@ -51,7 +53,7 @@ export default function ApiKeyDialog({ onClose }: Props) {
       body: JSON.stringify({ api_key: val }),
     })
     setKeyInput('')
-    showMsg('保存しました')
+    showMsg(t('dialog.msg.saved'))
     setSaving(false)
     loadKeyStatus()
   }
@@ -59,9 +61,9 @@ export default function ApiKeyDialog({ onClose }: Props) {
   const deleteKey = async () => {
     if (!selectedId || !keyStatus[selectedId]) return
     const svc = services.find(s => s.id === selectedId)
-    if (!confirm(`${svc?.label ?? selectedId} のAPIキーを削除しますか？`)) return
+    if (!confirm(t('apikey.confirm.delete', { label: svc?.label ?? selectedId }))) return
     await fetch(`/api/settings/api-keys/${selectedId}`, { method: 'DELETE' })
-    showMsg('削除しました')
+    showMsg(t('dialog.msg.deleted'))
     loadKeyStatus()
   }
 
@@ -77,7 +79,7 @@ export default function ApiKeyDialog({ onClose }: Props) {
     <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog apikey-dialog">
         <div className="dialog-header">
-          <h3>🔑 APIキー管理</h3>
+          <h3>{t('apikey.heading')}</h3>
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
 
@@ -94,20 +96,20 @@ export default function ApiKeyDialog({ onClose }: Props) {
           <input
             type="password"
             className="apikey-value-input"
-            placeholder={keyStatus[selectedId] ? '変更する場合は入力...' : 'APIキーを入力...'}
+            placeholder={keyStatus[selectedId] ? t('apikey.placeholder.change') : t('apikey.placeholder.new')}
             value={keyInput}
             onChange={e => setKeyInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && saveKey()}
           />
           <button onClick={saveKey} disabled={!keyInput.trim() || saving}>
-            登録
+            {t('dialog.registerBtn')}
           </button>
           <button
             className="delete-btn"
             onClick={deleteKey}
             disabled={!keyStatus[selectedId]}
           >
-            削除
+            {t('dialog.deleteBtn')}
           </button>
         </div>
 
@@ -120,7 +122,7 @@ export default function ApiKeyDialog({ onClose }: Props) {
           </div>
         )}
 
-        <div className="apikey-list-header">設定済みキー一覧</div>
+        <div className="apikey-list-header">{t('apikey.list.header')}</div>
         <div className="apikey-list">
           {services.map(({ id, label, env_var }) => (
             <div
@@ -132,14 +134,14 @@ export default function ApiKeyDialog({ onClose }: Props) {
               <span className="apikey-list-label">{label}</span>
               {env_var && <span className="apikey-list-envvar">{env_var}</span>}
               <span className={`apikey-list-status ${keyStatus[id] ? 'set' : 'unset'}`}>
-                {keyStatus[id] ? '✓' : '未設定'}
+                {keyStatus[id] ? '✓' : t('dialog.status.unset')}
               </span>
             </div>
           ))}
         </div>
 
         <div className="dialog-footer">
-          <button onClick={onClose}>閉じる</button>
+          <button onClick={onClose}>{t('dialog.closeBtn')}</button>
         </div>
       </div>
     </div>

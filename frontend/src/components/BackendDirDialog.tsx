@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useT } from '../i18n'
 
 type BackendDef = {
   id: string
@@ -13,6 +14,7 @@ type Props = {
 }
 
 export default function BackendDirDialog({ onClose }: Props) {
+  const t = useT()
   const [backends, setBackends] = useState<BackendDef[]>([])
   const [values, setValues] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState('')
@@ -42,7 +44,7 @@ export default function BackendDirDialog({ onClose }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values }),
     })
-    showMsg('保存しました（再起動後に反映）')
+    showMsg(t('backendDir.msg.saved'))
     setSaving(false)
   }
 
@@ -55,11 +57,11 @@ export default function BackendDirDialog({ onClose }: Props) {
     <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog apikey-dialog">
         <div className="dialog-header">
-          <h3>📁 バックエンド設定</h3>
+          <h3>{t('backendDir.heading')}</h3>
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
 
-        <div className="apikey-list-header">バックエンド一覧</div>
+        <div className="apikey-list-header">{t('backendDir.list.header')}</div>
         <div className="apikey-list">
           {backends.map(b => (
             <div
@@ -70,7 +72,7 @@ export default function BackendDirDialog({ onClose }: Props) {
               <span className={`apikey-dot ${hasValue(b) ? 'set' : 'unset'}`}>●</span>
               <span className="apikey-list-label">{b.label}</span>
               <span className={`apikey-list-status ${hasValue(b) ? 'set' : 'unset'}`}>
-                {hasValue(b) ? '✓' : '未設定'}
+                {hasValue(b) ? '✓' : t('dialog.status.unset')}
               </span>
             </div>
           ))}
@@ -80,7 +82,7 @@ export default function BackendDirDialog({ onClose }: Props) {
           <div className="backend-dir-form">
             {selected.dir_env && (
               <div className="backend-dir-row">
-                <label className="backend-dir-label">インストールディレクトリ</label>
+                <label className="backend-dir-label">{t('backendDir.installDir')}</label>
                 <input
                   type="text"
                   className="backend-dir-input"
@@ -103,14 +105,14 @@ export default function BackendDirDialog({ onClose }: Props) {
               </div>
             )}
             <div className="backend-dir-actions">
-              <button onClick={save} disabled={saving}>💾 保存</button>
+              <button onClick={save} disabled={saving}>{t('dialog.saveBtn')}</button>
               {msg && <span className="apikey-msg">{msg}</span>}
             </div>
           </div>
         )}
 
         <div className="dialog-footer">
-          <button onClick={onClose}>閉じる</button>
+          <button onClick={onClose}>{t('dialog.closeBtn')}</button>
         </div>
       </div>
     </div>

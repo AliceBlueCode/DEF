@@ -389,7 +389,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         setMessages(prev => [...prev, {
           character_id: '_keeper',
           character_name: '⚙ System',
-          text: `⏭ ${data.character_name} は発言力不足のためスキップ（+1回復）`,
+          text: t('session.msg.skipSystem', { name: data.character_name }),
           emotion: '', tags: [],
         }])
         if (rem > 0 || autoAdvanceRef.current) {
@@ -494,7 +494,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
   const saveCurrentSession = async () => {
     if (!sessionId) return
-    setSaveStatus('保存中...')
+    setSaveStatus(t('session.save.saving'))
     try {
       const media = messages
         .map((m, i) => ({
@@ -661,7 +661,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setMessages(prev => [...prev, {
       character_id: '_keeper',
       character_name: '🎩 Keeper',
-      text: `⏭ ${data.character_name} のターンをスキップ [発言力+1]`,
+      text: t('session.msg.skipTurn', { name: data.character_name }),
       emotion: '', tags: [],
     }])
   }
@@ -677,7 +677,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setMessages(prev => [...prev, {
       character_id: '_keeper',
       character_name: '🎩 Keeper',
-      text: `👉 次の発言者を ${nameMap[designateTarget] ?? designateTarget} に指名`,
+      text: t('session.msg.designate', { name: nameMap[designateTarget] ?? designateTarget }),
       emotion: '', tags: [],
     }])
     setDesignateTarget('')
@@ -719,7 +719,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setMessages(prev => [...prev, {
         character_id: '_keeper',
         character_name: '⚙ System',
-        text: `⏭ ${humanCharName} はスキップしました（発言力 [+1]）`,
+        text: t('session.msg.humanSkip', { name: humanCharName }),
         emotion: '', tags: [],
       }])
     }

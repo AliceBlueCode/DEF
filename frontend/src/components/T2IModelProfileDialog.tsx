@@ -37,7 +37,7 @@ export default function T2IModelProfileDialog({ model, onClose }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, profile }),
     })
-    showMsg('保存しました')
+    showMsg(t('dialog.msg.saved'))
     setSaving(false)
   }
 
@@ -45,16 +45,16 @@ export default function T2IModelProfileDialog({ model, onClose }: Props) {
     <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog apikey-dialog">
         <div className="dialog-header">
-          <h3>🎨 T2I モデルプロファイル</h3>
+          <h3>{t('t2iProfile.heading')}</h3>
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="model-profile-body">
           <div className="model-profile-model">{model}</div>
 
-          <div className="profile-section-title">プロンプト</div>
+          <div className="profile-section-title">{t('t2iProfile.section.prompt')}</div>
           <div className="profile-row">
-            <label>タグ形式</label>
+            <label>{t('t2iProfile.label.tagFormat')}</label>
             <select value={get('tag_format', 'danbooru') as string} onChange={e => set('tag_format', e.target.value)}>
               {(['danbooru', 'e621', 'natural', 'other'] as const).map(v => (
                 <option key={v} value={v}>{t(`settings.t2iFormat.${v}`)}</option>
@@ -62,7 +62,7 @@ export default function T2IModelProfileDialog({ model, onClose }: Props) {
             </select>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
-            <label>クオリティタグ</label>
+            <label>{t('t2iProfile.label.qualityTags')}</label>
             <textarea
               rows={2}
               style={{ resize: 'vertical', width: '100%', boxSizing: 'border-box' }}
@@ -71,7 +71,7 @@ export default function T2IModelProfileDialog({ model, onClose }: Props) {
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
-            <label>ネガティブ</label>
+            <label>{t('t2iProfile.label.negative')}</label>
             <textarea
               rows={2}
               style={{ resize: 'vertical', width: '100%', boxSizing: 'border-box' }}
@@ -80,7 +80,7 @@ export default function T2IModelProfileDialog({ model, onClose }: Props) {
             />
           </div>
 
-          <div className="profile-section-title">生成パラメータ</div>
+          <div className="profile-section-title">{t('t2iProfile.section.genParams')}</div>
           <div className="profile-row">
             <label>Steps <span className="profile-val">{get('steps', 20) as number}</span></label>
             <input
@@ -99,13 +99,13 @@ export default function T2IModelProfileDialog({ model, onClose }: Props) {
           </div>
 
           <div className="profile-actions">
-            <button onClick={save} disabled={saving}>💾 保存</button>
+            <button onClick={save} disabled={saving}>{t('dialog.saveBtn')}</button>
             {msg && <span className="apikey-msg">{msg}</span>}
           </div>
         </div>
 
         <div className="dialog-footer">
-          <button onClick={onClose}>閉じる</button>
+          <button onClick={onClose}>{t('dialog.closeBtn')}</button>
         </div>
       </div>
     </div>
