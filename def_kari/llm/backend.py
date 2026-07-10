@@ -70,6 +70,6 @@ def _register_external_services():
 
 _register_external_services()
 
-DEFAULT_LLM_BACKEND = os.environ.get("LLM_BACKEND", "textgen_webui")
+DEFAULT_LLM_BACKEND = os.environ.get("LLM_BACKEND", "openai")
 if DEFAULT_LLM_BACKEND not in LLM_BACKENDS:
-    DEFAULT_LLM_BACKEND = "textgen_webui"
+    DEFAULT_LLM_BACKEND = "openai"

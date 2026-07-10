@@ -285,7 +285,8 @@ export default function SettingsTab({
           <option value="voicevox">{t('settings.tts.voicevox')}</option>
           <option value="kokoro">{t('settings.tts.kokoro')}</option>
           <option value="irodori">{t('settings.tts.irodori')}</option>
-          <option value="gemini">Gemini TTS API</option>
+          <option value="gemini_tts">Gemini TTS API</option>
+          <option value="openai_tts">OpenAI TTS API</option>
         </select>
         {ttsLaunchMsg && <div className="tts-launch-msg">{ttsLaunchMsg}</div>}
       </div>

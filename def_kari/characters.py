@@ -168,6 +168,7 @@ _TTS_SPEAKER_FIELDS = {
     "irodori": "irodori_speaker_id",
     "gemini_tts": "gemini_tts_voice",
     "kokoro": "kokoro_voice",
+    "openai_tts": "openai_tts_voice",
 }
 
 _TTS_DEFAULT_SPEAKERS = {
@@ -175,6 +176,7 @@ _TTS_DEFAULT_SPEAKERS = {
     "irodori": "",
     "gemini_tts": "Kore",
     "kokoro": "jf_alpha",
+    "openai_tts": "alloy",
 }
 
 

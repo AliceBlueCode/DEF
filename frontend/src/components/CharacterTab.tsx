@@ -34,6 +34,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
   const [iroRunning, setIroRunning] = useState(false)
   const [selectedVvSpeaker, setSelectedVvSpeaker] = useState<number>(2)
   const [selectedIroVoice, setSelectedIroVoice] = useState('')
+  const [selectedOpenAIVoice, setSelectedOpenAIVoice] = useState('alloy')
   const [savingVoice, setSavingVoice] = useState(false)
   const [voiceSaveMsg, setVoiceSaveMsg] = useState('')
   const [testAudioUrl, setTestAudioUrl] = useState('')
@@ -90,6 +91,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
         const dmc = profile.default_model_config || {}
         setSelectedVvSpeaker(dmc.voicevox_speaker_id ?? 2)
         setSelectedIroVoice(dmc.irodori_speaker_id ?? '')
+        setSelectedOpenAIVoice(dmc.openai_tts_voice ?? 'alloy')
         setImageColor(profile.image_color || '#2a2a2a')
         setRawProfile(JSON.stringify(profile, null, 2))
       })
@@ -238,6 +240,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
 
   const showVv = vvRunning && (ttsBackend === 'voicevox' || !ttsBackend)
   const showIro = iroRunning && ttsBackend === 'irodori'
+  const showOpenAI = ttsBackend === 'openai_tts'
 
   return (
     <div className="tab-content character-tab">
@@ -359,7 +362,7 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
           </div>
           <div className="char-img-edit-col voice-col">
             <p className="char-img-label">{t('char.voice.label')}</p>
-            {!vvRunning && !iroRunning && (
+            {!vvRunning && !iroRunning && !showOpenAI && (
               <p className="char-section-note">{t('char.voice.ttsNotRunning')}</p>
             )}
             {showVv && (
@@ -411,6 +414,38 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
                   <button
                     className="char-btn"
                     onClick={() => testVoice('irodori', selectedIroVoice)}
+                    disabled={testingVoice}
+                  >
+                    {t('char.voice.testBtn')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {showOpenAI && (
+              <div className="voice-settings-block">
+                <label className="voice-label">OpenAI TTS 声</label>
+                <select
+                  value={selectedOpenAIVoice}
+                  onChange={e => setSelectedOpenAIVoice(e.target.value)}
+                >
+                  <option value="alloy">alloy（中性的）</option>
+                  <option value="nova">nova（女性・明るい）</option>
+                  <option value="shimmer">shimmer（女性・柔らか）</option>
+                  <option value="fable">fable（女性・温か）</option>
+                  <option value="echo">echo（男性・低め）</option>
+                  <option value="onyx">onyx（男性・深い）</option>
+                </select>
+                <div className="voice-btn-row">
+                  <button
+                    className="char-btn"
+                    onClick={() => saveVoiceSettings('openai_tts', selectedOpenAIVoice)}
+                    disabled={savingVoice}
+                  >
+                    {t('char.voice.saveBtn')}
+                  </button>
+                  <button
+                    className="char-btn"
+                    onClick={() => testVoice('openai_tts', selectedOpenAIVoice)}
                     disabled={testingVoice}
                   >
                     {t('char.voice.testBtn')}

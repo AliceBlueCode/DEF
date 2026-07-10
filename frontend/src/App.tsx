@@ -44,7 +44,7 @@ function AppInner() {
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
   const [selectedBackend, setSelectedBackend] = useState(() => localStorage.getItem(LS_KEY_LLM) || '')
   const [selectedT2iBackend, setSelectedT2iBackend] = useState(() => localStorage.getItem(LS_KEY_T2I) || '')
-  const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'voicevox')
+  const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'openai_tts')
   const [candidateCount, setCandidateCount] = useState(() => Number(localStorage.getItem(LS_KEY_CANDIDATES)) || 3)
   const [activeTab, setActiveTab] = useState<TabId>('chat')
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0)

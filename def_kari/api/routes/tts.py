@@ -44,7 +44,8 @@ def generate_tts(req: TTSRequest):
             audio_bytes = synthesize(text, speaker_id, req.backend)
         return Response(content=audio_bytes, media_type="audio/wav")
     except Exception as e:
-        return {"error": str(e)}
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/status")
@@ -110,7 +111,8 @@ def test_tts(req: TestTTSRequest):
             audio_bytes = synthesize(req.text, req.speaker_id, req.backend)
         return Response(content=audio_bytes, media_type="audio/wav")
     except Exception as e:
-        return {"error": str(e)}
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/save")

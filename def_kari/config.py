@@ -38,4 +38,4 @@ T2I_BACKEND_LABELS = {
     "civitai": "Civitai (外部API)",
     "huggingface": "Hugging Face (外部API)",
 }
-DEFAULT_T2I_BACKEND = "a1111"
+DEFAULT_T2I_BACKEND = "huggingface"
