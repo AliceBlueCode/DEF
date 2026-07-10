@@ -174,6 +174,142 @@ class TestGetCharacter:
         assert "性別: 女" in char["persona_description"]
         assert "恋愛対象: 男, 女" in char["persona_description"]
 
+    # B-2: kokoro_voice
+    def test_kokoro_voice_returned(self):
+        profile = {
+            "base_profile": {
+                "name": "KokoroChar",
+                "default_model_config": {"kokoro_voice": "jm_kumo"},
+                "visual_references": {},
+            }
+        }
+        char = get_character("kk", profiles={"kk": profile})
+        assert char["kokoro_voice"] == "jm_kumo"
+
+    def test_kokoro_voice_none_when_unset(self):
+        profile = {
+            "base_profile": {
+                "name": "NoVoice",
+                "visual_references": {},
+            }
+        }
+        char = get_character("nv", profiles={"nv": profile})
+        assert char["kokoro_voice"] is None
+
+    # B-3: content_policy
+    def test_content_policy_returned(self):
+        policy = {"is_real_person": False, "allowed_sexual": ["nsfw"]}
+        profile = {
+            "base_profile": {
+                "name": "PolicyChar",
+                "content_policy": policy,
+                "visual_references": {},
+            }
+        }
+        char = get_character("pc", profiles={"pc": profile})
+        assert char["content_policy"] == policy
+
+    def test_content_policy_empty_dict_when_missing(self):
+        profile = {
+            "base_profile": {
+                "name": "NoPolicyChar",
+                "visual_references": {},
+            }
+        }
+        char = get_character("np", profiles={"np": profile})
+        assert char["content_policy"] == {}
+
+    # B-1: appearance_tags priority (bp > vr.appearance_tags > vr.features)
+    def test_appearance_tags_bp_takes_priority_over_vr(self):
+        profile = {
+            "base_profile": {
+                "name": "PrioChar",
+                "appearance_tags": "bp_tag, silver_hair",
+                "visual_references": {"appearance_tags": "vr_tag, blue_hair"},
+            }
+        }
+        char = get_character("pr", profiles={"pr": profile})
+        assert char["appearance_tags"] == "bp_tag, silver_hair"
+
+    def test_appearance_tags_vr_fallback_when_bp_absent(self):
+        profile = {
+            "base_profile": {
+                "name": "VrChar",
+                "visual_references": {"appearance_tags": "vr_tag, red_hair"},
+            }
+        }
+        char = get_character("vr", profiles={"vr": profile})
+        assert char["appearance_tags"] == "vr_tag, red_hair"
+
+    def test_appearance_tags_features_fallback_when_both_absent(self):
+        profile = {
+            "base_profile": {
+                "name": "FeatChar",
+                "visual_references": {"features": "legacy_features_tag"},
+            }
+        }
+        char = get_character("ft", profiles={"ft": profile})
+        assert char["appearance_tags"] == "legacy_features_tag"
+
+    def test_appearance_tags_empty_when_none_set(self):
+        profile = {
+            "base_profile": {
+                "name": "NoTagChar",
+                "visual_references": {},
+            }
+        }
+        char = get_character("nt", profiles={"nt": profile})
+        assert char["appearance_tags"] == ""
+
+
+class TestLoadProfilesBOM:
+    """BOM付きUTF-8ファイルが正常に読み込まれること (B-1修正)。"""
+
+    def test_bom_file_loaded(self, tmp_path):
+        char_dir = tmp_path / "bom_char_001"
+        char_dir.mkdir()
+        profile_data = {
+            "bom_char_001": {
+                "base_profile": {
+                    "name": "BOMChar",
+                    "visual_references": {},
+                }
+            }
+        }
+        json_bytes = json.dumps(profile_data, ensure_ascii=False).encode("utf-8-sig")
+        (char_dir / "profile.json").write_bytes(json_bytes)
+
+        with mock.patch("def_kari.characters.CHARACTERS_DIR", tmp_path), mock.patch(
+            "def_kari.characters.PRIVATE_CHARACTERS_DIR", tmp_path / "nonexistent"
+        ):
+            result = load_profiles()
+
+        assert "bom_char_001" in result
+        assert result["bom_char_001"]["base_profile"]["name"] == "BOMChar"
+
+    def test_non_bom_file_still_loaded(self, tmp_path):
+        char_dir = tmp_path / "nobom_char_001"
+        char_dir.mkdir()
+        profile_data = {
+            "nobom_char_001": {
+                "base_profile": {
+                    "name": "NoBOMChar",
+                    "visual_references": {},
+                }
+            }
+        }
+        (char_dir / "profile.json").write_text(
+            json.dumps(profile_data, ensure_ascii=False), encoding="utf-8"
+        )
+
+        with mock.patch("def_kari.characters.CHARACTERS_DIR", tmp_path), mock.patch(
+            "def_kari.characters.PRIVATE_CHARACTERS_DIR", tmp_path / "nonexistent"
+        ):
+            result = load_profiles()
+
+        assert "nobom_char_001" in result
+        assert result["nobom_char_001"]["base_profile"]["name"] == "NoBOMChar"
+
 
 class TestFindCharacterDir:
     def test_existing_public_character(self):
@@ -1035,3 +1171,105 @@ class TestSessionAutosave:
                     pass
         assert "bad" not in restored
         assert "good_session" in restored
+
+
+# ---------------------------------------------------------------------------
+# 9. F-27: メタ自己認識ディレクティブ
+# ---------------------------------------------------------------------------
+from def_kari.llm.prompts import _build_meta_directive, _META_DIRECTIVE, build_system_prompt
+
+
+class TestBuildMetaDirective:
+    """_build_meta_directive が content_policy の種類と言語に応じて正しい文字列を返すこと。"""
+
+    def test_default_ja(self):
+        result = _build_meta_directive({}, "", "ja")
+        assert result == _META_DIRECTIVE["default"]["ja"]
+
+    def test_default_en(self):
+        result = _build_meta_directive({}, "", "en")
+        assert result == _META_DIRECTIVE["default"]["en"]
+
+    def test_existing_ip_ja(self):
+        result = _build_meta_directive({"is_existing_ip": True}, "", "ja")
+        assert result == _META_DIRECTIVE["existing_ip"]["ja"]
+
+    def test_existing_ip_en(self):
+        result = _build_meta_directive({"is_existing_ip": True}, "", "en")
+        assert result == _META_DIRECTIVE["existing_ip"]["en"]
+
+    def test_real_person_ja_contains_name(self):
+        result = _build_meta_directive({"is_real_person": True}, "坂本龍馬", "ja")
+        assert "坂本龍馬" in result
+        assert "本物" in result  # "あなたは本物の〈{name}〉本人ではありません" から
+
+    def test_real_person_en_contains_name(self):
+        result = _build_meta_directive({"is_real_person": True}, "Ryoma Sakamoto", "en")
+        assert "Ryoma Sakamoto" in result
+        assert "not the actual" in result
+
+    def test_real_person_fallback_name_ja(self):
+        """character_nameが空の場合はデフォルト名を使う。"""
+        result = _build_meta_directive({"is_real_person": True}, "", "ja")
+        assert "この人物" in result
+
+    def test_real_person_priority_over_existing_ip(self):
+        """is_real_person が is_existing_ip より優先されること。"""
+        result = _build_meta_directive({"is_real_person": True, "is_existing_ip": True}, "TestName", "ja")
+        assert "TestName" in result  # real_person ブランチを通る
+
+    def test_unknown_lang_falls_back_to_en(self):
+        result = _build_meta_directive({}, "", "zh")
+        assert result == _META_DIRECTIVE["default"]["en"]
+
+    def test_none_content_policy_handled(self):
+        """content_policy=None は空dictとして扱われること (呼び出し側でor{}済み)。"""
+        result = _build_meta_directive({}, "Name", "ja")
+        assert result == _META_DIRECTIVE["default"]["ja"]
+
+
+class TestBuildSystemPromptDirectivePlacement:
+    """build_system_prompt でメタ自己認識ディレクティブが identity_prompt より前に来ること。"""
+
+    def test_directive_precedes_persona(self):
+        prompt = build_system_prompt(
+            persona_description="私はルナです。",
+            content_policy={},
+            character_name="ルナ",
+            user_language="ja",
+        )
+        directive_pos = prompt.find(_META_DIRECTIVE["default"]["ja"])
+        persona_pos = prompt.find("私はルナです。")
+        assert directive_pos != -1, "directive が prompt に含まれること"
+        assert persona_pos != -1, "persona が prompt に含まれること"
+        assert directive_pos < persona_pos, "directive は persona より前に現れること"
+
+    def test_real_person_directive_in_prompt(self):
+        prompt = build_system_prompt(
+            persona_description="あなたは偉大な哲学者です。",
+            content_policy={"is_real_person": True},
+            character_name="ソクラテス",
+            user_language="ja",
+        )
+        assert "ソクラテス" in prompt
+        assert "本物" in prompt
+        assert prompt.index("ソクラテス") < prompt.index("哲学者")
+
+    def test_existing_ip_directive_in_prompt_en(self):
+        prompt = build_system_prompt(
+            persona_description="You are a wizard.",
+            content_policy={"is_existing_ip": True},
+            character_name="Merlin",
+            user_language="en",
+        )
+        assert "interpretation model" in prompt
+        assert prompt.index("interpretation model") < prompt.index("wizard")
+
+    def test_default_content_policy_none_uses_default_directive(self):
+        """content_policy=None でもデフォルトディレクティブが入ること。"""
+        prompt = build_system_prompt(
+            persona_description="テストキャラ",
+            content_policy=None,
+            user_language="ja",
+        )
+        assert _META_DIRECTIVE["default"]["ja"] in prompt
