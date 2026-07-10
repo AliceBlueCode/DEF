@@ -26,7 +26,7 @@
 | F-16 | ゾーニング（公開/プライベート分離） | ✅ 実装済み | data/public + data/private |
 | F-17 | 生成アセット管理 | ✅ 実装済み | Git管理対象外に隔離 |
 | F-18 | session_state軽量化 | ✅ 実装済み | MAX_VISIBLE_TURNS=3、trim_session、遅延読み込み |
-| F-23 | ターン再生成・Undo/Redo | ✅ 実装済み | 全体/音声のみ/画像のみ再生成、保持件数設定可能 |
+| F-23 | ターン再生成・Undo/Redo | ✅ 実装済み | 全体/音声のみ/画像のみ再生成、保持件数設定可能。ノベルモードはブラウザ標準Ctrl+Zで代替するため非対応 |
 | F-24 | エピソードモード基盤 | ✅ 実装済み | 作品管理、プロット設定、AI候補生成、`Chapter N + Scene M` ラベル |
 | F-24 | エピソードモード 3モダリティ | ✅ 実装済み | TTS読み上げ（Scene単位）、T2I挿絵（LLM→画像プロンプト→生成） |
 | F-24 | プロットファイル書き戻し | ✅ 実装済み | `PUT /api/novel/plots/{filename}` でGit管理プロットを直接保存 |
@@ -35,7 +35,7 @@
 | F-13-1 | VRAM排他制御（ノベルタブ） | ✅ 実装済み | `/api/novel/generate` と `/api/novel/t2i` が vram_lock を取得・解放 |
 | F-25 | origin_type・公開ポリシー | ✅ 実装済み | original/reconstructed_persona/personification/derivative |
 | F-26 | キャラクター切替時の自動挨拶 | ✅ 実装済み | ON/OFF設定可能 |
-| F-27 | メタ自己認識ディレクティブ | ✅ 実装済み | システムプロンプトに組み込み |
+| F-27 | メタ自己認識ディレクティブ | ✅ 実装済み | content_policyベース（default/existing_ip/real_person 3バリアント）、システムプロンプト先頭強制挿入 |
 | —— | キャラクターイメージカラー | ✅ 実装済み | `base_profile.image_color` フィールド、CharacterTab カラーピッカー、ChatTab AIバブルへの適用 |
 | —— | サイドバー折り畳み | ✅ 実装済み | `Sidebar.tsx` collapse state、◀/▶ トグルボタン |
 | —— | 思考タブ（ThoughtTab） | ✅ 実装済み | フリーテキストでのAI思考実験、`GET/POST /api/thought/` |
@@ -87,7 +87,7 @@
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| ユニットテスト | 115件 | 全パス |
+| ユニットテスト | 186件 | 全パス |
 
 ---
 

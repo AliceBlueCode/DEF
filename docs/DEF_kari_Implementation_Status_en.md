@@ -26,7 +26,7 @@ This document records the implementation status of feature specifications (F-num
 | F-16 | Zoning (Public/Private Separation) | ✅ Done | data/public + data/private |
 | F-17 | Generated Asset Management | ✅ Done | Isolated from Git tracking |
 | F-18 | session_state Optimization | ✅ Done | MAX_VISIBLE_TURNS=3, trim_session, lazy loading |
-| F-23 | Turn Regeneration & Undo/Redo | ✅ Done | Full/voice-only/image-only regen, configurable history |
+| F-23 | Turn Regeneration & Undo/Redo | ✅ Done | Full/voice-only/image-only regen, configurable history. Novel mode uses browser-native Ctrl+Z and does not implement Undo/Redo |
 | F-24 | Episode Mode Foundation | ✅ Done | Work management, plot settings, AI candidates, `Chapter N + Scene M` labels |
 | F-24 | Episode Mode 3-Modality | ✅ Done | TTS narration (per-Scene), T2I illustration (LLM → prompt → generate) |
 | F-24 | Plot file write-back | ✅ Done | `PUT /api/novel/plots/{filename}` — saves directly to source file for Git-managed plots |
@@ -35,7 +35,7 @@ This document records the implementation status of feature specifications (F-num
 | F-13-1 | VRAM lock — Novel tab | ✅ Done | `/api/novel/generate` and `/api/novel/t2i` acquire/release the global vram_lock |
 | F-25 | origin_type & Publication Policy | ✅ Done | original/reconstructed_persona/personification/derivative |
 | F-26 | Character Switch Auto-Greeting | ✅ Done | ON/OFF configurable |
-| F-27 | Meta Self-Awareness Directive | ✅ Done | Embedded in system prompt |
+| F-27 | Meta Self-Awareness Directive | ✅ Done | content_policy-based (3 variants: default/existing_ip/real_person), injected at the top of the system prompt |
 | —— | Character image color | ✅ Done | `base_profile.image_color` field; color picker in CharacterTab; applied to AI bubbles in ChatTab |
 | —— | Sidebar collapse | ✅ Done | `Sidebar.tsx` collapsed state, ◀/▶ toggle button |
 | —— | Thought Tab | ✅ Done | Free-text AI thought experiments; `GET/POST /api/thought/` |
@@ -87,7 +87,7 @@ This document records the implementation status of feature specifications (F-num
 
 | Type | Count | Result |
 |---|---|---|
-| Unit Tests | 115 | All passing |
+| Unit Tests | 186 | All passing |
 
 ---
 
