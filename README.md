@@ -118,7 +118,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env   # バックエンドの設定・APIキー等を記入
 ```
 
-起動は `start_dev.bat` をダブルクリック、または2つのターミナルで：
+起動は `start_def.bat` をダブルクリック、または2つのターミナルで：
 
 ```bash
 # ターミナル1: バックエンド
