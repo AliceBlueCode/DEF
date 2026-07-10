@@ -49,26 +49,13 @@ def _load_char_dir(char_dir: Path, profiles: dict) -> None:
 
 
 def _load_from_character_repo(repo_path: Path, profiles: dict) -> None:
-    """新形式: repo/public/{Group}/{character_id}/profile.json
-    または repo/public/{Group}/{SubGroup}/{character_id}/profile.json（3階層）
-    DEF-Character リポジトリ形式。先勝ち（既登録IDは上書きしない）。"""
+    """新形式: repo/public/ 以下を再帰的に走査し profile.json を持つディレクトリをキャラクターとして読み込む。
+    階層数不問。先勝ち（既登録IDは上書きしない）。"""
     public_dir = repo_path / "public"
     if not public_dir.exists():
         return
-    for group_dir in sorted(public_dir.iterdir()):
-        if not group_dir.is_dir():
-            continue
-        for entry in sorted(group_dir.iterdir()):
-            if not entry.is_dir():
-                continue
-            if (entry / "profile.json").exists():
-                # 2階層: public/{Group}/{character_id}/
-                _load_char_dir(entry, profiles)
-            else:
-                # 3階層: public/{Group}/{SubGroup}/{character_id}/
-                for char_dir in sorted(entry.iterdir()):
-                    if char_dir.is_dir():
-                        _load_char_dir(char_dir, profiles)
+    for pf in sorted(public_dir.rglob("profile.json")):
+        _load_char_dir(pf.parent, profiles)
 
 
 def _get_repo_paths() -> list[Path]:
