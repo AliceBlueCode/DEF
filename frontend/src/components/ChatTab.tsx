@@ -51,6 +51,8 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
   const ttsEnabledRef = useRef(true)
   const [, setTtsHumanEnabled] = useState(false)
   const ttsHumanEnabledRef = useRef(false)
+  const [t2iTriggerMode, setT2iTriggerMode] = useState('end')
+  const t2iTriggerModeRef = useRef('end')
   const [undoMax, setUndoMax] = useState(5)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -145,6 +147,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
         if (s.allowed_rating_violence) setAllowedViolence(s.allowed_rating_violence)
         if (s.safety_level) setSafetyLevel(s.safety_level === 'warn' ? 'off' : s.safety_level)
         if ('character_greeting' in s) characterGreetingRef.current = !!s.character_greeting
+        if (s.t2i_trigger_mode) { setT2iTriggerMode(s.t2i_trigger_mode); t2iTriggerModeRef.current = s.t2i_trigger_mode }
       })
       .catch(() => {})
 
@@ -154,6 +157,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       if (key === 'tts_human_enabled') { setTtsHumanEnabled(!!value); ttsHumanEnabledRef.current = !!value }
       if (key === 'character_greeting') characterGreetingRef.current = !!value
       if (key === 'safety_level') setSafetyLevel(value === 'warn' ? 'off' : value)
+      if (key === 't2i_trigger_mode') { setT2iTriggerMode(value as string); t2iTriggerModeRef.current = value as string }
     }
     window.addEventListener('def-settings-change', onSettingsChange)
     return () => window.removeEventListener('def-settings-change', onSettingsChange)
@@ -212,7 +216,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
             setMessages(greetMsgs)
             saveHistory(selectedChar, greetMsgs)
             if (ttsEnabledRef.current && data.text) playTTS(data.text, 1)
-            if (data.image_prompt_en && t2iBackend) generateImage(data.image_prompt_en, 1)
+            if (data.image_prompt_en && t2iBackend && t2iTriggerModeRef.current !== 'manual') generateImage(data.image_prompt_en, 1)
           })
           .catch(() => {})
           .finally(() => setLoading(false))
@@ -333,6 +337,18 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
     setLoading(true)
     if (ttsHumanEnabledRef.current) playUserTTS(input, userIdx)
 
+    // start モード: 送信タイミングで前サイクルのT2Iを生成
+    if (t2iTriggerModeRef.current === 'start' && t2iBackend) {
+      const allMsgs = messagesRef.current
+      for (let i = allMsgs.length - 1; i >= 0; i--) {
+        const m = allMsgs[i]
+        if (m.role === 'assistant' && m.imagePromptEn && !m.imageUrl && m.imageStatus !== 'generating') {
+          generateImage(m.imagePromptEn, i)
+          break
+        }
+      }
+    }
+
     try {
       const res = await fetch('/api/chat/', {
         method: 'POST',
@@ -359,7 +375,12 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       setMessages(finalMsgs)
       saveHistory(selectedChar, finalMsgs)
       if (ttsEnabled && data.text) playTTS(data.text, assistantIdx)
-      if (data.image_prompt_en && t2iBackend) generateImage(data.image_prompt_en, assistantIdx)
+      // end/interval: レスポンス末に生成。start: 次回送信時に生成。manual: 自動生成しない
+      // interval は専用インターバル設定が未実装のため end と同挙動
+      if (t2iBackend && data.image_prompt_en) {
+        const mode = t2iTriggerModeRef.current
+        if (mode === 'end' || mode === 'interval') generateImage(data.image_prompt_en, assistantIdx)
+      }
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])
     } finally {
@@ -462,7 +483,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       setMessages(finalMsgs)
       saveHistory(selectedChar, finalMsgs)
       if (ttsEnabled && data.text) playTTS(data.text, assistantIdx)
-      if (data.image_prompt_en && t2iBackend) generateImage(data.image_prompt_en, assistantIdx)
+      if (t2iBackend && data.image_prompt_en && t2iTriggerModeRef.current !== 'manual') generateImage(data.image_prompt_en, assistantIdx)
     } catch (e) {
       setMessages(prev => prev.map((m, i) =>
         i === assistantIdx
