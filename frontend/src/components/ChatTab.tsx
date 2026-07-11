@@ -171,6 +171,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
     prevCharIdRef.current = selectedChar
     const wasFirstMount = isFirstMount.current
     isFirstMount.current = false
+    if (selectedChar === prevCharId && !wasFirstMount) return
     setMessages([])
     setHiddenHistory([])
     if (!selectedChar) return
