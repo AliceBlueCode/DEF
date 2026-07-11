@@ -1,0 +1,30 @@
+{
+  "deliberation_prompt": {
+    "ja": "今、投票が提案されています: {vote_label}{detail_text}\nあなたはこれについてどう思いますか？賛成・反対どちらに投票するつもりですか？\nあなたのキャラクターとして、率直に意見を述べてください。",
+    "en": "A vote has been proposed: {vote_label}{detail_text}\nWhat do you think about this? Will you vote for or against?\nAs your character, please express your honest opinion."
+  },
+  "judge_prompt": {
+    "ja": "以下の発言から、この人物が投票に賛成しているか反対しているかを判断してください。\n発言: {dialogue}\n投票内容: {vote_label}{detail_text}\n「{yes_word}」か「{no_word}」の一言だけで答えてください。",
+    "en": "Based on the following statement, determine if this person is for or against the vote.\nStatement: {dialogue}\nVote: {vote_label}{detail_text}\nAnswer with only \"{yes_word}\" or \"{no_word}\"."
+  },
+  "keeper_judge_prompt": {
+    "ja": "投票が提案されています: {vote_label}{detail_text}\n参加者の弁明:\n{all_texts}\nあなたはキーパー（GM）として、この投票に賛成しますか？\n「{yes_word}」か「{no_word}」の一言だけで答えてください。",
+    "en": "A vote has been proposed: {vote_label}{detail_text}\nParticipant statements:\n{all_texts}\nAs the Keeper (GM), do you approve this vote?\nAnswer with only \"{yes_word}\" or \"{no_word}\"."
+  },
+  "keeper_system": {
+    "ja": "あなたはセッションのキーパー（GM・司会者）です。",
+    "en": "You are the Keeper (GM/facilitator) of this session."
+  },
+  "yes_word": { "ja": "賛成", "en": "yes" },
+  "no_word":  { "ja": "反対", "en": "no" },
+  "vote_for":     { "ja": "賛成", "en": "For" },
+  "vote_against": { "ja": "反対", "en": "Against" },
+  "keeper_label": { "ja": "キーパー", "en": "Keeper" },
+  "no_deliberation": { "ja": "(弁明なし)", "en": "(no statement)" },
+  "vote_result": {
+    "ja": "🗳 投票結果: {vote_label}{detail_text} — 賛成{yes_count}/反対{no_count}（{vote_detail_str}） → {outcome}",
+    "en": "🗳 Vote Result: {vote_label}{detail_text} — For {yes_count} / Against {no_count} ({vote_detail_str}) → {outcome}"
+  },
+  "vote_passed":   { "ja": "✅ 可決", "en": "✅ Passed" },
+  "vote_rejected": { "ja": "❌ 否決", "en": "❌ Rejected" }
+}

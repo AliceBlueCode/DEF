@@ -22,6 +22,25 @@ from def_kari.t2i.backend import generate_image as _generate_t2i_image
 
 router = APIRouter()
 
+_BASE_DATA = Path(__file__).parent.parent.parent.parent / "data"
+_SESSION_PROMPTS_PATH = _BASE_DATA / "session_prompts.json"
+_session_prompts_cache: dict = {}
+
+def _load_session_prompts() -> dict:
+    global _session_prompts_cache
+    if _session_prompts_cache:
+        return _session_prompts_cache
+    try:
+        with open(_SESSION_PROMPTS_PATH, encoding="utf-8") as f:
+            _session_prompts_cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return _session_prompts_cache
+
+def _sp(key: str, lang: str) -> str:
+    """session_prompts.json から言語別テキストを取得。"""
+    entry = _load_session_prompts().get(key, {})
+    return entry.get(lang) or entry.get("ja") or ""
 
 
 _LANG_LABELS = {
@@ -910,10 +929,8 @@ def vote_deliberate(session_id: str, req: VoteRequest):
             bid = DEFAULT_LLM_BACKEND
         model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
 
-        deliberation_prompt = (
-            f"今、投票が提案されています: {vote_label}{detail_text}\n"
-            f"あなたはこれについてどう思いますか？賛成・反対どちらに投票するつもりですか？"
-            f"あなたのキャラクターとして、率直に意見を述べてください。"
+        deliberation_prompt = _sp("deliberation_prompt", _v_lang).format(
+            vote_label=vote_label, detail_text=detail_text
         )
 
         _v_prev_emotion = next(
@@ -960,9 +977,9 @@ def vote_deliberate(session_id: str, req: VoteRequest):
                 dialogue = parsed.get("dialogue", "")
                 emotion = parsed.get("emotion", "neutral")
             if not dialogue:
-                dialogue = "(弁明なし)"
+                dialogue = _sp("no_deliberation", _v_lang) or "(弁明なし)"
         except Exception:
-            dialogue = "(弁明なし)"
+            dialogue = _sp("no_deliberation", _v_lang) or "(弁明なし)"
             emotion = "neutral"
 
         session["history"].append({
@@ -1013,6 +1030,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
     _force_approve = bool(_load_settings().get("vote_force_approve", False))
 
     proposer_id = pending.get("proposer_id", "")
+    _v_lang = _load_settings().get("user_language", "ja") or "ja"
 
     results: dict[str, bool] = {}
     for char_id in initiative:
@@ -1033,11 +1051,9 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
             results[char_id] = True
             continue
 
-        judge_prompt = (
-            f"以下の発言から、この人物が投票に賛成しているか反対しているかを判断してください。\n"
-            f"発言: {dialogue}\n"
-            f"投票内容: {vote_label}{detail_text}\n"
-            f"「賛成」か「反対」の一言だけで答えてください。"
+        judge_prompt = _sp("judge_prompt", _v_lang).format(
+            dialogue=dialogue, vote_label=vote_label, detail_text=detail_text,
+            yes_word=_sp("yes_word", _v_lang), no_word=_sp("no_word", _v_lang),
         )
         try:
             chat_fn = LLM_BACKENDS[bid]["chat"]
@@ -1050,7 +1066,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
                 reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 32})
             finally:
                 _vram_lock.release()
-            results[char_id] = "賛成" in reply or "yes" in reply.lower()
+            results[char_id] = _sp("yes_word", _v_lang) in reply or "yes" in reply.lower()
         except Exception:
             results[char_id] = True
 
@@ -1066,16 +1082,14 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
                 for cid, text in deliberation_texts.items()
                 if text
             )
-            keeper_judge_prompt = (
-                f"投票が提案されています: {vote_label}{detail_text}\n"
-                f"参加者の弁明:\n{all_texts}\n"
-                f"あなたはキーパー（GM）として、この投票に賛成しますか？"
-                f"「賛成」か「反対」の一言だけで答えてください。"
+            keeper_judge_prompt = _sp("keeper_judge_prompt", _v_lang).format(
+                vote_label=vote_label, detail_text=detail_text, all_texts=all_texts,
+                yes_word=_sp("yes_word", _v_lang), no_word=_sp("no_word", _v_lang),
             )
             try:
                 chat_fn = LLM_BACKENDS[bid]["chat"]
                 keeper_msgs = [
-                    {"role": "system", "content": "あなたはセッションのキーパー（GM・司会者）です。"},
+                    {"role": "system", "content": _sp("keeper_system", _v_lang) or "あなたはセッションのキーパー（GM・司会者）です。"},
                     {"role": "user", "content": keeper_judge_prompt},
                 ]
                 _vram_lock.acquire()
@@ -1083,7 +1097,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
                     reply = chat_fn(keeper_msgs, model, json_mode=False, options={"num_predict": 32})
                 finally:
                     _vram_lock.release()
-                results["_keeper"] = "賛成" in reply or "yes" in reply.lower()
+                results["_keeper"] = _sp("yes_word", _v_lang) in reply or "yes" in reply.lower()
             except Exception:
                 results["_keeper"] = True
     else:
@@ -1116,38 +1130,24 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         elif len(new_init) == 0:
             session["turn"] = 0
 
-    from def_kari.settings import load_settings as _load_settings_vc
-    _vclang = _load_settings_vc().get("user_language", "ja")
-    if _vclang == "en":
-        human_vote_label = "For" if req.keeper_vote else "Against"
-        keeper_llm_label = "For" if results.get("_keeper") else "Against"
-        if proposer_id:
-            vote_detail_str = (
-                f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
-                f"Keeper: {keeper_llm_label}"
-            )
-        else:
-            vote_detail_str = f"Keeper: {human_vote_label}"
-        result_text = (
-            f"🗳 Vote Result: {vote_label}{detail_text} — "
-            f"For {yes_count} / Against {no_count}（{vote_detail_str}）"
-            f" → {'✅ Passed' if passed else '❌ Rejected'}"
+    vote_for_label = _sp("vote_for", _v_lang) or "賛成"
+    vote_against_label = _sp("vote_against", _v_lang) or "反対"
+    keeper_label = _sp("keeper_label", _v_lang) or "キーパー"
+    human_vote_label = vote_for_label if req.keeper_vote else vote_against_label
+    keeper_llm_label = vote_for_label if results.get("_keeper") else vote_against_label
+    if proposer_id:
+        vote_detail_str = (
+            f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
+            f"{keeper_label}: {keeper_llm_label}"
         )
     else:
-        human_vote_label = "賛成" if req.keeper_vote else "反対"
-        keeper_llm_label = "賛成" if results.get("_keeper") else "反対"
-        if proposer_id:
-            vote_detail_str = (
-                f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
-                f"キーパー: {keeper_llm_label}"
-            )
-        else:
-            vote_detail_str = f"キーパー: {human_vote_label}"
-        result_text = (
-            f"🗳 投票結果: {vote_label}{detail_text} — "
-            f"賛成{yes_count}/反対{no_count}（{vote_detail_str}）"
-            f" → {'✅ 可決' if passed else '❌ 否決'}"
-        )
+        vote_detail_str = f"{keeper_label}: {human_vote_label}"
+    outcome = _sp("vote_passed" if passed else "vote_rejected", _v_lang) or ("✅ 可決" if passed else "❌ 否決")
+    result_text = (_sp("vote_result", _v_lang) or "🗳 {vote_label}{detail_text} — {yes_count}/{no_count}（{vote_detail_str}） → {outcome}").format(
+        vote_label=vote_label, detail_text=detail_text,
+        yes_count=yes_count, no_count=no_count,
+        vote_detail_str=vote_detail_str, outcome=outcome,
+    )
     session["history"].append({
         "role": "user",
         "content": result_text,
@@ -1162,7 +1162,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
     else:
         _autosave(session_id)
     return {
-        "results": {name_map.get(k, k) if k != "_keeper" else "キーパー": v for k, v in results.items()},
+        "results": {name_map.get(k, k) if k != "_keeper" else keeper_label: v for k, v in results.items()},
         "yes_count": yes_count,
         "no_count": no_count,
         "passed": passed,
