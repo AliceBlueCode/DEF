@@ -53,10 +53,10 @@ A través del diálogo uno a uno, acumulas tiempo compartido con tu personaje.
 Disfruta de discusiones, debates, juego de roles e improvisación entre múltiples personajes.
 Puedes ser espectador o unirte como participante en la conversación.
 
-### TRPG — Evoluciona Session en un juego
+### Novel — Escribe historias con tus personajes
 
-GMs, personajes de jugador y NPCs comparten la misma Persistencia de personajes, permitiendo campañas a largo plazo.
-Las relaciones construidas en aventuras pasadas se conectan directamente a la siguiente historia.
+Combina narración, diálogo e ilustraciones para apoyar la escritura de novelas.
+La generación de candidatos por IA, la narración TTS y las ilustraciones T2I funcionan en sincronía — tus personajes continúan existiendo como protagonistas de la historia.
 
 -----
 
@@ -93,7 +93,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 - **Integración de 3 modalidades:** Texto, voz e imagen funcionan juntos como una experiencia creativa continua
 - **3 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), Novela (escritura de novelas + generación de candidatos por IA)
 - **Persistencia de personajes:** El historial de diálogo, emociones y assets generados se persisten — retoma donde lo dejaste tras reiniciar
-- **Patrón Adaptador:** Cambia libremente entre 4 backends de LLM, 4 de TTS y 4 de T2I
+- **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 5 de TTS y 4 de T2I
 - **Zonificación:** Separación clara entre datos públicos y privados. Los assets generados quedan excluidos de Git
 
 -----
@@ -103,7 +103,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 | Capa | Local (GPU) | API externa (sin GPU) |
 |---|---|---|
 | **LLM (texto)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
-| **TTS (voz)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API |
+| **TTS (voz)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
 | **T2I (imagen)** | Automatic1111 / ComfyUI | Civitai API / Hugging Face API |
 
 -----

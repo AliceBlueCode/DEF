@@ -1,8 +1,8 @@
-# DEF(kari) User Guide v1.0.0
+# DEF(kari) User Guide v2.1.1
 
 ## 1. Starting the Application
 
-Double-click `start_dev.bat`, or run the two commands below in separate terminals:
+Double-click `start_def.bat`, or run the two commands below in separate terminals:
 
 ```bash
 # Terminal 1: FastAPI backend
@@ -35,7 +35,7 @@ Open your browser at `http://localhost:3000`.
 | 👤 Character | View and edit character profiles |
 | 💬 Chat | 1-on-1 dialogue |
 | 🎭 Session | Multi-AI + human table |
-| 📖 Episode | Novel writing + AI candidate generation |
+| 📖 Novel | Novel writing + AI candidate generation |
 | 🤔 Thought | Free-text AI thought experiments |
 | ⚙ Settings | Backends, ratings, and configurations |
 | 🐛 Debug | Raw LLM responses and fallback chain inspection |
@@ -77,10 +77,10 @@ Open your browser at `http://localhost:3000`.
 
 ---
 
-## 6. Episode Tab
+## 6. Novel Tab
 
 ### Basic Usage
-1. Select "+ New" and enter a title
+1. Select "+ New Work" and enter a title
 2. Write in the body text area
 3. Press "✍ Generate" to generate AI candidates (based on configured count)
 4. Compare candidates using tabs in the right column
@@ -88,9 +88,9 @@ Open your browser at `http://localhost:3000`.
 6. Press "💾 Save" to save
 
 ### Plot Settings
-- Press "📝 Plot" button to open the dialog
+- Press the "Edit Plot" button to open the dialog
 - 📂 to load a plot file, or edit directly
-- "💾 Save" saves to the episode JSON
+- "💾 Save" saves to the novel JSON
 - "✅ Apply" saves + applies as the AI system prompt
 
 ### Chapter/Scene
@@ -105,7 +105,7 @@ Open your browser at `http://localhost:3000`.
 - **⚙ T2I** — Switch T2I backend and model
 
 ### LLM Backend Switching
-- Use the dropdown next to the Plot button to select an episode-specific LLM backend
+- Use the dropdown next to the Plot button to select a novel-specific LLM backend
 
 ---
 
@@ -113,13 +113,14 @@ Open your browser at `http://localhost:3000`.
 
 ### Sections
 - **Language** — UI display language (Japanese, English, Chinese, Korean, Spanish, French, German)
-- **LLM Backend** — TGW / OpenAI / Gemini / Anthropic
-- **TTS Backend** — VOICEVOX / Kokoro / Irodori / Gemini TTS
+- **LLM Backend** — TGW / Ollama / OpenAI / Gemini / Anthropic
+- **TTS Backend** — VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS
 - **T2I Backend** — A1111 / ComfyUI / HuggingFace / Civitai
+- **Backend** — Backend status polling interval (`status_poll_sec`, default 5s)
 - **C2 Method** — Image prompt translation provider
-- **Chat Mode** — Greeting ON/OFF, undo history count
-- **Session Mode** — Actions per turn, repeat penalty, illustration size
-- **Episode Mode** — Candidate count, illustration size
+- **Chat Settings** — Greeting ON/OFF, undo history count
+- **Session Settings** — Actions per turn, repeat penalty, illustration size, T2I prompt mode (current/passthrough/dedicated)
+- **Novel Settings** — Candidate count, illustration size
 - **API Key Management** — Encrypted storage for external API keys
 
 ### Saving
@@ -143,30 +144,61 @@ Always press "💾 Save" after changing settings. Press F5 (browser reload) to a
 ```
 data/
 ├── public/              # Public data (git-tracked)
-│   ├── characters/      # Public characters
+│   ├── characters/      # Public characters (legacy format)
 │   ├── action_directives/
 │   ├── session_rules/
-│   └── episode_prompts/
+│   └── episode_prompts/ # Novel plot files (public)
 ├── private/             # Private data (git-excluded)
-│   ├── characters/      # NSFW characters
-│   ├── episodes/        # Episode works
-│   ├── episode_prompts/ # Private plots
+│   ├── characters/      # Private characters (legacy format)
+│   ├── novels/          # Novel mode work data
+│   ├── episode_prompts/ # Novel plot files (NSFW)
 │   ├── session_history/
 │   ├── session_rules/
 │   ├── action_directives/
 │   └── thoughts/
+├── sessions/            # Session history
+├── session_prompts.json # Session LLM instruction templates
 └── llm_profiles/        # LLM model profiles
+```
+
+### DEF-Character Repository (Recommended)
+
+To manage character data separately from the DEF application, set up a `DEF-Character` repository and configure it in `.env`:
+
+```
+CHARACTER_REPO_PATH=C:\Users\yourname\DEF-Character
+```
+
+DEF-Character directory structure:
+
+```
+DEF-Character/
+└── public/
+    └── <GroupName>/
+        ├── index.json
+        └── <CharacterName_YYYYMMDD>/
+            ├── profile.json
+            ├── icon.png
+            └── standing.png
 ```
 
 ---
 
 ## 10. Adding Characters
 
-1. Create a new directory in `data/public/characters/` (or `data/private/characters/`)
-2. The directory name becomes the character ID (e.g., `character_mychar_001`)
+### Using the DEF-Character Repository (Recommended)
+
+1. Create a character directory under `DEF-Character/public/<GroupName>/`
+2. Use the format `CharacterName_YYYYMMDD` for the directory name (e.g., `Hanfei_20260611`)
 3. Create `profile.json` (use an existing character as a template)
-4. Optionally place `icon.png` (512x512) and `standing.png` (832x1216)
+4. Optionally place `icon.png` (512×512) and `standing.png` (832×1216)
 5. Reload the app and the character appears in the dropdown
+
+### Placing Directly in data/
+
+1. Create a directory in `data/public/characters/` (or `data/private/characters/`)
+2. Place `profile.json`, `icon.png`, and `standing.png`
+3. Reload the app and the character appears in the dropdown
 
 ---
 

@@ -1,8 +1,10 @@
-# DEF(kari) v2.0.0 Implementation Status
+# DEF(kari) v2.1.1 Implementation Status
 
 This document records the implementation status of feature specifications (F-numbers) described in the Basic Design Specification.
 
 > **v2.0.0:** Architecture migrated from Streamlit to FastAPI + React (Vite/TypeScript). See Basic Design Specification Section 2.1.
+
+> **v2.1.x:** Added OpenAI TTS backend (5 total). T2I prompt generation mode added (current/passthrough/dedicated). LLM instructions externalized to `session_prompts.json`. `status_poll_sec` settings UI. DEF-Character repository separation. Skip greeting on same-character switch (F-26).
 
 ---
 
@@ -12,31 +14,30 @@ This document records the implementation status of feature specifications (F-num
 |---|---|---|---|
 | F-1 | LLM Async Pipeline | ✅ Done | Core text generation pipeline |
 | F-2 | LLM Backend Adapters | ✅ Done | TGW / Ollama / OpenAI / Gemini / Anthropic |
-| F-3 | Periodic Polling & Event Dispatcher | ✅ Done | React frontend uses REST polling |
+| F-3 | Periodic Polling & Event Dispatcher | ✅ Done | React frontend REST polling. `status_poll_sec` configurable from Settings tab (default 5s, persisted in localStorage) |
 | F-5 | Model Selection & Profiles | ✅ Done | Per-backend model management, profile editing UI |
 | F-6 | Session Mode (Multi-Agent) | ✅ Done | Multiple AI + human participants, initiative system, speech power |
 | F-7 | Safety Tags | ✅ Done | 6 levels (sfw/nsfw/hentai/violence/gore/extreme) |
 | F-8 | Content Filtering | ✅ Done | off/warn/mask, user-controllable |
-| F-9 | i18n / Multilingual | 🔶 Partial | 164 keys (JP/EN). ~30 dynamic messages in sessions not yet localized |
-| F-10 | TTS Voice Synthesis | ✅ Done | VOICEVOX / Kokoro / Irodori / Gemini TTS |
-| F-11 | TTS Auto-Play & Pipeline | ✅ Done | Session and Episode support |
+| F-9 | i18n / Multilingual | 🔶 Partial | 164 keys (JP/EN). LLM instructions externalized to `session_prompts.json` (referenced via `_sp(key, lang)`). ~30 dynamic session messages not yet localized |
+| F-10 | TTS Voice Synthesis | ✅ Done | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS |
+| F-11 | TTS Auto-Play & Pipeline | ✅ Done | Session and Novel mode support |
 | F-13-1 | VRAM Exclusive Control | ✅ Done | vram_lock mechanism |
 | F-14 | Structured Output & Fallback Chain | ✅ Done | 4-stage fallback, field name typo auto-correction |
-| F-15 | T2I Trigger | ✅ Done | 4 modes (end of cycle / start of cycle / manual / interval) |
+| F-15 | T2I Trigger | ✅ Done | 4 modes (end of cycle / start of cycle / manual / interval). T2I prompt generation mode (current/passthrough/dedicated) selectable from Settings tab |
 | F-16 | Zoning (Public/Private Separation) | ✅ Done | data/public + data/private |
 | F-17 | Generated Asset Management | ✅ Done | Isolated from Git tracking |
 | F-18 | session_state Optimization | ✅ Done | MAX_VISIBLE_TURNS=3, trim_session, lazy loading |
-| F-23 | Turn Regeneration & Undo/Redo | ✅ Done | Full/voice-only/image-only regen, configurable history. Novel mode uses browser-native Ctrl+Z and does not implement Undo/Redo |
-| F-24 | Episode Mode Foundation | ✅ Done | Work management, plot settings, AI candidates, `Chapter N + Scene M` labels |
-| F-24 | Episode Mode 3-Modality | ✅ Done | TTS narration (per-Scene), T2I illustration (LLM → prompt → generate) |
-| F-24 | Plot file write-back | ✅ Done | `PUT /api/novel/plots/{filename}` — saves directly to source file for Git-managed plots |
-| F-24 | T2I settings dialog | ✅ Done | Backend / model fetched dynamically from `/api/settings/backends` |
-| F-24 | Resizable layout | ✅ Done | Body↔thumbnail (vertical), body↔candidates (horizontal) drag handles; persisted in localStorage |
-| F-24-2 | Scene/Chapter/Episode persistent data structure | ✅ Done | Episode > Chapter > Scene 3-tier hierarchy; persisted as `data/private/episode_data/{title}.json` |
-| F-13-1 | VRAM lock — Novel tab | ✅ Done | `/api/novel/generate` and `/api/novel/t2i` acquire/release the global vram_lock |
+| F-23 | Turn Regeneration & Undo/Redo | ✅ Done | Full/voice-only/image-only regen, configurable history count. Novel mode uses browser-native Ctrl+Z instead |
 | F-25 | origin_type & Publication Policy | ✅ Done | original/reconstructed_persona/personification/derivative |
-| F-26 | Character Switch Auto-Greeting | ✅ Done | ON/OFF configurable |
+| F-26 | Character Switch Auto-Greeting | ✅ Done | ON/OFF configurable. Greeting skipped when switching to the same character (v2.1.1+) |
 | F-27 | Meta Self-Awareness Directive | ✅ Done | content_policy-based (3 variants: default/existing_ip/real_person), injected at the top of the system prompt |
+| F-28 | Novel Mode Foundation | ✅ Done | Work management, plot settings, AI candidate generation, `Chapter N + Scene M` labels |
+| F-28 | Novel Mode 3-Modality | ✅ Done | TTS narration (per Scene), T2I illustration (LLM → prompt → generate) |
+| F-28 | Plot file write-back | ✅ Done | `PUT /api/novel/plots/{filename}` saves directly to Git-managed plot files |
+| F-28 | T2I settings dialog | ✅ Done | Backend/model fetched dynamically from `/api/settings/backends` |
+| F-28 | Resizable layout | ✅ Done | Body↔thumbnail (vertical), body↔candidates (horizontal) drag handles; persisted in localStorage |
+| F-28 | VRAM lock — Novel tab | ✅ Done | `/api/novel/generate` and `/api/novel/t2i` acquire/release the global vram_lock |
 | —— | Character image color | ✅ Done | `base_profile.image_color` field; color picker in CharacterTab; applied to AI bubbles in ChatTab |
 | —— | Sidebar collapse | ✅ Done | `Sidebar.tsx` collapsed state, ◀/▶ toggle button |
 | —— | Thought Tab | ✅ Done | Free-text AI thought experiments; `GET/POST /api/thought/` |
@@ -44,6 +45,7 @@ This document records the implementation status of feature specifications (F-num
 | —— | Session rules added | ✅ Done | manzai / rakugo presets added |
 | —— | Action directives added | ✅ Done | standard preset added |
 | —— | i18n foundation (i18n.tsx) | ✅ Done | React-side i18n base; Japanese + English |
+| —— | DEF-Character repository separation | ✅ Done | External character repository linked via `CHARACTER_REPO_PATH`. Falls back to legacy `data/characters/` format |
 
 ---
 
@@ -59,6 +61,7 @@ This document records the implementation status of feature specifications (F-num
 | F-20 | TRPG Rulebook Injection | ⏸ On hold | TRPG expansion phase |
 | F-21 | GM Agent | ⏸ On hold | TRPG expansion phase |
 | F-22 | Dice Roll & History Branching | ⏸ On hold | TRPG expansion phase |
+| F-24 | Episode Mode Foundation | ❌ Not implemented | Episode > Chapter > Scene hierarchical management. Future phase |
 | F-24-1 | Episode Structured Output | ❌ Not implemented | narration/dialogue/tags/choices JSON Schema |
 | F-24-3 | Branch Selection + Git Integration | ❌ Not implemented | choices → Git branch |
 
@@ -69,7 +72,6 @@ This document records the implementation status of feature specifications (F-num
 | Item | Description |
 |---|---|
 | Session history token limit | Long sessions may reach LLM context limit |
-| Tab header pinning | Resolved by React migration |
 | Irodori-TTS CUDA | venv may default to CPU after uv sync |
 | Backend multi-start | PID file guard instability |
 
@@ -80,7 +82,7 @@ This document records the implementation status of feature specifications (F-num
 | Type | Count | Details |
 |---|---|---|
 | LLM | 5 | Text Generation WebUI / Ollama / OpenAI / Gemini / Anthropic |
-| TTS | 4 | VOICEVOX / Kokoro / Irodori / Gemini TTS |
+| TTS | 5 | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS |
 | T2I | 4 | A1111 / ComfyUI / Hugging Face / Civitai |
 
 ---
@@ -93,4 +95,4 @@ This document records the implementation status of feature specifications (F-num
 
 ---
 
-This document reflects the status as of v2.0.0. For the latest status, see the repository's Issues and release notes.
+This document reflects the status as of v2.1.1. For the latest status, see the repository's Issues and release notes.

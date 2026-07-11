@@ -1,10 +1,11 @@
 # Multimodal AI Creative Platform "DEF(kari)"
 
-## Basic Design Specification Version 2.0.0
+## Basic Design Specification Version 2.1.1
 
 |**Item**|**Details**|
 |------|------------------------------------------------------------------|
 |Date|June 2026|
+|Updated|July 2026|
 |Scope|DEF(kari) Core Engine|
 |Top Priority Evaluation Criteria|Character Persistence, UX, Asynchronous Event Loop, Local Resource Optimization, Extensibility, Compliance/Safety|
 
@@ -111,7 +112,7 @@ The primary deployment pattern is local PC self-contained (Pattern 1), while ado
 |-------------|------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
 |LLM Layer (Text)|Text Generation WebUI (TGW) *Default. Ollama also available as an adapter via the abstraction layer. See Section 2.3 for details|Gemini API, etc. (free tier / pay-as-you-go)|
 |T2I Layer (Image)|Stable Diffusion Abstraction Layer (A1111 API / Diffusers local / ComfyUI, etc.) *VRAM occupancy lock control, CPU Offload forced enabled|External image generation API (Civitai Orchestration API, etc.)|
-|TTS Layer (Audio)|VOICEVOX (CPU-driven, always running) / Irodori-TTS (zero-shot voice cloning, local Gradio) *Asynchronous queue invocation via dedicated worker (see Section 3.3). See Section 2.5 for details|Google AI Studio (Gemini TTS) *Free tier, no credit card required. Remote fallback for resource-constrained environments. See Section 2.5 for details|
+|TTS Layer (Audio)|VOICEVOX (CPU-driven, always running) / Irodori-TTS (zero-shot voice cloning, local Gradio) *Asynchronous queue invocation via dedicated worker (see Section 3.3). See Section 2.5 for details|Gemini TTS API / OpenAI TTS API *Free tier available (Gemini). Remote fallback for resource-constrained environments. See Section 2.5 for details|
 
 ## 2.3 LLM Backend Abstract Interface
 
@@ -202,6 +203,7 @@ Backend switching: The TTS backend in use is specified by a configuration value 
 |`IrodoriTtsAdapter`|Irodori-TTS|Local (`http://127.0.0.1:8088`)|Zero-shot voice cloning adapter. Reproduces speaker voice quality from reference audio (WAV)|
 |`KokoroTtsAdapter`|Kokoro TTS|Local (`http://127.0.0.1:8766`)|Lightweight 82M parameter TTS model. Runs on CPU. OpenAI-compatible API server. 5 Japanese voices (4 female / 1 male). DEF auto-launch supported|
 |`GeminiTtsAdapter`|Gemini API TTS|Remote API|Remote fallback. Free tier available, no credit card required. Via Interactions API|
+|`OpenAITtsAdapter`|OpenAI TTS API|Remote API|Requires OpenAI API key. Supports `tts-1` / `tts-1-hd` models|
 
 ## 2.6 Interface Internationalization (i18n) and Language Separation (F-9)
 
@@ -271,6 +273,7 @@ DEF(kari)'s adapter and service definitions are externally managed in JSON files
 |`data/mvp_settings.json`|Application settings persistence|Loaded at startup, written on settings save|
 |`data/public/session_rules/*.json`|Session rule sets (public). One file per set. Defines `id`/`label`/`rating`/`rules`|Switchable from the session tab|
 |`data/private/session_rules/*.json`|Session rule sets (private — NSFW rules, etc.). Excluded from Git|Switchable from the session tab. Same format as public sets|
+|`data/session_prompts.json`|LLM instruction templates for Session mode (F-6). Defined in both `ja` and `en`. Contains `deliberation_prompt`, `judge_prompt`, `keeper_judge_prompt`, `keeper_system`, and vote result strings (`vote_result`/`vote_passed`/`vote_rejected`, etc.). Language is selected based on the `user_language` setting|Directly customizable by users. Referenced via the `_sp(key, lang)` helper|
 |`data/comfyui_workflows/*.json`|ComfyUI workflow templates. One file per workflow|Switchable from the settings tab. Users can add workflows created in ComfyUI|
 
 ### Environment Configuration Files
@@ -331,6 +334,8 @@ The polling interval is not a fixed value but is dynamically controlled based on
 - Active (any LLM/TTS/T2I processing in progress): 100-300ms
 - Idle (standby state): 800-1500ms
 - Default baseline: 500ms-1000ms (variable based on system specs, considering the tradeoff between CPU load and UX)
+
+The backend status polling interval (`status_poll_sec`) can be changed from the "Backend" section of the Settings tab. Changes are saved to localStorage and detected immediately via the `useEffect` dependency array in the sidebar. Default value is 5 seconds.
 
 # 4. State Transition Model
 
@@ -445,11 +450,13 @@ The following rules are automatically injected into the system prompt for AI utt
 
 Immediately after switching characters in the character tab, an automatic greeting turn is generated based on the new character's persona and history. The greeting feature can be toggled ON/OFF by the user from the settings tab (`character_greeting` setting). The greeting text is sent to the LLM as a natural conversation prompt, and the generated result is added to history as a full cycle including audio and image.
 
-**Implementation details (v2.0.3):**
+**Greeting behavior details (v2.0.3 implementation):**
 
-- **Hidden history (`hiddenHistory`):** On greeting generation, all past history is held as `hiddenHistory` state and included in the LLM context but not displayed on screen. This allows the greeting to reflect past context even immediately after switching.
-- **Show history button:** A "Show History" button (`chat.history.showBtn`) is placed in the chat view to expand and display past history on click.
-- **Skip on initial mount:** Greeting generation is skipped at app startup (no character change), starting with an empty history state.
+- **Greeting is sent on every character switch** (skipped on initial app mount). On initial mount, past history is displayed as-is without a greeting.
+- **Greeting is skipped when switching to the same character** (v2.1.1+). If `selectedChar === prevCharId` and it is not the initial mount, the greeting and history clear are skipped and the current display is maintained.
+- **Past history is hidden on greeting.** History fetched from the API is moved to `hiddenHistory` state (React `useState<Message[]>`), and only the greeting turn is shown in the chat window.
+- **"📜 Show past conversations (N)" button** (`chat.history.showBtn` i18n key): Pressing this merges `hiddenHistory` contents to the front of the current message list. The button disappears after being pressed.
+- While `hiddenHistory` is present, the pagination button ("Load older logs") is hidden to prevent both buttons appearing simultaneously.
 
 ### F-27: Meta Self-Awareness Directive (System Directive)
 
@@ -652,6 +659,16 @@ The image generation execution timing can be freely selected from the following 
 - "End of each turn" presentation-first generation: Auto-generation of the final result of the turn after text and audio are ready (manual setting only).
 - "Start of each turn" situation-first generation: Generation and presentation of a visual of the current situation immediately at the start of a turn.
 
+### T2I Prompt Generation Mode
+
+The `/api/session/{session_id}/generate_image` endpoint supports three modes via the `t2i_prompt_mode` parameter. Selected from the "Session Settings" section of the Settings tab and persisted in `mvp_settings.json`.
+
+| Mode | Behavior | LLM Call |
+|---|---|---|
+| `current` (default) | LLM generates image prompt from recent conversation history | Yes |
+| `passthrough` | Reuses `image_prompt_en` from history directly (no LLM) | No |
+| `dedicated` | Enhanced generation with a stricter system prompt (`num_predict=128`) | Yes |
+
 ## 5.6 Text/Binary Separated History Management & session_state Lightweighting
 
 ### F-16: Zoning Architecture
@@ -676,13 +693,39 @@ data/
 
 The `private/` directory is registered in `.gitignore` to prevent accidental publication to GitHub. All copyrighted characters, real persons, and personal characters are placed in `private/`. Only `public/` is targeted when pushing to GitHub per F-25's publishing decision logic.
 
+#### DEF-Character Repository Separation
+
+From v2.1.0 onwards, character data can be managed in a standalone repository (DEF-Character) separate from DEF itself. Set `CHARACTER_REPO_PATH` in `.env` to enable:
+
+```
+CHARACTER_REPO_PATH=C:\Users\yourname\DEF-Character
+```
+
+**DEF-Character directory structure:**
+
+```
+DEF-Character/
+    public/
+        <GroupName>/           ← Group-level management
+            index.json         ← display_name / default / description
+            <CharacterID>/     ← CharacterName_YYYYMMDD format
+                profile.json
+                icon.png
+                standing.png
+    private/                   ← .gitignore target
+        _template/
+        <YourGroup>/
+```
+
+**Load priority:** `CHARACTER_REPO_PATH` (DEF-Character) takes precedence; `data/public/characters/` and `data/private/characters/` (legacy format) are used as fallback.
+
 ### F-17: Text/Binary Separated History Management (Repository Size Control)
 
 To prevent the Git repository from exploding in size during session history persistence, the following separation management is enforced based on the zoning defined in F-16.
 
 - Git-managed scope: Session logs, various metadata, character sheets, model characteristic numerical master data (Section 5.1, F-5), translation master (Section 2.6, F-9), and other pure text/JSON data (clean zone).
 - Externally stored: Generated audio (WAV) and image (PNG/JPEG) large binary files are stored in a local `.gitignore`d dedicated asset directory or external storage, with only relative paths or identifier IDs (UUIDs) recorded in JSON logs (private zone).
-- Path placement logic for Streamlit: A logic is implemented to automatically place generated binary files at paths optimized for Streamlit browser display (static root or dedicated directory during app operation).
+- Path placement logic: A logic is implemented to automatically place generated binary files at paths optimized for FastAPI static file serving (`/static/`).
 - File naming convention: To completely prevent data inconsistencies and overwrites caused by history branching (Git branch switching, see Section 5.8, F-22), generated audio (WAV) and image (PNG/JPEG) filenames must always use the format `[character_name]_[emotion]_[timestamp].ext` with a unique name, and are saved to the private zone.
 
 ### F-18: session_state Lightweighting
@@ -790,6 +833,47 @@ The data structure for episode mode uses a 3-level hierarchy of Episode > Chapte
 ### F-24-3: Branching Choices and Git Branch Integration
 
 When a user selects a choice from F-24-1's `choices`, following the "history branching (Git operation) rules" defined in F-22 (only independent, unidirectional branch creation via `git checkout -b`; automatic merge prohibited), a new branch is created with the selected `branch_id` included in the name, and subsequent scene generation continues from there. This allows multiple narrative developments branching from choices to be maintained in parallel without the risk of conflicts. In sessions where a GM agent (F-21) is present, the GM agent handles choice presentation and post-branch progression narration.
+
+## 5.11 Novel Mode
+
+### F-28: Novel Mode (Free-Form Writing with AI Candidate Generation)
+
+An independent creative feature of DEF. Unlike Episode Mode (F-24), which manages an Episode > Chapter > Scene hierarchy, this is defined as a **free-form text editor combined with AI continuation generation** as a writing assistance tool.
+
+Works are managed independently from character sessions.
+
+**Key features:**
+
+- Plot settings (world-building and synopsis set as system prompt)
+- Body text editor (free-form input)
+- AI candidate generation (LLM generates multiple continuations from current body; configurable count 1–5)
+- Candidate tab switching and comparison; apply selected candidate
+- T2I illustration generation (selected Scene body → LLM generates English prompt → T2I backend generates image)
+- TTS narration (per Scene, pipeline playback)
+- Independent LLM/T2I backend switching
+
+**Data management:**
+
+- Works are persisted as individual files per title (`data/private/novels/{title}.json`)
+- Plot files follow public/private separation (`data/public/novel_prompts/` + `data/private/novel_prompts/`)
+- Generated binaries (illustrations, audio) are saved to the private zone per the F-16/F-17 zoning rules
+
+**Implementation details:**
+
+- **Scene splitting:** The `splitScenes(body)` function detects `--- Chapter/Scene \d+ ---` markers in the body text and assigns `Chapter N + Scene M` labels for per-scene management.
+- **Plot file write-back:** `PUT /api/novel/plots/{filename}` allows plot files to be saved directly from within the app without opening a separate editor.
+- **VRAM lock:** `/api/novel/generate` (AI candidate generation) and `/api/novel/t2i` (illustration generation) acquire and release the global `vram_lock`. While the lock is held, new LLM requests are restricted to lightweight response mode (see F-13-1).
+- **T2I settings dialog:** Backend and model are fetched dynamically from `/api/settings/backends` and `/api/settings/t2i-models?backend=xxx` and selectable in the dialog.
+- **Thumbnail display:** Generated images are displayed as scene-linked thumbnails.
+
+**Differences from F-24:**
+
+| | Novel Mode (F-28) | Episode Mode (F-24) |
+|---|---|---|
+| Structure management | None (free-form) | Episode > Chapter > Scene hierarchy |
+| AI output schema | Plain text | F-24-1 structured output schema |
+| Branching management | None | F-24-3 Git branch integration |
+| Implementation status | Implemented | Future phase |
 
 # 6. Character Consistency
 

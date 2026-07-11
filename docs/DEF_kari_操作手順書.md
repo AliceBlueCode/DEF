@@ -1,8 +1,8 @@
-# DEF(kari) 操作手順書 v1.0.0
+﻿# DEF(kari) 操作手順書 v2.1.1
 
 ## 1. 起動
 
-`start_dev.bat` をダブルクリック（または下記コマンドを2つのターミナルで実行）。
+`start_def.bat` をダブルクリック（または下記コマンドを2つのターミナルで実行）。
 
 ```bash
 # ターミナル1: FastAPI バックエンド
@@ -35,7 +35,7 @@ npm run dev
 | 👤 キャラクター | キャラクターのプロフィール閲覧・編集 |
 | 💬 チャット | 1対1の対話 |
 | 🎭 セッション | 複数AI＋人間の卓 |
-| 📖 エピソード | 小説執筆＋AI候補生成 |
+| 📖 ノベル | 小説執筆＋AI候補生成 |
 | 🤔 思考 | フリーテキストでのAI思考実験 |
 | ⚙ 設定 | バックエンド・レーティング・各種設定 |
 | 🐛 デバッグ | LLM生応答・フォールバック確認 |
@@ -72,15 +72,15 @@ npm run dev
 - **🎨 挿図** — 場面のイラストを生成
 
 ### 人間プレイヤー
-- `player_type: "human"`のキャラクターを参加させると人間入力モードになる
+- `player_type: "human"` のキャラクターを参加させると人間入力モードになる
 - 自分のターンにテキスト入力欄が表示される
 
 ---
 
-## 6. エピソードタブ
+## 6. ノベルタブ
 
 ### 基本操作
-1. 「+ 新規作品」を選択してタイトルを入力
+1. 「＋ 新規作品」を選択してタイトルを入力
 2. 本文を書く
 3. 「✍ 生成」でAI候補を生成（設定した候補数分）
 4. 右カラムのタブで候補を比較
@@ -88,9 +88,9 @@ npm run dev
 6. 「💾 保存」で保存
 
 ### プロット設定
-- 「📝 プロット設定」ボタンでダイアログを開く
+- 「プロットを編集」ボタンでダイアログを開く
 - 📂でプロットファイルを読み込み、または直接編集
-- 「💾 保存」でエピソードJSONに保存
+- 「💾 保存」でノベルJSONに保存
 - 「✅ 反映」で保存＋AIのシステムプロンプトとして適用
 
 ### Chapter/Scene
@@ -105,7 +105,7 @@ npm run dev
 - **⚙ T2I** — T2Iバックエンド・モデルの切替ダイアログ
 
 ### LLMバックエンド切替
-- プロット設定ボタンの右のプルダウンでエピソード専用のLLMを選択可能
+- プロット設定ボタン右のプルダウンでノベル専用のLLMを選択可能
 
 ---
 
@@ -113,13 +113,14 @@ npm run dev
 
 ### 構成
 - **母国語** — UI表示言語の切替（日英中韓西仏独）
-- **LLMバックエンド** — TGW / OpenAI / Gemini / Anthropic
-- **TTSバックエンド** — VOICEVOX / Kokoro / Irodori / Gemini TTS
+- **LLMバックエンド** — TGW / Ollama / OpenAI / Gemini / Anthropic
+- **TTSバックエンド** — VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS
 - **T2Iバックエンド** — A1111 / ComfyUI / HuggingFace / Civitai
+- **バックエンド** — バックエンド状態ポーリング間隔（`status_poll_sec`、デフォルト5秒）
 - **C2方式** — 画像プロンプト翻訳プロバイダ
-- **チャットモード** — 挨拶ON/OFF、Undo保持件数
-- **セッションモード** — アクション数/ターン、繰り返しペナルティ、挿図サイズ
-- **エピソードモード** — 生成候補数、挿絵サイズ
+- **チャット設定** — 挨拶ON/OFF、Undo保持件数
+- **セッション設定** — アクション数/ターン、繰り返しペナルティ、挿図サイズ、T2Iプロンプトモード（current/passthrough/dedicated）
+- **ノベル設定** — 生成候補数、挿絵サイズ
 - **APIキー管理** — 外部APIキーの暗号化保存
 
 ### 保存
@@ -143,30 +144,61 @@ npm run dev
 ```
 data/
 ├── public/              # 公開データ（git管理対象）
-│   ├── characters/      # 公開キャラクター
+│   ├── characters/      # 公開キャラクター（旧形式）
 │   ├── action_directives/
 │   ├── session_rules/
-│   └── episode_prompts/
+│   └── episode_prompts/ # ノベル用プロットファイル（公開）
 ├── private/             # プライベートデータ（git除外）
-│   ├── characters/      # NSFWキャラクター
-│   ├── episodes/        # エピソード作品
-│   ├── episode_prompts/ # プライベートプロット
+│   ├── characters/      # プライベートキャラクター（旧形式）
+│   ├── novels/          # ノベルモード作品データ
+│   ├── episode_prompts/ # ノベル用プロットファイル（NSFW）
 │   ├── session_history/
 │   ├── session_rules/
 │   ├── action_directives/
 │   └── thoughts/
+├── sessions/            # セッション履歴
+├── session_prompts.json # セッションLLM指示文テンプレート
 └── llm_profiles/        # LLMモデルプロファイル
+```
+
+### DEF-Character リポジトリ（推奨）
+
+キャラクターデータを DEF 本体と分離して管理する場合は、`DEF-Character` リポジトリを別途用意し `.env` に設定する。
+
+```
+CHARACTER_REPO_PATH=C:\Users\yourname\DEF-Character
+```
+
+DEF-Character のディレクトリ構造：
+
+```
+DEF-Character/
+└── public/
+    └── <GroupName>/
+        ├── index.json
+        └── <CharacterName_YYYYMMDD>/
+            ├── profile.json
+            ├── icon.png
+            └── standing.png
 ```
 
 ---
 
 ## 10. キャラクターの追加
 
-1. `data/public/characters/`（または`data/private/characters/`）に新しいディレクトリを作成
-2. ディレクトリ名がキャラクターIDになる（例: `character_mychar_001`）
-3. `profile.json`を作成（既存キャラクターをテンプレートとして利用可）
-4. 必要に応じて`icon.png`（512×512）と`standing.png`（832×1216）を配置
+### DEF-Character リポジトリを使う場合（推奨）
+
+1. `DEF-Character/public/<GroupName>/` にキャラクターディレクトリを作成
+2. ディレクトリ名は `CharacterName_YYYYMMDD` 形式（例: `Hanfei_20260611`）
+3. `profile.json` を作成（既存キャラクターをテンプレートとして利用可）
+4. 必要に応じて `icon.png`（512×512）と `standing.png`（832×1216）を配置
 5. アプリをリロードするとプルダウンに表示される
+
+### data/ に直接配置する場合
+
+1. `data/public/characters/`（または `data/private/characters/`）にディレクトリを作成
+2. `profile.json`・`icon.png`・`standing.png` を配置
+3. アプリをリロードするとプルダウンに表示される
 
 ---
 
@@ -174,7 +206,7 @@ data/
 
 | 症状 | 対処 |
 |---|---|
-| バックエンドが起動しない | `.env`のディレクトリパスを確認。空欄のバックエンドは自動起動しない |
+| バックエンドが起動しない | `.env` のディレクトリパスを確認。空欄のバックエンドは自動起動しない |
 | 設定がF5で戻る | 設定タブの「💾 保存」を押してから再読み込み |
 | 音声が再生されない | サイドバーのTTS設定がONになっているか確認 |
 | 画像が生成されない | T2Iトリガーが「手動」以外になっているか確認 |

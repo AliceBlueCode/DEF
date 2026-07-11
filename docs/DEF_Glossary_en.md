@@ -1,4 +1,4 @@
-﻿# DEF Glossary v2.0.0
+﻿# DEF Glossary v2.1.1
 
 ## Overview
 
@@ -151,7 +151,7 @@ They exist on different timelines, and Cycles occur in order to carry out the pr
 
 An individual speech within a single Turn. The smallest speech unit at the AI Table.
 
-The number of Actions per Turn is configurable (default 3, range 1-5).
+The number of Actions per Turn is configurable (default 2, range 1-5).
 
 With an Action count of 1, the behavior is the same as the traditional 1 speech per Turn.
 With an Action count of 2 or more, each Action is given a directive based on the Action Directive Set.
@@ -306,10 +306,10 @@ This philosophy is the core principle of the DEF AI Table.
 ---
 
 Document:
-DEF_Glossary_v1.0.0
+DEF_Glossary
 
 Version:
-1.0.0
+2.1.1
 
 Status:
 Release
