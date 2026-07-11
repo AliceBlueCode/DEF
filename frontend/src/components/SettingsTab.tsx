@@ -545,6 +545,15 @@ export default function SettingsTab({
           <label>{t('settings.label.darkMode')}</label>
           <Toggle checked={theme === 'dark'} onChange={onThemeToggle} />
         </div>
+        <div className="settings-row">
+          <label>{t('settings.label.pollInterval')}</label>
+          <input
+            type="number" min={1} max={60}
+            className="settings-number"
+            value={get('status_poll_sec', 5)}
+            onChange={e => set('status_poll_sec', Number(e.target.value))}
+          />
+        </div>
       </div>
 
       <div className="settings-divider" />

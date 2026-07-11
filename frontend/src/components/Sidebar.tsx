@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Toggle from './Toggle'
 import RatingDialog from './RatingDialog'
 import { useT } from '../i18n'
@@ -34,20 +34,33 @@ export default function Sidebar() {
   const [forceTag, setForceTag] = useState('nsfw')
   const [showRating, setShowRating] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const vramTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // 初期設定読み込み
   useEffect(() => {
     fetch('/api/settings/')
       .then(r => r.json())
       .then(data => setSettings(data.settings || {}))
-
     fetch('/api/chat/force-rating')
       .then(r => r.json())
       .then(data => {
         setForceEnabled(data.enabled ?? false)
         setForceTag(data.tag ?? 'nsfw')
       })
+  }, [])
 
+  // 設定変更イベントで settings を同期
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { key, value } = (e as CustomEvent).detail
+      setSettings(prev => ({ ...prev, [key]: value }))
+    }
+    window.addEventListener('def-settings-change', handler)
+    return () => window.removeEventListener('def-settings-change', handler)
+  }, [])
+
+  // ポーリング（status_poll_sec が変わると自動リセット）
+  const pollSec = Math.max(1, Number(settings.status_poll_sec) || 5) * 1000
+  useEffect(() => {
     const poll = () => {
       fetch('/api/chat/vram-lock')
         .then(r => r.json())
@@ -59,9 +72,9 @@ export default function Sidebar() {
         .catch(() => {})
     }
     poll()
-    vramTimerRef.current = setInterval(poll, 3000)
-    return () => { if (vramTimerRef.current) clearInterval(vramTimerRef.current) }
-  }, [])
+    const timer = setInterval(poll, pollSec)
+    return () => clearInterval(timer)
+  }, [pollSec])
 
   const get = useCallback(<T,>(key: string, def: T): T =>
     (key in settings ? settings[key] : def) as T, [settings])
