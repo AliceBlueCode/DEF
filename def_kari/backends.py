@@ -134,7 +134,7 @@ def start_voicevox() -> str | None:
         return f"VOICEVOXが見つかりません: {vv_dir}"
     try:
         proc = subprocess.Popen(
-            [exe_path],
+            [exe_path, "--use_gpu"],
             cwd=os.path.dirname(exe_path),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
