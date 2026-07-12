@@ -768,6 +768,124 @@ def inject_keeper_message(session_id: str, req: KeeperMessageRequest):
     return {"status": "ok"}
 
 
+class AIKeeperRequest(BaseModel):
+    backend: str = DEFAULT_LLM_BACKEND
+    inject_history: bool = True
+
+
+@router.post("/{session_id}/ai_keeper")
+def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
+    """AIキーパー（無個性モード）: シナリオ・ルールブック・履歴からGM発言を生成する。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    if not session.get("trpg_mode"):
+        return {"error": "Not in TRPG mode"}
+
+    rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
+    scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+
+    try:
+        settings = load_settings()
+    except Exception:
+        settings = {}
+    user_lang = settings.get("user_language", "ja") or "ja"
+    _is_ja = user_lang == "ja"
+
+    system_parts = []
+    if _is_ja:
+        system_parts.append(
+            "あなたはTRPGのゲームマスター（キーパー）です。"
+            "語り手として物語を進行させてください。"
+            "個性や感情表現は持たず、簡潔かつ情景豊かに語ります。3〜5文を目安にしてください。"
+        )
+    else:
+        system_parts.append(
+            "You are the Game Master (Keeper) of this TRPG session. "
+            "Narrate as a neutral storyteller. Be concise and vivid. 3-5 sentences."
+        )
+
+    trpg_ctx = _build_trpg_context(rulebook, scenario or None, user_lang)
+    if trpg_ctx:
+        system_parts.append(trpg_ctx)
+
+    char_game_sheets = session.get("char_game_sheets", {})
+    name_map = session.get("name_map", {})
+    if char_game_sheets:
+        from def_kari.characters import load_profiles as _lp
+        _profiles = _lp()
+        char_lines = []
+        for _cid, _sid in char_game_sheets.items():
+            _raw = _profiles.get(_cid, {})
+            _sheet = _raw.get("game_rules_sheets", {}).get(_sid, {})
+            _stats = _sheet.get("stats", {})
+            _cname = name_map.get(_cid, _cid)
+            if _stats:
+                _stat_str = "／".join(f"{k}{v['current']}" for k, v in _stats.items())
+                char_lines.append(f"・{_cname}（{_stat_str}）")
+        if char_lines:
+            header = "【探索者】" if _is_ja else "[Investigators]"
+            system_parts.append(header + "\n" + "\n".join(char_lines))
+
+    if _is_ja:
+        system_parts.append(
+            "【キーパーの役割】\n"
+            "・探索者の行動・発言を受けて場面の状況や変化を描写する\n"
+            "・NPCの言動・表情・反応を描写する\n"
+            "・判定が必要な場合は「○○の判定をどうぞ」と促す\n"
+            "・次の展開への布石を置く\n"
+            "・探索者の台詞は書かない"
+        )
+    else:
+        system_parts.append(
+            "[Keeper duties]\n"
+            "- Narrate scene changes based on investigators' actions\n"
+            "- Portray NPC reactions\n"
+            "- Prompt ability checks when needed\n"
+            "- Do not write investigators' dialogue"
+        )
+
+    system_prompt = "\n\n".join(system_parts)
+
+    history = session.get("history", [])
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    for h in history[-20:]:
+        role = h.get("role", "user")
+        content = h.get("content", "")
+        if content:
+            messages.append({"role": role, "content": content})
+    final_prompt = "キーパーとして、直近の状況を踏まえて場面を進めてください。" if _is_ja else "As Keeper, advance the scene based on recent events."
+    messages.append({"role": "user", "content": final_prompt})
+
+    backend_id = req.backend or DEFAULT_LLM_BACKEND
+    if backend_id not in LLM_BACKENDS:
+        backend_id = DEFAULT_LLM_BACKEND
+
+    from def_kari.resources.vram_lock import get_vram_lock
+    _vl = get_vram_lock()
+    _vl.acquire()
+    try:
+        chat_fn = LLM_BACKENDS[backend_id]["chat"]
+        text = chat_fn(messages, "", json_mode=False, options={"num_predict": 350})
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        _vl.release()
+
+    text = (text or "").strip()
+
+    if req.inject_history and text:
+        label = "🎩 キーパー" if _is_ja else "🎩 Keeper"
+        session["history"].append({
+            "role": "user",
+            "content": f"{label}: {text}",
+            "character_id": "_keeper",
+        })
+        _autosave(session_id)
+
+    return {"text": text, "character_id": "_keeper", "character_name": "🎩 Keeper"}
+
+
 @router.post("/{session_id}/skip")
 def skip_turn(session_id: str):
     session = _sessions.get(session_id)

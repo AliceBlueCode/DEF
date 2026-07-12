@@ -496,6 +496,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         return
       }
 
+      // TRPGモード: ラウンド末尾キャラ判定（このキャラが喋り終えたらキーパーを発火）
+      const isLastOfRound = trpgMode && initiative.length > 0 &&
+        initiative[initiative.length - 1] === data.character_id
+
       const char = charMap[data.character_id]
       let newMsgIndex = -1
       setMessages(prev => {
@@ -535,13 +539,21 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           const last = prev.length - 1
           return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m)
         })
-        // 音声再生と並行して次セリフを先読み
-        if (willContinue && !prefetchRef.current) {
+        // TRPGラウンド末尾では先読みしない（キーパー後に次ラウンド1番目を新規取得するため）
+        if (willContinue && !prefetchRef.current && !isLastOfRound) {
           fetchNextData(sid).then(d => {
             if (d && !d.error) prefetchRef.current = d
           })
         }
         await playAudio(ttsUrl)
+      }
+
+      // TRPGモード自動進行: ラウンド末尾でキーパーを発火（次ラウンド全員が文脈を持てる）
+      if (isLastOfRound && autoAdvanceRef.current) {
+        const keeperText = await fetchAIKeeperText(sid)
+        if (keeperText) setMessages(prev => [...prev, {
+          character_id: '_keeper', character_name: '🎩 Keeper', text: keeperText, emotion: '', tags: [],
+        }])
       }
 
       if (nextRem > 0) {
@@ -618,6 +630,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     } catch {
       setSaveStatus(t('session.save.failed'))
       setTimeout(() => setSaveStatus(''), 2000)
+    }
+  }
+
+  const fetchAIKeeperText = async (sid: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/session/${sid}/ai_keeper`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend }),
+      })
+      const d = await res.json()
+      if (d.error) { console.error(d.error); return null }
+      return d.text ?? null
+    } catch (e) {
+      console.error(e)
+      return null
     }
   }
 
