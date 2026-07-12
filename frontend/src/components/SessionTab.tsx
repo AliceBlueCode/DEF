@@ -45,6 +45,59 @@ function isContentBlocked(tags: string[], allowedSexual: string[], allowedViolen
   )
 }
 
+// ── ダイスローラー（投票行の右に配置）────────────────────────
+function DiceRow({ charSheetData, charMap, diceNotation, setDiceNotation, diceCharId, setDiceCharId, diceStatKey, setDiceStatKey, onRoll }: {
+  charSheetData: Record<string, any>
+  charMap: Record<string, { name: string }>
+  diceNotation: string
+  setDiceNotation: (v: string) => void
+  diceCharId: string
+  setDiceCharId: (v: string) => void
+  diceStatKey: string
+  setDiceStatKey: (v: string) => void
+  onRoll: () => void
+}) {
+  return (
+    <>
+      <span style={{ flex: 1 }} />
+      <span style={{ fontSize: '0.82em', opacity: 0.55, flexShrink: 0 }}>🎲</span>
+      <input
+        className="keeper-input"
+        style={{ width: 66, flex: 'none' }}
+        value={diceNotation}
+        onChange={e => setDiceNotation(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') onRoll() }}
+        placeholder="1d100"
+      />
+      <select
+        className="session-select"
+        style={{ flex: 'none', maxWidth: 90 }}
+        value={diceCharId}
+        onChange={e => setDiceCharId(e.target.value)}
+      >
+        <option value="">キャラ</option>
+        {Object.keys(charSheetData).map(id => (
+          <option key={id} value={id}>{charMap[id]?.name ?? id}</option>
+        ))}
+      </select>
+      {diceCharId && charSheetData[diceCharId] && (
+        <select
+          className="session-select"
+          style={{ flex: 'none', maxWidth: 78 }}
+          value={diceStatKey}
+          onChange={e => setDiceStatKey(e.target.value)}
+        >
+          <option value="">能力値</option>
+          {Object.keys(charSheetData[diceCharId].stats ?? {}).map(k => (
+            <option key={k} value={k}>{k}</option>
+          ))}
+        </select>
+      )}
+      <button onClick={onRoll} className="keeper-add-btn" disabled={!diceNotation.trim()}>振る</button>
+    </>
+  )
+}
+
 // ── マルチセレクト ────────────────────────────────────────────
 function CharMultiSelect({
   characters,
@@ -1491,44 +1544,6 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       </div>
 
       <div className="session-controls">
-        {trpgMode && (
-          <div className="session-controls-row">
-            <span style={{ fontSize: '0.85em', opacity: 0.6, flexShrink: 0 }}>🎲</span>
-            <input
-              className="keeper-input"
-              style={{ width: 72, flex: 'none' }}
-              value={diceNotation}
-              onChange={e => setDiceNotation(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') rollDice() }}
-              placeholder="1d100"
-            />
-            <select
-              className="session-select"
-              style={{ flex: 1, maxWidth: 110 }}
-              value={diceCharId}
-              onChange={e => { setDiceCharId(e.target.value); setDiceStatKey('') }}
-            >
-              <option value="">キャラ</option>
-              {Object.keys(charSheetData).map(id => (
-                <option key={id} value={id}>{charMap[id]?.name ?? id}</option>
-              ))}
-            </select>
-            {diceCharId && charSheetData[diceCharId] && (
-              <select
-                className="session-select"
-                style={{ flex: 1, maxWidth: 90 }}
-                value={diceStatKey}
-                onChange={e => setDiceStatKey(e.target.value)}
-              >
-                <option value="">能力値</option>
-                {Object.keys(charSheetData[diceCharId].stats ?? {}).map(k => (
-                  <option key={k} value={k}>{k}</option>
-                ))}
-              </select>
-            )}
-            <button onClick={rollDice} className="keeper-add-btn" disabled={!diceNotation.trim()}>振る</button>
-          </div>
-        )}
         {humanCharId && (
           <>
             <div className="session-controls-row">
@@ -1585,6 +1600,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 </button>
               )}
               <button onClick={() => setShowVoteDialog(true)} disabled={autoAdvance || (counters[humanCharId] ?? 0) < 3} className="keeper-add-btn" title={t('session.ctrl.voteBtn.title')}>{t('session.ctrl.voteBtn')}</button>
+              {trpgMode && <DiceRow charSheetData={charSheetData} charMap={charMap} diceNotation={diceNotation} setDiceNotation={setDiceNotation} diceCharId={diceCharId} setDiceCharId={id => { setDiceCharId(id); setDiceStatKey('') }} diceStatKey={diceStatKey} setDiceStatKey={setDiceStatKey} onRoll={rollDice} />}
             </div>
             {humanPending.length > 0 && (
               <div className="keeper-pending">
@@ -1647,6 +1663,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </>
           )}
           <button onClick={() => setShowVoteDialog(true)} disabled={autoAdvance} className="keeper-add-btn" title={t('session.ctrl.voteBtnKeeper.title')}>{t('session.ctrl.voteBtnKeeper')}</button>
+          {trpgMode && <DiceRow charSheetData={charSheetData} charMap={charMap} diceNotation={diceNotation} setDiceNotation={setDiceNotation} diceCharId={diceCharId} setDiceCharId={id => { setDiceCharId(id); setDiceStatKey('') }} diceStatKey={diceStatKey} setDiceStatKey={setDiceStatKey} onRoll={rollDice} />}
         </div>}
       </div>
 
