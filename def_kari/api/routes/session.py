@@ -49,13 +49,81 @@ _LANG_LABELS = {
 }
 
 
+def _build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str) -> str:
+    """TRPGモード時のルールブック・シナリオをシステムプロンプト用テキストに展開する。"""
+    _is_ja = user_language == "ja"
+    parts = []
+
+    system_name = rulebook.get("rule_system_name", "")
+    world = rulebook.get("world_setting", "")
+    dice_sys = rulebook.get("dice_system", "1d100")
+    judgment = rulebook.get("judgment", {})
+    golden = rulebook.get("golden_rule", "")
+
+    if _is_ja:
+        parts.append(f"【TRPGルールブック: {system_name}】")
+        if world:
+            parts.append(f"世界観: {world}")
+        parts.append(f"ダイスシステム: {dice_sys}")
+        cond = judgment.get("success_condition", "roll_lte_skill")
+        cond_label = {
+            "roll_lte_skill": "ダイス目 ≤ スキル値で成功",
+            "roll_gte_skill": "ダイス目 ≥ スキル値で成功",
+        }.get(cond, cond)
+        parts.append(f"判定: {cond_label}")
+        if golden:
+            parts.append(f"ゴールデンルール: {golden}")
+    else:
+        parts.append(f"[TRPG Rulebook: {system_name}]")
+        if world:
+            parts.append(f"World: {world}")
+        parts.append(f"Dice system: {dice_sys}")
+        cond = judgment.get("success_condition", "roll_lte_skill")
+        cond_label = {
+            "roll_lte_skill": "roll ≤ skill value = success",
+            "roll_gte_skill": "roll ≥ skill value = success",
+        }.get(cond, cond)
+        parts.append(f"Judgment: {cond_label}")
+        if golden:
+            parts.append(f"Golden rule: {golden}")
+
+    if scenario:
+        title = scenario.get("title", "")
+        synopsis = scenario.get("synopsis", "")
+        current_scene = scenario.get("scenes", [{}])[0] if scenario.get("scenes") else {}
+        scene_title = current_scene.get("title", "")
+        scene_desc = current_scene.get("description", "")
+        if _is_ja:
+            parts.append(f"\n【シナリオ: {title}】")
+            if synopsis:
+                parts.append(f"概要: {synopsis}")
+            if scene_title:
+                parts.append(f"現在の場面: {scene_title}")
+            if scene_desc:
+                parts.append(scene_desc)
+        else:
+            parts.append(f"\n[Scenario: {title}]")
+            if synopsis:
+                parts.append(f"Synopsis: {synopsis}")
+            if scene_title:
+                parts.append(f"Current scene: {scene_title}")
+            if scene_desc:
+                parts.append(scene_desc)
+
+    return "\n".join(parts)
+
+
 def _build_session_context(
     topic: str, rules: list[str], initiative: list[str],
     name_map: dict, speaker_name: str, user_language: str,
+    trpg_context: str = "",
 ) -> str:
     other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
+    parts = []
+    if trpg_context:
+        parts.append(trpg_context)
     if user_language == "ja":
-        parts = ["【セッション情報】"]
+        parts.append("【セッション情報】")
         if topic:
             parts.append(f"お題: 「{topic}」")
         parts.append(f"参加者: {', '.join(name_map.get(c, c) for c in initiative)}")
@@ -65,7 +133,7 @@ def _build_session_context(
         if rules:
             parts.append("ルール:\n" + "\n".join(f"・{r}" for r in rules))
     else:
-        parts = ["[Session Info]"]
+        parts.append("[Session Info]")
         if topic:
             parts.append(f"Topic: \"{topic}\"")
         parts.append(f"Participants: {', '.join(name_map.get(c, c) for c in initiative)}")
@@ -130,6 +198,14 @@ _RULE_DIRS = [
     _BASE / "data" / "public" / "session_rules",
     _BASE / "data" / "private" / "session_rules",
 ]
+_TRPG_RULEBOOK_DIRS = [
+    _BASE / "data" / "public" / "trpg_rules",
+    _BASE / "data" / "private" / "trpg_rules",
+]
+_TRPG_SCENARIO_DIRS = [
+    _BASE / "data" / "public" / "trpg_scenarios",
+    _BASE / "data" / "private" / "trpg_scenarios",
+]
 _DIRECTIVE_DIRS = [
     _BASE / "data" / "public" / "action_directives",
     _BASE / "data" / "private" / "action_directives",
@@ -140,6 +216,32 @@ _SESSION_HISTORY_DIRS = [
 ]
 _AUTOSAVE_DIR = _BASE / "data" / "private" / "session_autosave"
 _SAFE_FILENAME_RE = re.compile(r'^[A-Za-z0-9_\-]+\.json$')
+
+
+def _load_trpg_rulebook(rulebook_id: str) -> dict:
+    if not rulebook_id:
+        return {}
+    for d in _TRPG_RULEBOOK_DIRS:
+        path = d / f"{rulebook_id}.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+    return {}
+
+
+def _load_trpg_scenario(scenario_id: str) -> dict:
+    if not scenario_id:
+        return {}
+    for d in _TRPG_SCENARIO_DIRS:
+        path = d / f"{scenario_id}.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+    return {}
 
 
 def _autosave(session_id: str) -> None:
@@ -285,6 +387,7 @@ class SessionStartRequest(BaseModel):
     char_backends: dict[str, str] = {}
     trpg_mode: bool = False
     trpg_rulebook: str = ""
+    trpg_scenario: str = ""
 
 
 class SessionNextRequest(BaseModel):
@@ -347,6 +450,7 @@ def start_session(req: SessionStartRequest):
         "designated_next": None,
         "trpg_mode": req.trpg_mode,
         "trpg_rulebook": req.trpg_rulebook,
+        "trpg_scenario": req.trpg_scenario,
     }
 
     order = [name_map.get(c, c) for c in initiative]
@@ -446,8 +550,15 @@ def next_turn(req: SessionNextRequest):
     directive_set_id = session.get("action_directive_set", "default")
     _directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
 
+    _trpg_ctx = ""
+    if session.get("trpg_mode"):
+        _rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
+        _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+        _trpg_ctx = _build_trpg_context(_rulebook, _scenario or None, _user_lang)
+
     session_ctx = _build_session_context(
         topic, rules, initiative, name_map, speaker_name, _user_lang,
+        trpg_context=_trpg_ctx,
     )
     user_text = _build_turn_instruction(
         action_count, speaker_name, other_names, topic,

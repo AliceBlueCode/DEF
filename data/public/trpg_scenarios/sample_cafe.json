@@ -1,0 +1,27 @@
+{
+  "id": "sample_cafe",
+  "title": "深夜の喫茶店",
+  "rulebook_id": "def_original",
+  "synopsis": "深夜の喫茶店に集まった探索者たちが、奇妙な出来事に巻き込まれていく短編シナリオ。",
+  "scenes": [
+    {
+      "id": "scene_01",
+      "title": "深夜の喫茶店",
+      "description": "深夜0時、閉店間際の喫茶店。外は雨。カウンターに腰を落ち着けた探索者たちは、ふと奇妙な客に気づく。",
+      "triggers": [],
+      "choices": []
+    },
+    {
+      "id": "scene_02",
+      "title": "奇妙な客",
+      "description": "隅のテーブルに座る老人は、誰とも話さずコーヒーを見つめている。その手元には、古びた地図が広げられている。",
+      "triggers": [
+        { "condition": "inspect_map", "description": "地図を調べると、この街の地下に広がる謎の構造物が描かれている。" }
+      ],
+      "choices": [
+        { "id": "approach", "label": "老人に話しかける" },
+        { "id": "ignore", "label": "放っておく" }
+      ]
+    }
+  ]
+}

@@ -119,6 +119,7 @@ function CharMultiSelect({
 type RuleOption = { id: string; label: string }
 type DirectiveOption = { id: string; label: string; rating: string; recommended_for: number[] }
 type RulebookOption = { id: string; label: string; dice_system: string }
+type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string }
 
 export default function SessionTab({ characters, backend, ttsBackend, t2iBackend }: Props) {
   const t = useT()
@@ -128,6 +129,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [trpgMode, setTrpgMode] = useState(false)
   const [rulebookOptions, setRulebookOptions] = useState<RulebookOption[]>([])
   const [selectedRulebook, setSelectedRulebook] = useState('')
+  const [scenarioOptions, setScenarioOptions] = useState<ScenarioOption[]>([])
+  const [selectedScenario, setSelectedScenario] = useState('')
   const [ruleOptions, setRuleOptions] = useState<RuleOption[]>([])
   const [directiveSet, setDirectiveSet] = useState('default')
   const [directiveOptions, setDirectiveOptions] = useState<DirectiveOption[]>([])
@@ -248,6 +251,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         }
       })
       .catch(() => {})
+    fetch('/api/trpg/scenarios')
+      .then(r => r.json())
+      .then(d => {
+        if (d.scenarios?.length) {
+          setScenarioOptions(d.scenarios)
+        }
+      })
+      .catch(() => {})
     fetch('/api/settings/backends')
       .then(r => r.json())
       .then(d => {
@@ -281,7 +292,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '' }),
+        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '' }),
       })
       const data = await res.json()
       setSessionId(data.session_id)
@@ -1005,6 +1016,27 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                   <option key={r.id} value={r.id}>{r.label}（{r.dice_system}）</option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {trpgMode && scenarioOptions.length > 0 && (
+            <div className="session-field">
+              <label className="session-label">シナリオ</label>
+              <select
+                className="session-select"
+                value={selectedScenario}
+                onChange={e => setSelectedScenario(e.target.value)}
+              >
+                <option value="">（シナリオなし）</option>
+                {scenarioOptions.map(s => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+              {selectedScenario && scenarioOptions.find(s => s.id === selectedScenario)?.synopsis && (
+                <p style={{ fontSize: '0.82em', opacity: 0.7, marginTop: 4, marginBottom: 0 }}>
+                  {scenarioOptions.find(s => s.id === selectedScenario)?.synopsis}
+                </p>
+              )}
             </div>
           )}
 

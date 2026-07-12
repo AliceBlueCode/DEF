@@ -17,6 +17,10 @@ _RULEBOOK_DIRS = [
     _BASE / "data" / "public" / "trpg_rules",
     _BASE / "data" / "private" / "trpg_rules",
 ]
+_SCENARIO_DIRS = [
+    _BASE / "data" / "public" / "trpg_scenarios",
+    _BASE / "data" / "private" / "trpg_scenarios",
+]
 _SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 
 
@@ -97,6 +101,53 @@ def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, str(target))
     return {"status": "ok", "id": rulebook_id}
+
+
+# ── シナリオ ──────────────────────────────────────────────────────
+
+def _load_scenarios() -> dict:
+    scenarios = {}
+    for d in _SCENARIO_DIRS:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.suffix == ".json" and f.name != ".gitkeep":
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        sid = data.get("id", f.stem)
+                        scenarios[sid] = data
+                    except (json.JSONDecodeError, OSError):
+                        pass
+    return scenarios
+
+
+@router.get("/scenarios")
+def list_scenarios():
+    scenarios = _load_scenarios()
+    return {
+        "scenarios": [
+            {
+                "id": sid,
+                "label": s.get("title", sid),
+                "synopsis": s.get("synopsis", ""),
+                "rulebook_id": s.get("rulebook_id", ""),
+            }
+            for sid, s in scenarios.items()
+        ]
+    }
+
+
+@router.get("/scenarios/{scenario_id}")
+def get_scenario(scenario_id: str):
+    if not _SAFE_ID_RE.match(scenario_id):
+        return {"error": "Invalid scenario ID"}
+    for d in _SCENARIO_DIRS:
+        path = d / f"{scenario_id}.json"
+        if path.exists():
+            try:
+                return {"content": path.read_text(encoding="utf-8"), "id": scenario_id}
+            except OSError as e:
+                return {"error": str(e)}
+    return {"error": f"Scenario '{scenario_id}' not found"}
 
 
 # ── ダイス ────────────────────────────────────────────────────────
