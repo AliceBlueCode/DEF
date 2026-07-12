@@ -39,11 +39,12 @@ T2I_PROMPT_MODE_LABELS = {
 }
 DEFAULT_T2I_PROMPT_MODE = "current"
 
-T2I_BACKENDS = ["a1111", "comfyui", "civitai", "huggingface"]
+T2I_BACKENDS = ["a1111", "comfyui", "civitai", "huggingface", "openai"]
 T2I_BACKEND_LABELS = {
     "a1111": "A1111 (ローカル)",
     "comfyui": "ComfyUI (ローカル)",
     "civitai": "Civitai (外部API)",
     "huggingface": "Hugging Face (外部API)",
+    "openai": "OpenAI DALL-E (外部API)",
 }
 DEFAULT_T2I_BACKEND = "huggingface"

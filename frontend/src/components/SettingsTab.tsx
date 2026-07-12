@@ -372,6 +372,18 @@ export default function SettingsTab({
             </button>
           </>
         )}
+        {t2iBackend === 'openai' && (
+          <div className="settings-row" style={{ marginTop: 8 }}>
+            <label>{t('settings.label.model')}</label>
+            <input
+              type="text"
+              placeholder="gpt-image-1"
+              value={get(t2iMKey, '') as string}
+              onChange={e => set(t2iMKey, e.target.value)}
+              style={{ border: '1px solid #444', borderRadius: 4, padding: '9px 8px', fontSize: '1em', flex: 1, fontFamily: 'monospace' }}
+            />
+          </div>
+        )}
         {get(t2iMKey, '') && (
           <button className="profile-open-btn" style={{ marginTop: 8 }} onClick={() => setShowT2iProfile(true)}>
             {t('settings.label.modelProfileBtn')}

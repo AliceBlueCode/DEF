@@ -1,12 +1,13 @@
 """T2Iバックエンド切替"""
 
-from def_kari.t2i.adapters import a1111, civitai, huggingface, comfyui
+from def_kari.t2i.adapters import a1111, civitai, huggingface, comfyui, openai_dalle
 
 T2I_BACKENDS = {
     "a1111":       a1111.generate,
     "civitai":     civitai.generate,
     "huggingface": huggingface.generate,
     "comfyui":     comfyui.generate,
+    "openai":      openai_dalle.generate,
 }
 
 T2I_BACKEND_LABELS = {
@@ -14,6 +15,7 @@ T2I_BACKEND_LABELS = {
     "civitai":     "Civitai API",
     "huggingface": "Hugging Face API",
     "comfyui":     "ComfyUI (ローカル)",
+    "openai":      "OpenAI DALL-E (外部API)",
 }
 
 
