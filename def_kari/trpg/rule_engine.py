@@ -56,9 +56,12 @@ def judge(roll_total: int, skill_value: int, rulebook: dict) -> dict:
     """Determine success/failure based on rulebook judgment rules.
 
     Supported judgment types:
-        "roll_lte_skill"  : roll <= skill → success  (CoC, DEF original)
-        "roll_gte_skill"  : roll >= skill → success  (some systems)
-        "roll_lte_target" : roll <= target (fixed value in rulebook)
+        "roll_lte_stat_x5" : judgment_value = stat × 5; roll <= judgment_value → success  (DEF original)
+        "roll_lte_skill"   : roll <= skill → success  (CoC-style)
+        "roll_gte_skill"   : roll >= skill → success  (some systems)
+
+    For "roll_lte_stat_x5": skill_value is the raw stat value (e.g. 8 → judgment 40).
+    Critical: roll <= judgment_value / critical_threshold_divisor (= stat value itself when divisor=5)
 
     Returns:
         {
@@ -67,6 +70,7 @@ def judge(roll_total: int, skill_value: int, rulebook: dict) -> dict:
             "fumble": bool,
             "roll": int,
             "skill_value": int,
+            "judgment_value": int,
             "judgment_type": str,
         }
     """
@@ -74,18 +78,29 @@ def judge(roll_total: int, skill_value: int, rulebook: dict) -> dict:
     jtype = judgment.get("success_condition", "roll_lte_skill")
 
     dice_sides = _get_dice_sides(rulebook)
-    critical_threshold = judgment.get("critical_threshold", max(1, skill_value // 5))
     fumble_threshold = judgment.get("fumble_threshold", min(dice_sides, 96 if dice_sides == 100 else dice_sides - 4))
+    divisor = judgment.get("critical_threshold_divisor", 5)
 
-    if jtype == "roll_lte_skill":
+    if jtype == "roll_lte_stat_x5":
+        judgment_value = skill_value * 5
+        critical_threshold = max(1, judgment_value // divisor)
+        success = roll_total <= judgment_value
+        critical = roll_total <= critical_threshold
+        fumble = roll_total >= fumble_threshold
+    elif jtype == "roll_lte_skill":
+        judgment_value = skill_value
+        critical_threshold = judgment.get("critical_threshold", max(1, skill_value // divisor))
         success = roll_total <= skill_value
         critical = roll_total <= critical_threshold
         fumble = roll_total >= fumble_threshold
     elif jtype == "roll_gte_skill":
+        judgment_value = skill_value
+        critical_threshold = judgment.get("critical_threshold", max(1, skill_value // divisor))
         success = roll_total >= skill_value
         critical = roll_total >= (dice_sides - critical_threshold + 1)
         fumble = roll_total <= (fumble_threshold - dice_sides + 1)
     else:
+        judgment_value = skill_value
         success = roll_total <= skill_value
         critical = False
         fumble = False
@@ -96,6 +111,7 @@ def judge(roll_total: int, skill_value: int, rulebook: dict) -> dict:
         "fumble": fumble and not success,
         "roll": roll_total,
         "skill_value": skill_value,
+        "judgment_value": judgment_value,
         "judgment_type": jtype,
     }
 
@@ -132,8 +148,8 @@ def opposed_check(
     atk_result = judge(attacker_roll, attacker_skill, rulebook)
     def_result = judge(defender_roll, defender_skill, rulebook)
 
-    atk_ach = attacker_skill - attacker_roll
-    def_ach = defender_skill - defender_roll
+    atk_ach = atk_result["judgment_value"] - attacker_roll
+    def_ach = def_result["judgment_value"] - defender_roll
 
     atk_crit = atk_result["critical"]
     def_crit = def_result["critical"]
@@ -184,7 +200,7 @@ def validate_rulebook(data: Any) -> list[str]:
             errors.append(f"invalid dice_system: {data['dice_system']!r} (expected e.g. '1d100')")
     if "judgment" in data and isinstance(data["judgment"], dict):
         sc = data["judgment"].get("success_condition", "")
-        valid_conditions = {"roll_lte_skill", "roll_gte_skill", "roll_lte_target"}
+        valid_conditions = {"roll_lte_stat_x5", "roll_lte_skill", "roll_gte_skill", "roll_lte_target"}
         if sc not in valid_conditions:
             errors.append(f"unknown success_condition: {sc!r}")
     return errors

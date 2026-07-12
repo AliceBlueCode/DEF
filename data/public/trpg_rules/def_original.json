@@ -5,19 +5,27 @@
   "dice_system": "1d100",
   "world_setting": "DEFキャラクターが生きる現代〜近未来の世界",
   "judgment": {
-    "success_condition": "roll_lte_skill",
+    "success_condition": "roll_lte_stat_x5",
     "critical_threshold_divisor": 5,
     "fumble_threshold": 96
   },
   "stats": {
-    "str": { "label": "筋力", "label_en": "STR", "range": [1, 100] },
-    "dex": { "label": "敏捷", "label_en": "DEX", "range": [1, 100] },
-    "int": { "label": "知性", "label_en": "INT", "range": [1, 100] },
-    "luk": { "label": "幸運", "label_en": "LUK", "range": [1, 100] }
+    "思考": { "label": "思考", "label_en": "Thought",     "description": "知性・判断・記憶・洞察",       "min": 3 },
+    "情動": { "label": "情動", "label_en": "Emotion",     "description": "感情・意志・共感・精神力",     "min": 3 },
+    "身体": { "label": "身体", "label_en": "Body",        "description": "体力・敏捷・耐久・感覚",       "min": 3 },
+    "環境": { "label": "環境", "label_en": "Environment", "description": "社会的立場・人脈・運・状況適応", "min": 3 }
+  },
+  "character_creation": {
+    "method": "point_distribution",
+    "base_points": 40,
+    "stat_count": 4,
+    "stat_min": 3,
+    "note": "40点±を4能力値に自由配分。各能力値最低3。"
   },
   "skill_point_pool": 300,
+  "skill_note": "スキルポイントは判定時にプールから割り振る。上限なし。",
   "opposed_check": {
-    "achievement_value": "skill - roll",
+    "achievement_value": "judgment_value - roll",
     "tie_winner": "defender",
     "dual_critical_winner": "defender"
   },
