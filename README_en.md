@@ -64,7 +64,7 @@ AI candidate generation, TTS narration, and T2I illustrations work in sync — y
 
 DEF is local-first, but you don't need a local environment to begin.
 
-Using external APIs (Gemini / OpenAI / Anthropic, etc.), text generation and voice synthesis work without a GPU. Image generation requires a T2I API (Civitai / Hugging Face) or a local GPU environment.
+Using external APIs (Gemini / OpenAI / Anthropic, etc.), text generation and voice synthesis work without a GPU. Image generation requires a T2I API (OpenAI DALL-E / Civitai / Hugging Face) or a local GPU environment.
 
 Once your local setup is ready, you can switch to fully offline, high-speed operation at any time.
 
@@ -93,7 +93,7 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 - **3-Modality Integration:** Text, voice, and image work together as a continuous creative experience
 - **3 Modes:** Chat (1-on-1 dialogue), Session (multiple AIs + humans at the same table), Novel (novel writing + AI candidate generation)
 - **Character Persistence:** Dialogue history, emotions, and generated assets are persisted — resume from where you left off after restart
-- **Adapter Pattern:** Freely swap between 5 LLM, 5 TTS, and 4 T2I backends
+- **Adapter Pattern:** Freely swap between 5 LLM, 5 TTS, and 5 T2I backends
 - **Zoning:** Clear separation of public and private data. Generated assets are excluded from Git
 
 -----
@@ -104,7 +104,7 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 |---|---|---|
 | **LLM (text)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
 | **TTS (voice)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
-| **T2I (image)** | Automatic1111 / ComfyUI | Civitai API / Hugging Face API |
+| **T2I (image)** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----
 

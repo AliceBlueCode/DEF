@@ -64,7 +64,7 @@ La generación de candidatos por IA, la narración TTS y las ilustraciones T2I f
 
 DEF es local-first, pero no necesitas un entorno local para comenzar.
 
-Usando APIs externas (Gemini / OpenAI / Anthropic, etc.), la generación de texto y síntesis de voz funcionan sin GPU. La generación de imágenes requiere una API de T2I (Civitai / Hugging Face) o un entorno GPU local.
+Usando APIs externas (Gemini / OpenAI / Anthropic, etc.), la generación de texto y síntesis de voz funcionan sin GPU. La generación de imágenes requiere una API de T2I (OpenAI DALL-E / Civitai / Hugging Face) o un entorno GPU local.
 
 Una vez que tu configuración local esté lista, puedes cambiar a operación completamente offline en cualquier momento.
 
@@ -93,7 +93,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 - **Integración de 3 modalidades:** Texto, voz e imagen funcionan juntos como una experiencia creativa continua
 - **3 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), Novela (escritura de novelas + generación de candidatos por IA)
 - **Persistencia de personajes:** El historial de diálogo, emociones y assets generados se persisten — retoma donde lo dejaste tras reiniciar
-- **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 5 de TTS y 4 de T2I
+- **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 5 de TTS y 5 de T2I
 - **Zonificación:** Separación clara entre datos públicos y privados. Los assets generados quedan excluidos de Git
 
 -----
@@ -104,7 +104,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 |---|---|---|
 | **LLM (texto)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
 | **TTS (voz)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
-| **T2I (imagen)** | Automatic1111 / ComfyUI | Civitai API / Hugging Face API |
+| **T2I (imagen)** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----
 
