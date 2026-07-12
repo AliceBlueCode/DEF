@@ -240,6 +240,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [diceNotation, setDiceNotation] = useState('1d100')
   const [diceCharId, setDiceCharId] = useState('')
   const [diceStatKey, setDiceStatKey] = useState('')
+  const [autoJudgmentStat, setAutoJudgmentStat] = useState('')
+  const autoJudgmentStatRef = useRef('')
 
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
@@ -550,10 +552,40 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
       // TRPGモード自動進行: ラウンド末尾でキーパーを発火（次ラウンド全員が文脈を持てる）
       if (isLastOfRound && autoAdvanceRef.current) {
-        const keeperText = await fetchAIKeeperText(sid)
-        if (keeperText) setMessages(prev => [...prev, {
-          character_id: '_keeper', character_name: '🎩 Keeper', text: keeperText, emotion: '', tags: [],
-        }])
+        const keeperResult = await fetchAIKeeperResult(sid)
+        if (keeperResult?.text) {
+          setMessages(prev => [...prev, {
+            character_id: '_keeper', character_name: '🎩 Keeper', text: keeperResult.text, emotion: '', tags: [],
+          }])
+        }
+        // 全員一律自動判定ロール（autoJudgmentStat が設定されている場合）
+        if (autoJudgmentStatRef.current && Object.keys(charSheetData).length > 0) {
+          for (const [charId, sheet] of Object.entries(charSheetData)) {
+            const statVal = (sheet as any)?.stats?.[autoJudgmentStatRef.current]?.current ?? 0
+            if (statVal <= 0) continue
+            const j = {
+              character_id: charId,
+              character_name: charMap[charId]?.name ?? charId,
+              stat: autoJudgmentStatRef.current,
+              stat_value: statVal,
+            }
+            const roll = await rollJudgmentAuto(sid, j)
+            if (roll) {
+              const jv = roll.judgment?.judgment_value ?? statVal
+              let outcome = ''
+              if (roll.judgment?.critical) outcome = 'クリティカル！'
+              else if (roll.judgment?.fumble) outcome = 'ファンブル…'
+              else if (roll.judgment?.success) outcome = '成功'
+              else if (roll.judgment) outcome = '失敗'
+              setMessages(prev => [...prev, {
+                character_id: '_dice',
+                character_name: `🎲 ${j.character_name}`,
+                text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+                emotion: '', tags: [],
+              }])
+            }
+          }
+        }
       }
 
       if (nextRem > 0) {
@@ -633,7 +665,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
-  const fetchAIKeeperText = async (sid: string): Promise<string | null> => {
+  type KeeperJudgment = { character_id: string; character_name: string; stat: string; stat_value: number }
+  type KeeperResult = { text: string; judgments: KeeperJudgment[] }
+
+  const fetchAIKeeperResult = async (sid: string): Promise<KeeperResult | null> => {
     try {
       const res = await fetch(`/api/session/${sid}/ai_keeper`, {
         method: 'POST',
@@ -642,7 +677,30 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       })
       const d = await res.json()
       if (d.error) { console.error(d.error); return null }
-      return d.text ?? null
+      return { text: d.text ?? '', judgments: d.judgments ?? [] }
+    } catch (e) {
+      console.error(e)
+      return null
+    }
+  }
+
+  const rollJudgmentAuto = async (sid: string, j: KeeperJudgment) => {
+    try {
+      const res = await fetch('/api/trpg/dice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notation: '1d100',
+          session_id: sid,
+          skill_value: j.stat_value,
+          rulebook_id: selectedRulebook,
+          character_id: j.character_id,
+          stat_name: j.stat,
+        }),
+      })
+      const d = await res.json()
+      if (d.error) { console.error(d.error); return null }
+      return d
     } catch (e) {
       console.error(e)
       return null
@@ -1628,6 +1686,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 </button>
               )}
               <button onClick={() => setShowVoteDialog(true)} disabled={autoAdvance || (counters[humanCharId] ?? 0) < 3} className="keeper-add-btn" title={t('session.ctrl.voteBtn.title')}>{t('session.ctrl.voteBtn')}</button>
+              {trpgMode && Object.keys(charSheetData).length > 0 && (
+                <select className="session-select" style={{ flex: 'none', maxWidth: 80 }} value={autoJudgmentStat} onChange={e => { setAutoJudgmentStat(e.target.value); autoJudgmentStatRef.current = e.target.value }} title="キーパー発火時に全員自動ロール">
+                  <option value="">自動判定</option>
+                  {[...new Set(Object.values(charSheetData).flatMap((s: any) => Object.keys(s?.stats ?? {})))].map(stat => (
+                    <option key={stat} value={stat}>{stat}</option>
+                  ))}
+                </select>
+              )}
               {trpgMode && <DiceRow charSheetData={charSheetData} charMap={charMap} diceNotation={diceNotation} setDiceNotation={setDiceNotation} diceCharId={diceCharId} setDiceCharId={id => { setDiceCharId(id); setDiceStatKey('') }} diceStatKey={diceStatKey} setDiceStatKey={setDiceStatKey} onRoll={rollDice} />}
             </div>
             {humanPending.length > 0 && (
@@ -1691,6 +1757,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </>
           )}
           <button onClick={() => setShowVoteDialog(true)} disabled={autoAdvance} className="keeper-add-btn" title={t('session.ctrl.voteBtnKeeper.title')}>{t('session.ctrl.voteBtnKeeper')}</button>
+          {trpgMode && Object.keys(charSheetData).length > 0 && (
+            <select className="session-select" style={{ flex: 'none', maxWidth: 80 }} value={autoJudgmentStat} onChange={e => { setAutoJudgmentStat(e.target.value); autoJudgmentStatRef.current = e.target.value }} title="キーパー発火時に全員自動ロール">
+              <option value="">自動判定</option>
+              {[...new Set(Object.values(charSheetData).flatMap((s: any) => Object.keys(s?.stats ?? {})))].map(stat => (
+                <option key={stat} value={stat}>{stat}</option>
+              ))}
+            </select>
+          )}
           {trpgMode && <DiceRow charSheetData={charSheetData} charMap={charMap} diceNotation={diceNotation} setDiceNotation={setDiceNotation} diceCharId={diceCharId} setDiceCharId={id => { setDiceCharId(id); setDiceStatKey('') }} diceStatKey={diceStatKey} setDiceStatKey={setDiceStatKey} onRoll={rollDice} />}
         </div>}
       </div>

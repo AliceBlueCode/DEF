@@ -811,6 +811,7 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
 
     char_game_sheets = session.get("char_game_sheets", {})
     name_map = session.get("name_map", {})
+    _profiles: dict = {}
     if char_game_sheets:
         from def_kari.characters import load_profiles as _lp
         _profiles = _lp()
@@ -832,7 +833,7 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
             "【キーパーの役割】\n"
             "・探索者の行動・発言を受けて場面の状況や変化を描写する\n"
             "・NPCの言動・表情・反応を描写する\n"
-            "・判定が必要な場合は「○○の判定をどうぞ」と促す\n"
+            "・緊張感のある場面では判定が必要な状況を示唆する\n"
             "・次の展開への布石を置く\n"
             "・探索者の台詞は書かない"
         )
@@ -841,7 +842,7 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
             "[Keeper duties]\n"
             "- Narrate scene changes based on investigators' actions\n"
             "- Portray NPC reactions\n"
-            "- Prompt ability checks when needed\n"
+            "- Suggest when ability checks are needed\n"
             "- Do not write investigators' dialogue"
         )
 
@@ -866,24 +867,60 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
     _vl.acquire()
     try:
         chat_fn = LLM_BACKENDS[backend_id]["chat"]
-        text = chat_fn(messages, "", json_mode=False, options={"num_predict": 350})
+        text = chat_fn(messages, "", json_mode=False, options={"num_predict": 400})
     except Exception as e:
         return {"error": str(e)}
     finally:
         _vl.release()
 
     text = (text or "").strip()
+    # LLMが履歴形式を模倣してプレフィックスをつける場合に除去
+    for _pfx in ("🎩 キーパー: ", "🎩 Keeper: ", "🎩キーパー:", "🎩Keeper:"):
+        if text.startswith(_pfx):
+            text = text[len(_pfx):].strip()
+            break
 
-    if req.inject_history and text:
+    # 【判定】行をパースして judgments リストを構築
+    import re as _re
+    _jmatch = _re.search(r'【判定】(.+)', text)
+    judgments: list[dict] = []
+    clean_text = text
+    if _jmatch:
+        clean_text = text[:_jmatch.start()].strip()
+        _rev_map = {v: k for k, v in name_map.items()}
+        for _jpart in _jmatch.group(1).split('|'):
+            _jpart = _jpart.strip()
+            if ':' not in _jpart:
+                continue
+            _jcname, _jstat = _jpart.split(':', 1)
+            _jcname = _jcname.strip()
+            _jstat = _jstat.strip()
+            _jcid = _rev_map.get(_jcname)
+            if not _jcid:
+                continue
+            _jsheet_id = char_game_sheets.get(_jcid, '')
+            _jstat_val = 0
+            if _jsheet_id and _profiles:
+                _jraw = _profiles.get(_jcid, {})
+                _jsheet = _jraw.get("game_rules_sheets", {}).get(_jsheet_id, {})
+                _jstat_val = _jsheet.get("stats", {}).get(_jstat, {}).get("current", 0)
+            judgments.append({
+                "character_id": _jcid,
+                "character_name": _jcname,
+                "stat": _jstat,
+                "stat_value": _jstat_val,
+            })
+
+    if req.inject_history and clean_text:
         label = "🎩 キーパー" if _is_ja else "🎩 Keeper"
         session["history"].append({
             "role": "user",
-            "content": f"{label}: {text}",
+            "content": f"{label}: {clean_text}",
             "character_id": "_keeper",
         })
         _autosave(session_id)
 
-    return {"text": text, "character_id": "_keeper", "character_name": "🎩 Keeper"}
+    return {"text": clean_text, "character_id": "_keeper", "character_name": "🎩 Keeper", "judgments": judgments}
 
 
 @router.post("/{session_id}/skip")

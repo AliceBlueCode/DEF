@@ -157,6 +157,8 @@ class DiceRollRequest(BaseModel):
     session_id: str = ""
     skill_value: int = 0
     rulebook_id: str = ""
+    character_id: str = ""
+    stat_name: str = ""
 
 
 @router.post("/dice")
@@ -172,6 +174,35 @@ def dice_roll(req: DiceRollRequest):
         rulebook = books.get(req.rulebook_id, {})
         if rulebook:
             judgment = judge(result["total"], req.skill_value, rulebook)
+
+    # セッション履歴注入（判定ロール自動化用）
+    if req.session_id and req.character_id:
+        from def_kari.api.routes.session import _sessions
+        sess = _sessions.get(req.session_id)
+        if sess:
+            name_map = sess.get("name_map", {})
+            cname = name_map.get(req.character_id, req.character_id)
+            stat_part = f"【{req.stat_name}】" if req.stat_name else ""
+            j = judgment or {}
+            jv = j.get("judgment_value", req.skill_value)
+            if j.get("critical"):
+                outcome = "クリティカル！"
+            elif j.get("fumble"):
+                outcome = "ファンブル…"
+            elif j.get("success"):
+                outcome = "成功"
+            elif j:
+                outcome = "失敗"
+            else:
+                outcome = ""
+            msg = f"🎲 {cname}{stat_part} {result['total']} / {jv}"
+            if outcome:
+                msg += f" → {outcome}"
+            sess["history"].append({
+                "role": "user",
+                "content": msg,
+                "character_id": "_dice",
+            })
 
     return {
         "notation": result["notation"],
