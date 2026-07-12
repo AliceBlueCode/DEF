@@ -283,6 +283,8 @@ class SessionStartRequest(BaseModel):
     actions_per_turn: int = 0
     action_directive_set: str = ""
     char_backends: dict[str, str] = {}
+    trpg_mode: bool = False
+    trpg_rulebook: str = ""
 
 
 class SessionNextRequest(BaseModel):
@@ -343,6 +345,8 @@ def start_session(req: SessionStartRequest):
         "history": [],
         "counters": {},
         "designated_next": None,
+        "trpg_mode": req.trpg_mode,
+        "trpg_rulebook": req.trpg_rulebook,
     }
 
     order = [name_map.get(c, c) for c in initiative]

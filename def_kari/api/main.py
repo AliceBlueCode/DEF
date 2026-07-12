@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought
+from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought, trpg
 
 from def_kari import __version__
 
@@ -147,6 +147,7 @@ app.include_router(novel.router, prefix="/api/novel", tags=["novel"])
 app.include_router(session.router, prefix="/api/session", tags=["session"])
 app.include_router(t2i.router, prefix="/api/t2i", tags=["t2i"])
 app.include_router(thought.router, prefix="/api/thought", tags=["thought"])
+app.include_router(trpg.router, prefix="/api/trpg", tags=["trpg"])
 
 
 @app.get("/api/health")

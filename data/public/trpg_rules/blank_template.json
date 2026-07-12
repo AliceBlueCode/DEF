@@ -1,0 +1,20 @@
+{
+  "id": "blank_template",
+  "label": "カスタムルール（テンプレート）",
+  "rule_system_name": "カスタムルールシステム",
+  "dice_system": "1d100",
+  "world_setting": "",
+  "judgment": {
+    "success_condition": "roll_lte_skill",
+    "critical_threshold_divisor": 5,
+    "fumble_threshold": 96
+  },
+  "stats": {},
+  "skill_point_pool": 0,
+  "opposed_check": {
+    "achievement_value": "skill - roll",
+    "tie_winner": "defender",
+    "dual_critical_winner": "defender"
+  },
+  "golden_rule": "キーパー判断はすべてのルールより優先される"
+}

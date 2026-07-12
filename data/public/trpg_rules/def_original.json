@@ -1,0 +1,32 @@
+{
+  "id": "def_original",
+  "label": "DEFオリジナルルール",
+  "rule_system_name": "DEFオリジナルTRPGシステム",
+  "dice_system": "1d100",
+  "world_setting": "DEFキャラクターが生きる現代〜近未来の世界",
+  "judgment": {
+    "success_condition": "roll_lte_skill",
+    "critical_threshold_divisor": 5,
+    "fumble_threshold": 96
+  },
+  "stats": {
+    "str": { "label": "筋力", "label_en": "STR", "range": [1, 100] },
+    "dex": { "label": "敏捷", "label_en": "DEX", "range": [1, 100] },
+    "int": { "label": "知性", "label_en": "INT", "range": [1, 100] },
+    "luk": { "label": "幸運", "label_en": "LUK", "range": [1, 100] }
+  },
+  "skill_point_pool": 300,
+  "opposed_check": {
+    "achievement_value": "skill - roll",
+    "tie_winner": "defender",
+    "dual_critical_winner": "defender"
+  },
+  "combat": {
+    "damage": {
+      "type": "dice",
+      "notation": "1d6",
+      "on_critical": ["damage_x2", "achievement_x2"]
+    }
+  },
+  "golden_rule": "キーパー判断はすべてのルールより優先される"
+}
