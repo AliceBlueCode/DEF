@@ -118,12 +118,16 @@ function CharMultiSelect({
 // ── メインコンポーネント ──────────────────────────────────────
 type RuleOption = { id: string; label: string }
 type DirectiveOption = { id: string; label: string; rating: string; recommended_for: number[] }
+type RulebookOption = { id: string; label: string; dice_system: string }
 
 export default function SessionTab({ characters, backend, ttsBackend, t2iBackend }: Props) {
   const t = useT()
   const [selectedChars, setSelectedChars] = useState<string[]>([])
   const [topic, setTopic] = useState('')
   const [ruleSet, setRuleSet] = useState('default')
+  const [trpgMode, setTrpgMode] = useState(false)
+  const [rulebookOptions, setRulebookOptions] = useState<RulebookOption[]>([])
+  const [selectedRulebook, setSelectedRulebook] = useState('')
   const [ruleOptions, setRuleOptions] = useState<RuleOption[]>([])
   const [directiveSet, setDirectiveSet] = useState('default')
   const [directiveOptions, setDirectiveOptions] = useState<DirectiveOption[]>([])
@@ -235,6 +239,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         }
       })
       .catch(() => {})
+    fetch('/api/trpg/rulebooks')
+      .then(r => r.json())
+      .then(d => {
+        if (d.rulebooks?.length) {
+          setRulebookOptions(d.rulebooks)
+          setSelectedRulebook(d.rulebooks[0].id)
+        }
+      })
+      .catch(() => {})
     fetch('/api/settings/backends')
       .then(r => r.json())
       .then(d => {
@@ -268,7 +281,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_ids: selectedChars, topic, backend, rule_set: ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends }),
+        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '' }),
       })
       const data = await res.json()
       setSessionId(data.session_id)
@@ -950,7 +963,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             <p className="session-hint">{t('session.setup.noCharHint')}</p>
           )}
 
-          {ruleOptions.length > 0 && (
+          <div className="session-field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label className="session-label" style={{ marginBottom: 0 }}>TRPGモード</label>
+            <button
+              className={`toggle-btn${trpgMode ? ' active' : ''}`}
+              onClick={() => setTrpgMode(v => !v)}
+              style={{ padding: '4px 16px', borderRadius: 20, border: '1px solid var(--border-color, #aaa)', background: trpgMode ? '#4a6cf7' : 'transparent', color: trpgMode ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.9em' }}
+            >
+              {trpgMode ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          {!trpgMode && ruleOptions.length > 0 && (
             <div className="session-field">
               <label className="session-label">{t('session.setup.ruleLabel')}</label>
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -969,7 +993,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </div>
           )}
 
-          {actionsPerTurn > 1 && (() => {
+          {trpgMode && rulebookOptions.length > 0 && (
+            <div className="session-field">
+              <label className="session-label">ルールブック</label>
+              <select
+                className="session-select"
+                value={selectedRulebook}
+                onChange={e => setSelectedRulebook(e.target.value)}
+              >
+                {rulebookOptions.map(r => (
+                  <option key={r.id} value={r.id}>{r.label}（{r.dice_system}）</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {!trpgMode && actionsPerTurn > 1 && (() => {
             const filtered = directiveOptions.filter(d => d.recommended_for.length === 0 || d.recommended_for.includes(actionsPerTurn))
             return filtered.length > 0 && (
               <div className="session-field">
@@ -987,16 +1026,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             )
           })()}
 
-          <div className="session-field">
-            <label className="session-label">{t('session.setup.topicLabel')}</label>
-            <input
-              className="session-topic-input"
-              type="text"
-              value={topic}
-              onChange={e => setTopic(e.target.value)}
-              placeholder={t('session.setup.topicPlaceholder')}
-            />
-          </div>
+          {!trpgMode && (
+            <div className="session-field">
+              <label className="session-label">{t('session.setup.topicLabel')}</label>
+              <input
+                className="session-topic-input"
+                type="text"
+                value={topic}
+                onChange={e => setTopic(e.target.value)}
+                placeholder={t('session.setup.topicPlaceholder')}
+              />
+            </div>
+          )}
 
           <button
             className="start-btn"
