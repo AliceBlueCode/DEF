@@ -86,6 +86,17 @@ def get_character_standing(character_id: str):
     return {"error": "Standing image not found"}
 
 
+@router.get("/{character_id}/game_sheets")
+def get_character_game_sheets(character_id: str):
+    if not _SAFE_ID_RE.match(character_id):
+        return {"error": "Invalid character ID"}
+    from def_kari.characters import load_profiles
+    profiles = load_profiles()
+    raw = profiles.get(character_id, {})
+    sheets = raw.get("game_rules_sheets", {})
+    return {"game_sheets": sheets}
+
+
 @router.get("/{character_id}/raw-profile")
 def get_character_raw_profile(character_id: str):
     if not _SAFE_ID_RE.match(character_id):

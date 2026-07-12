@@ -160,6 +160,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [charBackends, setCharBackends] = useState<Record<string, string>>({})
   const [llmBackendOptions, setLlmBackendOptions] = useState<{ id: string; label: string }[]>([])
   const [showBackendDialog, setShowBackendDialog] = useState(false)
+  const [charGameSheets, setCharGameSheets] = useState<Record<string, string>>({})
+  const [charGameSheetOptions, setCharGameSheetOptions] = useState<Record<string, string[]>>({})
+  const [showGameSheetDialog, setShowGameSheetDialog] = useState(false)
   const [keeperInput, setKeeperInput] = useState('')
   const [pendingActions, setPendingActions] = useState<string[]>([])
   const [counters, setCounters] = useState<Record<string, number>>({})
@@ -292,7 +295,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '' }),
+        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {} }),
       })
       const data = await res.json()
       setSessionId(data.session_id)
@@ -545,6 +548,21 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setSaveStatus(t('session.save.failed'))
       setTimeout(() => setSaveStatus(''), 2000)
     }
+  }
+
+  const openGameSheetDialog = async () => {
+    const opts: Record<string, string[]> = {}
+    await Promise.all(selectedChars.map(async id => {
+      try {
+        const res = await fetch(`/api/characters/${id}/game_sheets`)
+        const data = await res.json()
+        opts[id] = Object.keys(data.game_sheets ?? {})
+      } catch {
+        opts[id] = []
+      }
+    }))
+    setCharGameSheetOptions(opts)
+    setShowGameSheetDialog(true)
   }
 
   const openRuleDialog = async () => {
@@ -954,6 +972,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 {llmBackendOptions.length > 0 && (
                   <button className="novel-hdr-btn" onClick={() => setShowBackendDialog(true)} title={t('session.setup.aiSettingsBtn.title')}>{t('session.setup.aiSettingsBtn')}</button>
                 )}
+                {trpgMode && (
+                  <button className="novel-hdr-btn" onClick={openGameSheetDialog} title="TRPGゲームキャラクターを設定">ゲームキャラ設定</button>
+                )}
               </div>
               <ul className="session-participants-list">
                 {selectedChars.map(id => (
@@ -962,6 +983,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     {charBackends[id] && (
                       <span style={{ fontSize: '0.75em', opacity: 0.6, marginLeft: '6px' }}>
                         [{llmBackendOptions.find(b => b.id === charBackends[id])?.label ?? charBackends[id]}]
+                      </span>
+                    )}
+                    {trpgMode && charGameSheets[id] && (
+                      <span style={{ fontSize: '0.75em', opacity: 0.6, marginLeft: '6px', color: '#4a6cf7' }}>
+                        [{charGameSheets[id]}]
                       </span>
                     )}
                   </li>
@@ -1161,6 +1187,46 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </div>
             <div className="plot-dialog-footer">
               <button className="novel-hdr-btn apply-btn" onClick={() => setShowBackendDialog(false)}>{t('session.backendDialog.confirmBtn')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showGameSheetDialog && (
+        <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowGameSheetDialog(false) }}>
+          <div className="plot-dialog" style={{ maxWidth: 440 }}>
+            <div className="plot-dialog-header">
+              <span>ゲームキャラクター設定</span>
+              <button className="plot-dialog-close" onClick={() => setShowGameSheetDialog(false)}>×</button>
+            </div>
+            <div className="plot-dialog-body" style={{ padding: '16px' }}>
+              {selectedChars.map(id => {
+                const options = charGameSheetOptions[id] ?? []
+                return (
+                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                    <img src={`/api/characters/${id}/icon`} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
+                    <span style={{ flex: 1, fontWeight: 500 }}>{charMap[id]?.name ?? id}</span>
+                    <select
+                      className="session-select"
+                      style={{ flex: 2 }}
+                      value={charGameSheets[id] ?? ''}
+                      onChange={e => setCharGameSheets(prev => {
+                        const next = { ...prev }
+                        if (e.target.value) next[id] = e.target.value
+                        else delete next[id]
+                        return next
+                      })}
+                    >
+                      <option value="">（シートなし）</option>
+                      {options.map(sid => (
+                        <option key={sid} value={sid}>{sid}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="plot-dialog-footer">
+              <button className="novel-hdr-btn apply-btn" onClick={() => setShowGameSheetDialog(false)}>確定</button>
             </div>
           </div>
         </div>

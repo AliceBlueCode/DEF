@@ -388,6 +388,7 @@ class SessionStartRequest(BaseModel):
     trpg_mode: bool = False
     trpg_rulebook: str = ""
     trpg_scenario: str = ""
+    char_game_sheets: dict[str, str] = {}
 
 
 class SessionNextRequest(BaseModel):
@@ -451,6 +452,7 @@ def start_session(req: SessionStartRequest):
         "trpg_mode": req.trpg_mode,
         "trpg_rulebook": req.trpg_rulebook,
         "trpg_scenario": req.trpg_scenario,
+        "char_game_sheets": req.char_game_sheets,
     }
 
     order = [name_map.get(c, c) for c in initiative]
