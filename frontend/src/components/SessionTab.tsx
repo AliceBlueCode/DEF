@@ -182,6 +182,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [hasDiscarded, setHasDiscarded] = useState(false)
   const wasAutoAdvancingRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [charSheetData, setCharSheetData] = useState<Record<string, any>>({})
+  const [showSheetPanel, setShowSheetPanel] = useState(false)
+  const [diceNotation, setDiceNotation] = useState('1d100')
+  const [diceCharId, setDiceCharId] = useState('')
+  const [diceStatKey, setDiceStatKey] = useState('')
 
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
@@ -306,6 +311,19 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const humanChar = characters.find(c => selectedChars.includes(c.id) && c.player_type === 'human')
       setHumanCharId(humanChar?.id ?? '')
       setHumanCharName(humanChar?.name ?? '')
+      if (trpgMode && Object.keys(charGameSheets).length > 0) {
+        const sheetData: Record<string, any> = {}
+        await Promise.all(
+          Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
+            try {
+              const r = await fetch(`/api/characters/${charId}/game_sheets`)
+              const d = await r.json()
+              if (d.game_sheets?.[sheetId]) sheetData[charId] = { ...d.game_sheets[sheetId], _sheet_id: sheetId }
+            } catch {}
+          })
+        )
+        setCharSheetData(sheetData)
+      }
       const firstCharId = (data.initiative || [])[0]
       if (humanChar && firstCharId === humanChar.id) {
         // 人間が先頭: nextTurn を呼ばず直接入力待ちに
@@ -547,6 +565,41 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     } catch {
       setSaveStatus(t('session.save.failed'))
       setTimeout(() => setSaveStatus(''), 2000)
+    }
+  }
+
+  const rollDice = async () => {
+    if (!diceNotation.trim()) return
+    const body: any = { notation: diceNotation.trim() }
+    if (diceCharId && diceStatKey && charSheetData[diceCharId]) {
+      const statVal = charSheetData[diceCharId].stats?.[diceStatKey]?.current
+      if (statVal) {
+        body.skill_value = statVal
+        body.rulebook_id = charSheetData[diceCharId]._sheet_id
+      }
+    }
+    try {
+      const res = await fetch('/api/trpg/dice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (data.error) return
+      let text = `🎲 ${data.notation}: [${data.rolls?.join(', ')}]`
+      if (data.modifier) text += ` ${data.modifier > 0 ? '+' : ''}${data.modifier}`
+      text += ` = ${data.total}`
+      if (data.judgment) {
+        const j = data.judgment
+        const label = j.critical ? 'クリティカル！' : j.fumble ? 'ファンブル！' : j.success ? '成功' : '失敗'
+        text += `　判定値${j.judgment_value}　→ ${label}`
+      }
+      if (diceCharId && diceStatKey) {
+        text = `${charMap[diceCharId]?.name ?? diceCharId}【${diceStatKey}】${text}`
+      }
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '🎲', text, emotion: '', tags: [] }])
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -1251,12 +1304,21 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         </span>
         <div className="session-header-actions">
           {saveStatus && <span className="save-status">{saveStatus}</span>}
+          {trpgMode && Object.keys(charSheetData).length > 0 && (
+            <button
+              className="novel-hdr-btn"
+              onClick={() => setShowSheetPanel(v => !v)}
+              title="キャラクターシート"
+              style={{ opacity: showSheetPanel ? 1 : 0.55 }}
+            >📋</button>
+          )}
           <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
           <button className="end-btn" onClick={endSession}>{t('session.header.endBtn')}</button>
         </div>
       </div>
 
-      <div className="session-stage">
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div className="session-stage" style={{ flex: 1, minWidth: 0 }}>
         {/* 立ち絵オーバーレイ */}
         <div className="session-standing">
           {initiative.map((cid, idx) => {
@@ -1390,8 +1452,83 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           <div ref={messagesEndRef} />
         </div>
       </div>
+      {trpgMode && showSheetPanel && Object.keys(charSheetData).length > 0 && (
+        <div style={{ width: 220, overflowY: 'auto', borderLeft: '1px solid var(--border-color, #444)', padding: '10px 8px', flexShrink: 0, fontSize: '0.8em' }}>
+          {Object.entries(charSheetData).map(([charId, sheet]) => {
+            const stats: Record<string, { current: number; max: number }> = sheet.stats ?? {}
+            return (
+              <div key={charId} style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                  <img src={`/api/characters/${charId}/icon`} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover' }} />
+                  <span style={{ fontWeight: 600 }}>{charMap[charId]?.name ?? charId}</span>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ opacity: 0.5 }}>
+                      <th style={{ textAlign: 'left', padding: '1px 3px', fontWeight: 'normal' }}>能力</th>
+                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>現在値</th>
+                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>判定値</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(stats).map(([key, val]) => (
+                      <tr key={key}>
+                        <td style={{ padding: '2px 3px' }}>【{key}】</td>
+                        <td style={{ textAlign: 'right', padding: '2px 3px', fontVariantNumeric: 'tabular-nums' }}>{val.current}</td>
+                        <td style={{ textAlign: 'right', padding: '2px 3px', fontVariantNumeric: 'tabular-nums', opacity: 0.7 }}>{val.current * 5}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {sheet.skill_points_remaining !== undefined && (
+                  <div style={{ marginTop: 4, opacity: 0.6 }}>SP残: {sheet.skill_points_remaining}</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      </div>
 
       <div className="session-controls">
+        {trpgMode && (
+          <div className="session-controls-row">
+            <span style={{ fontSize: '0.85em', opacity: 0.6, flexShrink: 0 }}>🎲</span>
+            <input
+              className="keeper-input"
+              style={{ width: 72, flex: 'none' }}
+              value={diceNotation}
+              onChange={e => setDiceNotation(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') rollDice() }}
+              placeholder="1d100"
+            />
+            <select
+              className="session-select"
+              style={{ flex: 1, maxWidth: 110 }}
+              value={diceCharId}
+              onChange={e => { setDiceCharId(e.target.value); setDiceStatKey('') }}
+            >
+              <option value="">キャラ</option>
+              {Object.keys(charSheetData).map(id => (
+                <option key={id} value={id}>{charMap[id]?.name ?? id}</option>
+              ))}
+            </select>
+            {diceCharId && charSheetData[diceCharId] && (
+              <select
+                className="session-select"
+                style={{ flex: 1, maxWidth: 90 }}
+                value={diceStatKey}
+                onChange={e => setDiceStatKey(e.target.value)}
+              >
+                <option value="">能力値</option>
+                {Object.keys(charSheetData[diceCharId].stats ?? {}).map(k => (
+                  <option key={k} value={k}>{k}</option>
+                ))}
+              </select>
+            )}
+            <button onClick={rollDice} className="keeper-add-btn" disabled={!diceNotation.trim()}>振る</button>
+          </div>
+        )}
         {humanCharId && (
           <>
             <div className="session-controls-row">
