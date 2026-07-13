@@ -19,6 +19,14 @@ from def_kari.llm.client import generate_structured_reply
 from def_kari.image_prompt.emotion_tags import apply_emotion_tags
 from def_kari.settings import load_settings
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
+from def_kari.gm.context_builder import (
+    load_trpg_rulebook as _load_trpg_rulebook,
+    load_trpg_scenario as _load_trpg_scenario,
+    build_trpg_context as _build_trpg_context,
+    build_session_context as _build_session_context,
+    build_turn_instruction as _build_turn_instruction,
+)
+from def_kari.gm.gm_agent import _gm_agent
 
 router = APIRouter()
 
@@ -49,144 +57,6 @@ _LANG_LABELS = {
 }
 
 
-def _build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str) -> str:
-    """TRPGモード時のルールブック・シナリオをシステムプロンプト用テキストに展開する。"""
-    _is_ja = user_language == "ja"
-    parts = []
-
-    system_name = rulebook.get("rule_system_name", "")
-    world = rulebook.get("world_setting", "")
-    dice_sys = rulebook.get("dice_system", "1d100")
-    judgment = rulebook.get("judgment", {})
-    golden = rulebook.get("golden_rule", "")
-
-    if _is_ja:
-        parts.append(f"【TRPGルールブック: {system_name}】")
-        if world:
-            parts.append(f"世界観: {world}")
-        parts.append(f"ダイスシステム: {dice_sys}")
-        cond = judgment.get("success_condition", "roll_lte_skill")
-        cond_label = {
-            "roll_lte_skill": "ダイス目 ≤ スキル値で成功",
-            "roll_gte_skill": "ダイス目 ≥ スキル値で成功",
-        }.get(cond, cond)
-        parts.append(f"判定: {cond_label}")
-        if golden:
-            parts.append(f"ゴールデンルール: {golden}")
-    else:
-        parts.append(f"[TRPG Rulebook: {system_name}]")
-        if world:
-            parts.append(f"World: {world}")
-        parts.append(f"Dice system: {dice_sys}")
-        cond = judgment.get("success_condition", "roll_lte_skill")
-        cond_label = {
-            "roll_lte_skill": "roll ≤ skill value = success",
-            "roll_gte_skill": "roll ≥ skill value = success",
-        }.get(cond, cond)
-        parts.append(f"Judgment: {cond_label}")
-        if golden:
-            parts.append(f"Golden rule: {golden}")
-
-    if scenario:
-        title = scenario.get("title", "")
-        synopsis = scenario.get("synopsis", "")
-        current_scene = scenario.get("scenes", [{}])[0] if scenario.get("scenes") else {}
-        scene_title = current_scene.get("title", "")
-        scene_desc = current_scene.get("description", "")
-        if _is_ja:
-            parts.append(f"\n【シナリオ: {title}】")
-            if synopsis:
-                parts.append(f"概要: {synopsis}")
-            if scene_title:
-                parts.append(f"現在の場面: {scene_title}")
-            if scene_desc:
-                parts.append(scene_desc)
-        else:
-            parts.append(f"\n[Scenario: {title}]")
-            if synopsis:
-                parts.append(f"Synopsis: {synopsis}")
-            if scene_title:
-                parts.append(f"Current scene: {scene_title}")
-            if scene_desc:
-                parts.append(scene_desc)
-
-    return "\n".join(parts)
-
-
-def _build_session_context(
-    topic: str, rules: list[str], initiative: list[str],
-    name_map: dict, speaker_name: str, user_language: str,
-    trpg_context: str = "",
-) -> str:
-    other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
-    parts = []
-    if trpg_context:
-        parts.append(trpg_context)
-    if user_language == "ja":
-        parts.append("【セッション情報】")
-        if topic:
-            parts.append(f"お題: 「{topic}」")
-        parts.append(f"参加者: {', '.join(name_map.get(c, c) for c in initiative)}")
-        parts.append(f"あなたの役割: {speaker_name}")
-        if other_names:
-            parts.append(f"対話相手: {', '.join(other_names)}")
-        if rules:
-            parts.append("ルール:\n" + "\n".join(f"・{r}" for r in rules))
-    else:
-        parts.append("[Session Info]")
-        if topic:
-            parts.append(f"Topic: \"{topic}\"")
-        parts.append(f"Participants: {', '.join(name_map.get(c, c) for c in initiative)}")
-        parts.append(f"Your role: {speaker_name}")
-        if other_names:
-            parts.append(f"Others: {', '.join(other_names)}")
-        if rules:
-            parts.append("Rules:\n" + "\n".join(f"- {r}" for r in rules))
-    return "\n".join(parts)
-
-
-def _build_turn_instruction(
-    action_count: int, speaker_name: str, other_names: list[str],
-    topic: str, session_history: list[dict], current_char_id: str,
-    session: dict, directives: dict, user_language: str,
-) -> str:
-    _is_ja = user_language == "ja"
-    if not session_history:
-        if _is_ja:
-            return "まず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。"
-        return "Start with a brief self-introduction, then state your position on the topic."
-    if action_count == 0:
-        # 他キャラの発言が実際にあるか確認（hallucination防止）
-        others_have_spoken = any(
-            h.get("role") == "assistant" and h.get("character_id") != current_char_id
-            for h in session_history
-        )
-        if _is_ja:
-            if others_have_spoken:
-                return "上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から意見を述べてください。"
-            return "上記の発言記録を踏まえ、あなた自身の立場から意見を述べてください。"
-        if others_have_spoken:
-            return "Based on the discussion above, respond to what other participants have said and express your own position."
-        return "Based on the discussion above, express your own position."
-    # ターン内2アクション目以降
-    _cur_round = session.get("round", 1)
-    _cur_turn = session.get("turn", 0)
-    turn_actions = [
-        h["content"].split(": ", 1)[-1]
-        for h in session_history
-        if h.get("character_id") == current_char_id
-        and h.get("round") == _cur_round
-        and h.get("turn") == _cur_turn
-    ]
-    prev_block = "\n".join(f"・{a}" for a in turn_actions) if turn_actions else ""
-    directive = directives.get(str(action_count), "")
-    if _is_ja:
-        text = f"このターンであなたは既に以下の発言をしています:\n{prev_block}\n\n"
-        text += f"【アクション{action_count + 1}の指示】{directive}" if directive else "続けて発言してください。"
-    else:
-        text = f"You have already said the following this turn:\n{prev_block}\n\n"
-        text += f"[Action {action_count + 1} directive] {directive}" if directive else "Please continue."
-    return text
 
 
 _MAX_SESSIONS = int(os.environ.get("DEF_MAX_SESSIONS", "1000"))
@@ -198,14 +68,6 @@ _RULE_DIRS = [
     _BASE / "data" / "public" / "session_rules",
     _BASE / "data" / "private" / "session_rules",
 ]
-_TRPG_RULEBOOK_DIRS = [
-    _BASE / "data" / "public" / "trpg_rules",
-    _BASE / "data" / "private" / "trpg_rules",
-]
-_TRPG_SCENARIO_DIRS = [
-    _BASE / "data" / "public" / "trpg_scenarios",
-    _BASE / "data" / "private" / "trpg_scenarios",
-]
 _DIRECTIVE_DIRS = [
     _BASE / "data" / "public" / "action_directives",
     _BASE / "data" / "private" / "action_directives",
@@ -216,32 +78,6 @@ _SESSION_HISTORY_DIRS = [
 ]
 _AUTOSAVE_DIR = _BASE / "data" / "private" / "session_autosave"
 _SAFE_FILENAME_RE = re.compile(r'^[A-Za-z0-9_\-]+\.json$')
-
-
-def _load_trpg_rulebook(rulebook_id: str) -> dict:
-    if not rulebook_id:
-        return {}
-    for d in _TRPG_RULEBOOK_DIRS:
-        path = d / f"{rulebook_id}.json"
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-    return {}
-
-
-def _load_trpg_scenario(scenario_id: str) -> dict:
-    if not scenario_id:
-        return {}
-    for d in _TRPG_SCENARIO_DIRS:
-        path = d / f"{scenario_id}.json"
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-    return {}
 
 
 def _autosave(session_id: str) -> None:
@@ -782,145 +618,22 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
     if not session.get("trpg_mode"):
         return {"error": "Not in TRPG mode"}
 
-    rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
-    scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
-
-    try:
-        settings = load_settings()
-    except Exception:
-        settings = {}
-    user_lang = settings.get("user_language", "ja") or "ja"
-    _is_ja = user_lang == "ja"
-
-    system_parts = []
-    if _is_ja:
-        system_parts.append(
-            "あなたはTRPGのゲームマスター（キーパー）です。"
-            "語り手として物語を進行させてください。"
-            "個性や感情表現は持たず、簡潔かつ情景豊かに語ります。3〜5文を目安にしてください。"
-        )
-    else:
-        system_parts.append(
-            "You are the Game Master (Keeper) of this TRPG session. "
-            "Narrate as a neutral storyteller. Be concise and vivid. 3-5 sentences."
-        )
-
-    trpg_ctx = _build_trpg_context(rulebook, scenario or None, user_lang)
-    if trpg_ctx:
-        system_parts.append(trpg_ctx)
-
-    char_game_sheets = session.get("char_game_sheets", {})
-    name_map = session.get("name_map", {})
-    _profiles: dict = {}
-    if char_game_sheets:
-        from def_kari.characters import load_profiles as _lp
-        _profiles = _lp()
-        char_lines = []
-        for _cid, _sid in char_game_sheets.items():
-            _raw = _profiles.get(_cid, {})
-            _sheet = _raw.get("game_rules_sheets", {}).get(_sid, {})
-            _stats = _sheet.get("stats", {})
-            _cname = name_map.get(_cid, _cid)
-            if _stats:
-                _stat_str = "／".join(f"{k}{v['current']}" for k, v in _stats.items())
-                char_lines.append(f"・{_cname}（{_stat_str}）")
-        if char_lines:
-            header = "【探索者】" if _is_ja else "[Investigators]"
-            system_parts.append(header + "\n" + "\n".join(char_lines))
-
-    if _is_ja:
-        system_parts.append(
-            "【キーパーの役割】\n"
-            "・探索者の行動・発言を受けて場面の状況や変化を描写する\n"
-            "・NPCの言動・表情・反応を描写する\n"
-            "・緊張感のある場面では判定が必要な状況を示唆する\n"
-            "・次の展開への布石を置く\n"
-            "・探索者の台詞は書かない"
-        )
-    else:
-        system_parts.append(
-            "[Keeper duties]\n"
-            "- Narrate scene changes based on investigators' actions\n"
-            "- Portray NPC reactions\n"
-            "- Suggest when ability checks are needed\n"
-            "- Do not write investigators' dialogue"
-        )
-
-    system_prompt = "\n\n".join(system_parts)
-
-    history = session.get("history", [])
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    for h in history[-20:]:
-        role = h.get("role", "user")
-        content = h.get("content", "")
-        if content:
-            messages.append({"role": role, "content": content})
-    final_prompt = "キーパーとして、直近の状況を踏まえて場面を進めてください。" if _is_ja else "As Keeper, advance the scene based on recent events."
-    messages.append({"role": "user", "content": final_prompt})
-
-    backend_id = req.backend or DEFAULT_LLM_BACKEND
-    if backend_id not in LLM_BACKENDS:
-        backend_id = DEFAULT_LLM_BACKEND
-
-    from def_kari.resources.vram_lock import get_vram_lock
-    _vl = get_vram_lock()
-    _vl.acquire()
-    try:
-        chat_fn = LLM_BACKENDS[backend_id]["chat"]
-        text = chat_fn(messages, "", json_mode=False, options={"num_predict": 400})
-    except Exception as e:
-        return {"error": str(e)}
-    finally:
-        _vl.release()
-
-    text = (text or "").strip()
-    # LLMが履歴形式を模倣してプレフィックスをつける場合に除去
-    for _pfx in ("🎩 キーパー: ", "🎩 Keeper: ", "🎩キーパー:", "🎩Keeper:"):
-        if text.startswith(_pfx):
-            text = text[len(_pfx):].strip()
-            break
-
-    # 【判定】行をパースして judgments リストを構築
-    import re as _re
-    _jmatch = _re.search(r'【判定】(.+)', text)
-    judgments: list[dict] = []
-    clean_text = text
-    if _jmatch:
-        clean_text = text[:_jmatch.start()].strip()
-        _rev_map = {v: k for k, v in name_map.items()}
-        for _jpart in _jmatch.group(1).split('|'):
-            _jpart = _jpart.strip()
-            if ':' not in _jpart:
-                continue
-            _jcname, _jstat = _jpart.split(':', 1)
-            _jcname = _jcname.strip()
-            _jstat = _jstat.strip()
-            _jcid = _rev_map.get(_jcname)
-            if not _jcid:
-                continue
-            _jsheet_id = char_game_sheets.get(_jcid, '')
-            _jstat_val = 0
-            if _jsheet_id and _profiles:
-                _jraw = _profiles.get(_jcid, {})
-                _jsheet = _jraw.get("game_rules_sheets", {}).get(_jsheet_id, {})
-                _jstat_val = _jsheet.get("stats", {}).get(_jstat, {}).get("current", 0)
-            judgments.append({
-                "character_id": _jcid,
-                "character_name": _jcname,
-                "stat": _jstat,
-                "stat_value": _jstat_val,
-            })
-
-    if req.inject_history and clean_text:
-        label = "🎩 キーパー" if _is_ja else "🎩 Keeper"
-        session["history"].append({
-            "role": "user",
-            "content": f"{label}: {clean_text}",
-            "character_id": "_keeper",
-        })
+    result = _gm_agent.narrate(
+        session=session,
+        backend_id=req.backend or DEFAULT_LLM_BACKEND,
+        inject_history=req.inject_history,
+    )
+    if result.get("error"):
+        return {"error": result["error"]}
+    if req.inject_history and result["text"]:
         _autosave(session_id)
 
-    return {"text": clean_text, "character_id": "_keeper", "character_name": "🎩 Keeper", "judgments": judgments}
+    return {
+        "text": result["text"],
+        "character_id": "_keeper",
+        "character_name": "🎩 Keeper",
+        "judgments": result["judgments"],
+    }
 
 
 @router.post("/{session_id}/skip")
