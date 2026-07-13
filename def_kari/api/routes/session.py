@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from def_kari.characters import load_profiles, get_character
 from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
-from def_kari.llm.client import generate_structured_reply
+from def_kari.llm.client import generate_structured_reply  # vote/deliberate で直接使用
+from def_kari.gm.player_agent import _player_agent
 from def_kari.image_prompt.emotion_tags import apply_emotion_tags
 from def_kari.settings import load_settings
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
@@ -416,16 +417,16 @@ def next_turn(req: SessionNextRequest):
     _vram_lock = get_vram_lock()
     _vram_lock.acquire()
     try:
-        result = generate_structured_reply(
+        result = _player_agent.narrate(
+            character=char,
             user_text=user_text,
             history=history,
             model=model,
-            character=char,
             backend=backend_id,
+            session_context=session_ctx,
             allowed_sexual=_allowed_sexual,
             allowed_violence=_allowed_violence,
             current_emotion=prev_emotion,
-            session_context=session_ctx,
         )
     except Exception as e:
         _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
