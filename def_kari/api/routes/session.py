@@ -622,6 +622,7 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
         session=session,
         backend_id=req.backend or DEFAULT_LLM_BACKEND,
         inject_history=req.inject_history,
+        session_id=session_id,
     )
     if result.get("error"):
         return {"error": result["error"]}
@@ -1099,6 +1100,14 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         elif vote_type == "expel" and target_id:
             session["initiative"] = [c for c in initiative if c != target_id]
 
+    # イベントバス通知（vote結果をゲームロジックレイヤーへ伝播）
+    if passed:
+        from def_kari.gm.events import game_event_bus, TOPIC_CHANGED, SESSION_ENDED
+        if vote_type == "topic_change" and detail:
+            game_event_bus.emit(session_id, TOPIC_CHANGED, {"new_topic": detail})
+        elif vote_type == "end_session":
+            game_event_bus.emit(session_id, SESSION_ENDED, {})
+
     # ターン位置を復元
     session["turn"] = pending["saved_turn"]
     session["round"] = pending["saved_round"]
@@ -1144,6 +1153,8 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
     ended = passed and vote_type == "end_session"
     if ended:
         _delete_autosave(session_id)
+        from def_kari.gm.events import game_event_bus
+        game_event_bus.clear_log(session_id)
     else:
         _autosave(session_id)
     return {
@@ -1157,6 +1168,13 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         "initiative": session["initiative"],
         "topic": session.get("topic", ""),
     }
+
+
+@router.get("/{session_id}/events")
+def get_session_events(session_id: str):
+    """セッションのゲームロジックイベントログを返す（Observer Agent用）。"""
+    from def_kari.gm.events import game_event_bus
+    return {"session_id": session_id, "events": game_event_bus.get_log(session_id)}
 
 
 @router.get("/debug")

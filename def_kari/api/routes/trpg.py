@@ -204,6 +204,20 @@ def dice_roll(req: DiceRollRequest):
                 "character_id": "_dice",
             })
 
+    # イベントバス通知（判定が行われたセッションに記録する）
+    if judgment and req.session_id:
+        from def_kari.gm.events import game_event_bus, JUDGMENT_RESOLVED
+        game_event_bus.emit(req.session_id, JUDGMENT_RESOLVED, {
+            "character_id": req.character_id,
+            "stat_name": req.stat_name,
+            "notation": result["notation"],
+            "roll": result["total"],
+            "judgment_value": judgment.get("judgment_value"),
+            "success": judgment.get("success"),
+            "critical": judgment.get("critical"),
+            "fumble": judgment.get("fumble"),
+        })
+
     return {
         "notation": result["notation"],
         "rolls": result["rolls"],

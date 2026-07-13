@@ -28,6 +28,7 @@ class GMAgent:
         session: dict,
         backend_id: str = DEFAULT_LLM_BACKEND,
         inject_history: bool = True,
+        session_id: str = "",
     ) -> dict:
         """セッション履歴・ルールブック・シナリオからGMナレーションを生成する。
 
@@ -179,6 +180,14 @@ class GMAgent:
                 "role": "user",
                 "content": f"{label}: {clean_text}",
                 "character_id": "_keeper",
+            })
+
+        # ── イベントバス通知 ───────────────────────────────────────
+        if session_id and clean_text:
+            from def_kari.gm.events import game_event_bus, SCENE_NARRATED
+            game_event_bus.emit(session_id, SCENE_NARRATED, {
+                "text": clean_text,
+                "judgments": judgments,
             })
 
         return {
