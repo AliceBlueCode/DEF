@@ -348,7 +348,12 @@ def build_for_npc(
     session: dict,
     user_language: str,
 ) -> str:
-    """NPC専用コンテキスト: そのNPCの目標・知識・関係性を含む。"""
+    """NPC専用コンテキスト: そのNPCの目標・知識・関係性を含む。
+
+    npc_data（シナリオ静的定義）と session["npc_state"][npc_id]（動的更新分）をマージする。
+    - knowledge: 静的 + 動的（重複排除）
+    - relationship: 静的をベースに動的で上書き（動的優先）
+    """
     _is_ja = user_language == "ja"
     parts = []
 
@@ -360,15 +365,23 @@ def build_for_npc(
         else {}
     )
 
+    # セッション中に動的更新された NPC 状態をマージ
+    dynamic = session.get("npc_state", {}).get(npc_id, {})
+    static_knowledge = npc_data.get("knowledge", [])
+    dynamic_knowledge = dynamic.get("knowledge", [])
+    knowledge = list(static_knowledge) + [k for k in dynamic_knowledge if k not in static_knowledge]
+
+    static_rel = npc_data.get("relationship", {})
+    dynamic_rel = dynamic.get("relationship", {})
+    relationships = {**static_rel, **dynamic_rel}  # 動的優先
+
     if _is_ja:
         if current_scene.get("description"):
             parts.append(f"現在の場面: {current_scene['description']}")
         if npc_data.get("goal"):
             parts.append(f"【あなたの目的】{npc_data['goal']}")
-        knowledge = npc_data.get("knowledge", [])
         if knowledge:
             parts.append("【あなたが知っていること】\n" + "\n".join(f"・{k}" for k in knowledge))
-        relationships = npc_data.get("relationship", {})
         if relationships:
             rel_lines = [
                 f"・{cid}: 信頼{v.get('trust', 50)} 敵意{v.get('hostility', 0)}"
@@ -380,10 +393,8 @@ def build_for_npc(
             parts.append(f"Current scene: {current_scene['description']}")
         if npc_data.get("goal"):
             parts.append(f"[Your goal] {npc_data['goal']}")
-        knowledge = npc_data.get("knowledge", [])
         if knowledge:
             parts.append("[What you know]\n" + "\n".join(f"- {k}" for k in knowledge))
-        relationships = npc_data.get("relationship", {})
         if relationships:
             rel_lines = [
                 f"- {cid}: trust={v.get('trust', 50)} hostility={v.get('hostility', 0)}"

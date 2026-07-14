@@ -132,6 +132,37 @@ def _save_session_episodic(session_id: str, session: dict) -> None:
         save_episodic(char_id, entry)
 
 
+def _build_initial_npc_state(scenario_id: str) -> dict:
+    """シナリオの静的NPC定義から npc_state を初期化する。
+
+    npc_state = {
+        npc_id: {
+            "knowledge": [str, ...],       # セッション中に獲得した情報
+            "relationship": {              # PC/NPC との関係値（動的更新）
+                char_id: {"trust": int, "hostility": int}
+            }
+        }
+    }
+    静的なデフォルト値（goal / description など）は scenario JSON を直接参照し、
+    セッション中の変更分のみ npc_state に保持する。
+    """
+    if not scenario_id:
+        return {}
+    scenario = _load_trpg_scenario(scenario_id)
+    npc_state = {}
+    for npc in scenario.get("npcs", []):
+        nid = npc.get("id")
+        if not nid:
+            continue
+        npc_state[nid] = {
+            "knowledge": list(npc.get("knowledge", [])),
+            "relationship": {
+                k: dict(v) for k, v in npc.get("relationship", {}).items()
+            },
+        }
+    return npc_state
+
+
 _BASE = Path(__file__).parent.parent.parent.parent
 _RULE_DIRS = [
     _BASE / "data" / "public" / "session_rules",
@@ -360,6 +391,7 @@ def start_session(req: SessionStartRequest):
         "char_game_sheets": req.char_game_sheets,
         "current_scene_index": 0,
         "player_knowledge": {cid: [] for cid in req.character_ids},
+        "npc_state": _build_initial_npc_state(req.trpg_scenario),
     }
 
     order = [name_map.get(c, c) for c in initiative]
@@ -1250,6 +1282,67 @@ def get_session_events(session_id: str):
     """セッションのゲームロジックイベントログを返す（Observer Agent用）。"""
     from def_kari.gm.events import game_event_bus
     return {"session_id": session_id, "events": game_event_bus.get_log(session_id)}
+
+
+class NpcKnowledgeRequest(BaseModel):
+    entry: str
+
+
+class NpcRelationshipRequest(BaseModel):
+    char_id: str
+    trust: int | None = None
+    hostility: int | None = None
+
+
+@router.post("/{session_id}/npc/{npc_id}/knowledge")
+def add_npc_knowledge(session_id: str, npc_id: str, req: NpcKnowledgeRequest):
+    """NPC が新たな情報を獲得したとき knowledge に追加する。
+
+    GM または自動ゲームロジックから呼び出す。
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "session not found"}
+    npc_state = session.setdefault("npc_state", {})
+    npc = npc_state.setdefault(npc_id, {"knowledge": [], "relationship": {}})
+    if req.entry and req.entry not in npc["knowledge"]:
+        npc["knowledge"].append(req.entry)
+        from def_kari.gm.events import game_event_bus, FLAG_UPDATED
+        game_event_bus.emit(session_id, FLAG_UPDATED, {
+            "key": f"npc_{npc_id}_knowledge",
+            "value": req.entry,
+            "gm_only": True,
+        })
+    return {"npc_id": npc_id, "knowledge": npc["knowledge"]}
+
+
+@router.post("/{session_id}/npc/{npc_id}/relationship")
+def update_npc_relationship(session_id: str, npc_id: str, req: NpcRelationshipRequest):
+    """NPC の特定キャラクターへの関係値を更新する。
+
+    trust / hostility は None を渡すと変更しない（部分更新）。
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "session not found"}
+    npc_state = session.setdefault("npc_state", {})
+    npc = npc_state.setdefault(npc_id, {"knowledge": [], "relationship": {}})
+    rel = npc["relationship"].setdefault(req.char_id, {"trust": 50, "hostility": 0})
+    if req.trust is not None:
+        rel["trust"] = max(0, min(100, req.trust))
+    if req.hostility is not None:
+        rel["hostility"] = max(0, min(100, req.hostility))
+    return {"npc_id": npc_id, "char_id": req.char_id, "relationship": rel}
+
+
+@router.get("/{session_id}/npc/{npc_id}/state")
+def get_npc_state(session_id: str, npc_id: str):
+    """NPC の現在の動的状態を返す（GM確認用）。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "session not found"}
+    npc_state = session.get("npc_state", {})
+    return {"npc_id": npc_id, "state": npc_state.get(npc_id, {"knowledge": [], "relationship": {}})}
 
 
 @router.get("/debug")
