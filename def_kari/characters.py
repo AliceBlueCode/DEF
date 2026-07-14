@@ -154,6 +154,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
     } if isinstance(_rels_raw, dict) else {}
 
     return {
+        "id": character_id or "",
         "name": bp.get("name", character_id or ""),
         "name_reading": bp.get("name_reading", {}),
         "player_type": bp.get("player_type", "ai"),

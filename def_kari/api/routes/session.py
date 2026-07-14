@@ -89,6 +89,49 @@ def _handle_flag_updated(session_id: str, event: dict) -> None:
 from def_kari.gm.events import game_event_bus as _game_event_bus, FLAG_UPDATED as _FLAG_UPDATED
 _game_event_bus.subscribe(_FLAG_UPDATED, _handle_flag_updated)
 
+
+def _save_session_episodic(session_id: str, session: dict) -> None:
+    """セッション終了時に各キャラクターの episodic memory を書き込む。"""
+    try:
+        from def_kari.gm.memory import save_episodic
+    except ImportError:
+        return
+
+    history = session.get("history", [])
+    name_map = session.get("name_map", {})
+    topic = session.get("topic", "")
+    round_count = session.get("round", 1)
+    all_char_ids = session.get("initiative", [])
+    ts = datetime.datetime.now().isoformat()
+
+    for char_id in all_char_ids:
+        # このキャラの assistant 発言から key_moments を抽出（最後の3件）
+        char_lines = [
+            h["content"].split(": ", 1)[-1]
+            for h in history
+            if h.get("role") == "assistant" and h.get("character_id") == char_id
+        ]
+        key_moments = char_lines[-3:] if char_lines else []
+
+        # 最後の感情状態
+        emotion_at_end = next(
+            (h.get("emotion", "neutral") for h in reversed(history)
+             if h.get("character_id") == char_id and h.get("emotion")),
+            "neutral",
+        )
+
+        entry = {
+            "session_id": session_id,
+            "date": ts,
+            "topic": topic,
+            "round_count": round_count,
+            "participants": [name_map.get(c, c) for c in all_char_ids if c != char_id],
+            "key_moments": key_moments,
+            "emotion_at_end": emotion_at_end,
+        }
+        save_episodic(char_id, entry)
+
+
 _BASE = Path(__file__).parent.parent.parent.parent
 _RULE_DIRS = [
     _BASE / "data" / "public" / "session_rules",
@@ -456,6 +499,7 @@ def next_turn(req: SessionNextRequest):
             allowed_sexual=_allowed_sexual,
             allowed_violence=_allowed_violence,
             current_emotion=prev_emotion,
+            char_id=current_char_id,
         )
     except Exception as e:
         _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
@@ -1182,6 +1226,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
 
     ended = passed and vote_type == "end_session"
     if ended:
+        _save_session_episodic(session_id, session)
         _delete_autosave(session_id)
         from def_kari.gm.events import game_event_bus
         game_event_bus.clear_log(session_id)
