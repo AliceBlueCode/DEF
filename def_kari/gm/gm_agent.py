@@ -11,6 +11,7 @@ from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.settings import load_settings
 from def_kari.gm.context_builder import (
     build_trpg_context,
+    build_for_gm,
     load_trpg_rulebook,
     load_trpg_scenario,
 )
@@ -64,7 +65,7 @@ class GMAgent:
                 "Narrate as a neutral storyteller. Be concise and vivid. 3-5 sentences."
             )
 
-        trpg_ctx = build_trpg_context(rulebook, scenario or None, user_lang)
+        trpg_ctx = build_for_gm(rulebook, scenario or None, session, user_lang)
         if trpg_ctx:
             system_parts.append(trpg_ctx)
 

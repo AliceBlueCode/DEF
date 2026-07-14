@@ -71,6 +71,7 @@
         "mid_term": "このセッションで参加者それぞれの価値観の輪郭を理解する",
         "immediate": ""
       },
+      "knowledge": [],
       "default_model_config": {
         "text_model_id": 504,
         "image_model_id": 101,

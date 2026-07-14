@@ -141,6 +141,259 @@ def build_session_context(
     return "\n".join(parts)
 
 
+def _append_knowledge(
+    parts: list,
+    char_id: str,
+    character: dict,
+    session: dict,
+    is_ja: bool,
+) -> None:
+    """静的knowledge（profile）＋動的knowledge（セッション中獲得）を parts に追加する。"""
+    static_knowledge = character.get("knowledge", [])
+    dynamic_knowledge = session.get("player_knowledge", {}).get(char_id, [])
+    all_knowledge = list(static_knowledge) + [k for k in dynamic_knowledge if k not in static_knowledge]
+    if not all_knowledge:
+        return
+    if is_ja:
+        parts.append("【あなたが知っていること】\n" + "\n".join(f"・{k}" for k in all_knowledge))
+    else:
+        parts.append("[What you know]\n" + "\n".join(f"- {k}" for k in all_knowledge))
+
+
+def build_for_gm(
+    rulebook: dict,
+    scenario: dict | None,
+    session: dict,
+    user_language: str,
+) -> str:
+    """GM専用コンテキスト: gm_notes / NPC目標 / 全フラグを含む完全情報。"""
+    _is_ja = user_language == "ja"
+    parts = []
+
+    base = build_trpg_context(rulebook, None, user_language)
+    if base:
+        parts.append(base)
+
+    if not scenario:
+        return "\n".join(parts)
+
+    current_scene_idx = session.get("current_scene_index", 0)
+    scenes = scenario.get("scenes", [])
+    current_scene = (
+        scenes[current_scene_idx]
+        if 0 <= current_scene_idx < len(scenes)
+        else (scenes[0] if scenes else {})
+    )
+    title = scenario.get("title", "")
+    synopsis = scenario.get("synopsis", "")
+
+    if _is_ja:
+        parts.append(f"\n【シナリオ: {title}（GM全情報）】")
+        if synopsis:
+            parts.append(f"概要: {synopsis}")
+        if current_scene.get("title"):
+            parts.append(f"現在の場面: {current_scene['title']}")
+        if current_scene.get("description"):
+            parts.append(current_scene["description"])
+        if current_scene.get("gm_notes"):
+            parts.append(f"[GMメモ] {current_scene['gm_notes']}")
+
+        npc_ids = current_scene.get("npcs", [])
+        all_npcs = {n["id"]: n for n in scenario.get("npcs", []) if "id" in n}
+        npc_lines = []
+        for nid in npc_ids:
+            npc = all_npcs.get(nid)
+            if npc:
+                line = f"・{npc.get('name', nid)}: {npc.get('description', '')}"
+                if npc.get("gm_notes"):
+                    line += f" [真実: {npc['gm_notes']}]"
+                if npc.get("goal"):
+                    line += f" [目的: {npc['goal']}]"
+                npc_lines.append(line)
+        if npc_lines:
+            parts.append("【登場NPC（GM情報）】\n" + "\n".join(npc_lines))
+
+        flags = scenario.get("flags", [])
+        if flags:
+            flag_lines = [
+                f"・{f['key']}: {f['value']}{'（GM専用）' if f.get('gm_only') else ''}"
+                for f in flags
+            ]
+            parts.append("【フラグ状態】\n" + "\n".join(flag_lines))
+    else:
+        parts.append(f"\n[Scenario: {title} (GM Full Info)]")
+        if synopsis:
+            parts.append(f"Synopsis: {synopsis}")
+        if current_scene.get("title"):
+            parts.append(f"Current scene: {current_scene['title']}")
+        if current_scene.get("description"):
+            parts.append(current_scene["description"])
+        if current_scene.get("gm_notes"):
+            parts.append(f"[GM Notes] {current_scene['gm_notes']}")
+
+        npc_ids = current_scene.get("npcs", [])
+        all_npcs = {n["id"]: n for n in scenario.get("npcs", []) if "id" in n}
+        npc_lines = []
+        for nid in npc_ids:
+            npc = all_npcs.get(nid)
+            if npc:
+                line = f"- {npc.get('name', nid)}: {npc.get('description', '')}"
+                if npc.get("gm_notes"):
+                    line += f" [Truth: {npc['gm_notes']}]"
+                if npc.get("goal"):
+                    line += f" [Goal: {npc['goal']}]"
+                npc_lines.append(line)
+        if npc_lines:
+            parts.append("[NPCs (GM Info)]\n" + "\n".join(npc_lines))
+
+        flags = scenario.get("flags", [])
+        if flags:
+            flag_lines = [
+                f"- {f['key']}: {f['value']}{' (GM only)' if f.get('gm_only') else ''}"
+                for f in flags
+            ]
+            parts.append("[Flag State]\n" + "\n".join(flag_lines))
+
+    return "\n".join(parts)
+
+
+def build_for_player(
+    char_id: str,
+    character: dict,
+    rulebook: dict,
+    scenario: dict | None,
+    session: dict,
+    user_language: str,
+) -> str:
+    """プレイヤー専用コンテキスト: そのキャラが知っている情報のみ。
+
+    - シーンの description のみ（gm_notes 除外）
+    - NPC の description のみ（gm_notes / goal 除外）
+    - 自分の knowledge（静的＋セッション中獲得）
+    - gm_only: false のフラグのみ
+    """
+    _is_ja = user_language == "ja"
+    parts = []
+
+    base = build_trpg_context(rulebook, None, user_language)
+    if base:
+        parts.append(base)
+
+    if not scenario:
+        _append_knowledge(parts, char_id, character, session, _is_ja)
+        return "\n".join(parts)
+
+    current_scene_idx = session.get("current_scene_index", 0)
+    scenes = scenario.get("scenes", [])
+    current_scene = (
+        scenes[current_scene_idx]
+        if 0 <= current_scene_idx < len(scenes)
+        else (scenes[0] if scenes else {})
+    )
+    title = scenario.get("title", "")
+    synopsis = scenario.get("synopsis", "")
+
+    if _is_ja:
+        parts.append(f"\n【シナリオ: {title}】")
+        if synopsis:
+            parts.append(f"概要: {synopsis}")
+        if current_scene.get("title"):
+            parts.append(f"現在の場面: {current_scene['title']}")
+        if current_scene.get("description"):
+            parts.append(current_scene["description"])
+
+        npc_ids = current_scene.get("npcs", [])
+        all_npcs = {n["id"]: n for n in scenario.get("npcs", []) if "id" in n}
+        npc_lines = [
+            f"・{all_npcs[nid].get('name', nid)}: {all_npcs[nid].get('description', '')}"
+            for nid in npc_ids if nid in all_npcs
+        ]
+        if npc_lines:
+            parts.append("【登場NPC】\n" + "\n".join(npc_lines))
+
+        public_flags = [f for f in scenario.get("flags", []) if not f.get("gm_only")]
+        if public_flags:
+            parts.append("【状況】\n" + "\n".join(f"・{f['key']}: {f['value']}" for f in public_flags))
+    else:
+        parts.append(f"\n[Scenario: {title}]")
+        if synopsis:
+            parts.append(f"Synopsis: {synopsis}")
+        if current_scene.get("title"):
+            parts.append(f"Current scene: {current_scene['title']}")
+        if current_scene.get("description"):
+            parts.append(current_scene["description"])
+
+        npc_ids = current_scene.get("npcs", [])
+        all_npcs = {n["id"]: n for n in scenario.get("npcs", []) if "id" in n}
+        npc_lines = [
+            f"- {all_npcs[nid].get('name', nid)}: {all_npcs[nid].get('description', '')}"
+            for nid in npc_ids if nid in all_npcs
+        ]
+        if npc_lines:
+            parts.append("[NPCs]\n" + "\n".join(npc_lines))
+
+        public_flags = [f for f in scenario.get("flags", []) if not f.get("gm_only")]
+        if public_flags:
+            parts.append("[Status]\n" + "\n".join(f"- {f['key']}: {f['value']}" for f in public_flags))
+
+    _append_knowledge(parts, char_id, character, session, _is_ja)
+    return "\n".join(parts)
+
+
+def build_for_npc(
+    npc_id: str,
+    npc_data: dict,
+    rulebook: dict,
+    scenario: dict | None,
+    session: dict,
+    user_language: str,
+) -> str:
+    """NPC専用コンテキスト: そのNPCの目標・知識・関係性を含む。"""
+    _is_ja = user_language == "ja"
+    parts = []
+
+    current_scene_idx = session.get("current_scene_index", 0)
+    scenes = (scenario or {}).get("scenes", [])
+    current_scene = (
+        scenes[current_scene_idx]
+        if scenario and 0 <= current_scene_idx < len(scenes)
+        else {}
+    )
+
+    if _is_ja:
+        if current_scene.get("description"):
+            parts.append(f"現在の場面: {current_scene['description']}")
+        if npc_data.get("goal"):
+            parts.append(f"【あなたの目的】{npc_data['goal']}")
+        knowledge = npc_data.get("knowledge", [])
+        if knowledge:
+            parts.append("【あなたが知っていること】\n" + "\n".join(f"・{k}" for k in knowledge))
+        relationships = npc_data.get("relationship", {})
+        if relationships:
+            rel_lines = [
+                f"・{cid}: 信頼{v.get('trust', 50)} 敵意{v.get('hostility', 0)}"
+                for cid, v in relationships.items()
+            ]
+            parts.append("【関係性】\n" + "\n".join(rel_lines))
+    else:
+        if current_scene.get("description"):
+            parts.append(f"Current scene: {current_scene['description']}")
+        if npc_data.get("goal"):
+            parts.append(f"[Your goal] {npc_data['goal']}")
+        knowledge = npc_data.get("knowledge", [])
+        if knowledge:
+            parts.append("[What you know]\n" + "\n".join(f"- {k}" for k in knowledge))
+        relationships = npc_data.get("relationship", {})
+        if relationships:
+            rel_lines = [
+                f"- {cid}: trust={v.get('trust', 50)} hostility={v.get('hostility', 0)}"
+                for cid, v in relationships.items()
+            ]
+            parts.append("[Relationships]\n" + "\n".join(rel_lines))
+
+    return "\n".join(parts)
+
+
 def build_turn_instruction(
     action_count: int, speaker_name: str, other_names: list[str],
     topic: str, session_history: list[dict], current_char_id: str,

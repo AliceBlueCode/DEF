@@ -24,6 +24,7 @@ from def_kari.gm.context_builder import (
     load_trpg_rulebook as _load_trpg_rulebook,
     load_trpg_scenario as _load_trpg_scenario,
     build_trpg_context as _build_trpg_context,
+    build_for_player as _build_for_player,
     build_session_context as _build_session_context,
     build_turn_instruction as _build_turn_instruction,
 )
@@ -63,6 +64,30 @@ _LANG_LABELS = {
 _MAX_SESSIONS = int(os.environ.get("DEF_MAX_SESSIONS", "1000"))
 _sessions: OrderedDict[str, dict] = OrderedDict()
 _last_session_debug: dict = {}
+
+
+def _handle_flag_updated(session_id: str, event: dict) -> None:
+    """FLAG_UPDATED イベントを受けて player_knowledge を更新する。"""
+    sess = _sessions.get(session_id)
+    if not sess:
+        return
+    payload = event.get("payload", {})
+    if payload.get("gm_only"):
+        return
+    key = payload.get("key", "")
+    value = payload.get("value")
+    if not key:
+        return
+    entry = f"フラグ「{key}」が更新された（値: {value}）"
+    pk = sess.setdefault("player_knowledge", {})
+    for char_id in sess.get("initiative", []):
+        char_list = pk.setdefault(char_id, [])
+        if entry not in char_list:
+            char_list.append(entry)
+
+
+from def_kari.gm.events import game_event_bus as _game_event_bus, FLAG_UPDATED as _FLAG_UPDATED
+_game_event_bus.subscribe(_FLAG_UPDATED, _handle_flag_updated)
 
 _BASE = Path(__file__).parent.parent.parent.parent
 _RULE_DIRS = [
@@ -290,6 +315,8 @@ def start_session(req: SessionStartRequest):
         "trpg_rulebook": req.trpg_rulebook,
         "trpg_scenario": req.trpg_scenario,
         "char_game_sheets": req.char_game_sheets,
+        "current_scene_index": 0,
+        "player_knowledge": {cid: [] for cid in req.character_ids},
     }
 
     order = [name_map.get(c, c) for c in initiative]
@@ -393,7 +420,9 @@ def next_turn(req: SessionNextRequest):
     if session.get("trpg_mode"):
         _rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
         _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
-        _trpg_ctx = _build_trpg_context(_rulebook, _scenario or None, _user_lang)
+        _trpg_ctx = _build_for_player(
+            current_char_id, char, _rulebook, _scenario or None, session, _user_lang
+        )
 
     session_ctx = _build_session_context(
         topic, rules, initiative, name_map, speaker_name, _user_lang,
