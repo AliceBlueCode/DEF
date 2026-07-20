@@ -1,10 +1,12 @@
-# DEF(kari) v2.1.1 Implementation Status
+# DEF(kari) v3.0.0 Implementation Status
 
 This document records the implementation status of feature specifications (F-numbers) described in the Basic Design Specification.
 
 > **v2.0.0:** Architecture migrated from Streamlit to FastAPI + React (Vite/TypeScript). See Basic Design Specification Section 2.1.
 
 > **v2.1.x:** Added OpenAI TTS backend (5 total). T2I prompt generation mode added (current/passthrough/dedicated). LLM instructions externalized to `session_prompts.json`. `status_poll_sec` settings UI. DEF-Character repository separation. Skip greeting on same-character switch (F-26).
+
+> **v3.0.0:** TRPG Mode Phase 1 (F-20/21/22) implemented. Rulebook/scenario management API, dice rolling, GM agent, event bus. Speech counter limit setting (`session_max_counter`) added. TRPG Mode terminology (38+ keys) added to i18n.
 
 ---
 
@@ -19,7 +21,7 @@ This document records the implementation status of feature specifications (F-num
 | F-6 | Session Mode (Multi-Agent) | ✅ Done | Multiple AI + human participants, initiative system, speech power |
 | F-7 | Safety Tags | ✅ Done | 6 levels (sfw/nsfw/hentai/violence/gore/extreme) |
 | F-8 | Content Filtering | ✅ Done | off/warn/mask, user-controllable |
-| F-9 | i18n / Multilingual | 🔶 Partial | 164 keys (JP/EN). LLM instructions externalized to `session_prompts.json` (referenced via `_sp(key, lang)`). ~30 dynamic session messages not yet localized |
+| F-9 | i18n / Multilingual | 🔶 Partial | 200+ keys including 38+ TRPG Mode keys (JP/EN). LLM instructions externalized to `session_prompts.json`. ~30 dynamic session messages not yet localized |
 | F-10 | TTS Voice Synthesis | ✅ Done | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS |
 | F-11 | TTS Auto-Play & Pipeline | ✅ Done | Session and Novel mode support |
 | F-13-1 | VRAM Exclusive Control | ✅ Done | vram_lock mechanism |
@@ -46,6 +48,9 @@ This document records the implementation status of feature specifications (F-num
 | —— | Action directives added | ✅ Done | standard preset added |
 | —— | i18n foundation (i18n.tsx) | ✅ Done | React-side i18n base; Japanese + English |
 | —— | DEF-Character repository separation | ✅ Done | External character repository linked via `CHARACTER_REPO_PATH`. Falls back to legacy `data/characters/` format |
+| F-20 | TRPG Rulebook Injection | ✅ Done | JSON format. Loaded from `data/public/trpg_rules/` / `data/private/trpg_rules/`. ID validation included |
+| F-21 | GM Agent | ✅ Done | Designate a character as GM. Async notification via event bus (`game_event_bus`). Judgment results auto-injected into session history |
+| F-22 | Dice Roll & Character Sheet | ✅ Done | `NdM±K` notation, success/critical/fumble/failure judgment, opposed rolls, damage rolls. Scenario management API also provided |
 
 ---
 
@@ -58,9 +63,6 @@ This document records the implementation status of feature specifications (F-num
 | F-13-2 | Lightweight Response Mode | ⏸ On hold | Not needed with current architecture |
 | F-13-3 | Diffusers Offload Control | ⏸ On hold | Not needed with current architecture |
 | F-19 | Export/Import | ⏸ On hold | Pending data structure stabilization |
-| F-20 | TRPG Rulebook Injection | ⏸ On hold | TRPG expansion phase |
-| F-21 | GM Agent | ⏸ On hold | TRPG expansion phase |
-| F-22 | Dice Roll & History Branching | ⏸ On hold | TRPG expansion phase |
 | F-24 | Episode Mode Foundation | ❌ Not implemented | Episode > Chapter > Scene hierarchical management. Future phase |
 | F-24-1 | Episode Structured Output | ❌ Not implemented | narration/dialogue/tags/choices JSON Schema |
 | F-24-3 | Branch Selection + Git Integration | ❌ Not implemented | choices → Git branch |
@@ -95,4 +97,4 @@ This document records the implementation status of feature specifications (F-num
 
 ---
 
-This document reflects the status as of v2.1.1. For the latest status, see the repository's Issues and release notes.
+This document reflects the status as of v3.0.0. For the latest status, see the repository's Issues and release notes.

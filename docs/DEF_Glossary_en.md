@@ -1,4 +1,4 @@
-﻿# DEF Glossary v2.1.1
+﻿# DEF Glossary v3.0.0
 
 ## Overview
 
@@ -242,7 +242,7 @@ If the same speech is repeated 3 times, the Speech Counter is decremented by -1.
 
 ## Upper Limit
 
-Configurable.
+Configurable (settings key: `session_max_counter`, default: 5, range: 1–20).
 
 Recommended value:
 
@@ -252,6 +252,8 @@ Purpose:
 
 - Prevent excessive accumulation of speaking rights
 - Prevent monopolization by a specific participant
+
+Counters that have reached the upper limit are highlighted in red in the UI.
 
 ---
 
@@ -287,7 +289,65 @@ The Keeper exists not to exclude participants, but to maintain a fair creative e
 
 ---
 
-# 7. Design Philosophy
+# 7. TRPG Mode Terminology
+
+Definitions of terms unique to TRPG Mode.
+
+---
+
+## Rulebook
+
+A rule definition for the TRPG system applied to a session, managed in JSON format.
+
+Placed in `data/public/trpg_rules/` (public) or `data/private/trpg_rules/` (private), and selected from the dropdown on the session start screen.
+
+---
+
+## Scenario
+
+The narrative framework for the session, including story overview, scene structure, and NPC list.
+
+---
+
+## Initiative
+
+The system for determining action order in TRPG Mode, determined based on dice roll results and skill values.
+
+The session screen displays each participant's speaking order alongside their counter status.
+
+---
+
+## Dice
+
+A randomized resolution mechanic. Specified using `NdM±K` notation.
+
+- `N`: Number of dice
+- `d`: Separator
+- `M`: Number of faces
+- `±K`: Modifier (optional)
+
+Examples: `3d6+2`, `1d100`
+
+---
+
+## Judgment
+
+The process of comparing a dice roll result against a target value to determine the outcome of an action.
+
+Result categories:
+
+| Result | Description |
+|---|---|
+| Critical | Best possible success |
+| Success | Normal success |
+| Failure | Normal failure |
+| Fumble | Worst possible failure |
+
+Judgment results are automatically inserted into the session history.
+
+---
+
+# 8. Design Philosophy
 
 DEF does not aim to generate a single correct answer from a single AI.
 
@@ -309,7 +369,7 @@ Document:
 DEF_Glossary
 
 Version:
-2.1.1
+3.0.0
 
 Status:
 Release

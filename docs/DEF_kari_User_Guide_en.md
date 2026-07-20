@@ -1,4 +1,4 @@
-# DEF(kari) User Guide v2.1.1
+# DEF(kari) User Guide v3.0.0
 
 ## 1. Starting the Application
 
@@ -75,6 +75,23 @@ Open your browser at `http://localhost:3000`.
 - Add a character with `player_type: "human"` to enable human input mode
 - A text input field appears during your turn
 
+### TRPG Mode
+
+Enable the "TRPG Mode ON" toggle on the session start screen to use ruleBooks, scenarios, and dice rolls.
+
+#### Before Starting the Session
+1. **Rulebook** — Select the rule system from the dropdown
+2. **Scenario** — Select a scenario from the dropdown (synopsis is shown)
+3. **Keeper** — Select the character who will serve as GM
+
+#### During the Session
+- **🎲 Roll** — Open the dice dialog. Select a character, skill, and notation (e.g., `1d100`) and roll
+- **📍 Advance Scene** — Progress the current scene to the next
+- **Role badges** — Each message displays a `GM` / `human` / `ai` badge
+
+#### Dice Judgment Results
+Judgment results (critical/success/failure/fumble) are automatically inserted into the session history.
+
 ---
 
 ## 6. Novel Tab
@@ -119,7 +136,7 @@ Open your browser at `http://localhost:3000`.
 - **Backend** — Backend status polling interval (`status_poll_sec`, default 5s)
 - **C2 Method** — Image prompt translation provider
 - **Chat Settings** — Greeting ON/OFF, undo history count
-- **Session Settings** — Actions per turn, repeat penalty, illustration size, T2I prompt mode (current/passthrough/dedicated)
+- **Session Settings** — Actions per turn, repeat penalty, speech counter limit (`session_max_counter`, default 5), illustration size, T2I prompt mode (current/passthrough/dedicated)
 - **Novel Settings** — Candidate count, illustration size
 - **API Key Management** — Encrypted storage for external API keys
 
@@ -147,6 +164,8 @@ data/
 │   ├── characters/      # Public characters (legacy format)
 │   ├── action_directives/
 │   ├── session_rules/
+│   ├── trpg_rules/      # TRPG rulebooks (public)
+│   ├── trpg_scenarios/  # TRPG scenarios (public)
 │   └── episode_prompts/ # Novel plot files (public)
 ├── private/             # Private data (git-excluded)
 │   ├── characters/      # Private characters (legacy format)
@@ -155,6 +174,8 @@ data/
 │   ├── session_history/
 │   ├── session_rules/
 │   ├── action_directives/
+│   ├── trpg_rules/      # TRPG rulebooks (private)
+│   ├── trpg_scenarios/  # TRPG scenarios (private)
 │   └── thoughts/
 ├── sessions/            # Session history
 ├── session_prompts.json # Session LLM instruction templates

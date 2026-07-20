@@ -1,6 +1,6 @@
 # Multimodal AI Creative Platform "DEF(kari)"
 
-## Basic Design Specification Version 2.1.1
+## Basic Design Specification Version 3.0.0
 
 |**Item**|**Details**|
 |------|------------------------------------------------------------------|
@@ -751,17 +751,23 @@ To technically guarantee the experience value of "being able to stay with a char
 
 Defines the TRPG game extension feature set for realizing the UX evaluation criterion of "not impeding TRPG progression" mentioned in Section 1.4(1). The features in this section (rulebook injection, GM agent, dice rolls, character sheet management) are additive features independent of the `mode` (`"chat"` or `"novel"`) defined in Section 5.10, F-24, and can be enabled for sessions of either mode. Behavior when a GM agent manages progression in a `mode: "novel"` session is defined in F-24-3.
 
-### F-20: TRPG Rulebook Injection
+### F-20: TRPG Rulebook Injection ✅ v3.0.0 Implemented
 
-External rule configuration files (JSON/Markdown) are loaded into the system at session start, incorporating world settings and dice judgment criteria into the system prompt context. Loaded rulebooks are included in the Git-managed scope as clean zone data (text/JSON per F-16).
+External rule configuration files (JSON format) are loaded into the system at session start, incorporating world settings and dice judgment criteria into the system prompt context. Loaded rulebooks are included in the Git-managed scope as clean zone data (text/JSON per F-16).
 
-### F-21: Game Master (GM) Agent Dynamic Generation
+Rulebooks are placed in `data/public/trpg_rules/` (public) or `data/private/trpg_rules/` (private), and selected from the dropdown on the session start screen. ID validation prevents loading of unauthorized files.
+
+### F-21: Game Master (GM) Agent Dynamic Generation ✅ v3.0.0 Implemented
 
 One of the multiple AI characters registered via F-6 can be designated as "GM." The GM agent prioritizes compliance with the rulebook loaded via F-20 and handles progression, scene descriptions, dice roll requests, and judgments. The GM agent's scene descriptions are subject to F-8's safety operational guardrails, preventing progression halts due to erroneous full masking.
 
-### F-22: Dice Roll Simulator & Character Sheet Management
+Judgment results are delivered via the event bus asynchronously and auto-injected into session history.
 
-Secure random numbers are generated on the Streamlit backend side, and dice success/failure results are automatically inserted into the chat log. Each AI and human player's stats are held as a character sheet (`game_rules_sheets` in the data structure defined in Chapter 12).
+### F-22: Dice Roll Simulator & Character Sheet Management ✅ v3.0.0 Implemented
+
+Secure random numbers are generated on the FastAPI backend side, and dice success/failure results are automatically inserted into the chat log. Each AI and human player's stats are held as a character sheet (`game_rules_sheets` in the data structure defined in Chapter 12).
+
+Dice notation uses the `NdM±K` format (e.g., `3d6+2`, `1d100`). Results are classified as success/critical/fumble/failure, with support for opposed rolls and damage rolls. No `eval()` is used. A scenario management API is also provided.
 
 - **Operation rules:** Status changes on character sheets (damage calculations, item consumption, etc.) are fundamentally linked to manual operation/editing by users via the screen (UI) to ensure reliability.
 - **History branching (Git operation) rules:** Git operations within the system are limited to independent, unidirectional branch creation (`git checkout -b`) only; automatic merging (`git merge`) is never performed. This completely eliminates the risk of conflicts between branched histories. This rule, combined with the file naming convention of Section 5.6, F-17, prevents binary file conflicts during branch divergence.
@@ -975,7 +981,7 @@ When a human participant's Turn comes around during auto-advance mode, auto-adva
 
 ## 7.6 Speech Counter
 
-Each session participant holds a speech counter. The initial value is 0, and the upper limit is configurable (recommended upper limit: 3-5).
+Each session participant holds a speech counter. The initial value is 0, and the upper limit is configurable via the Settings tab (settings key: `session_max_counter`, default: 5, range: 1–20). Counters that have reached the upper limit are highlighted in red in the UI.
 
 ### Counter Acquisition (+1)
 
