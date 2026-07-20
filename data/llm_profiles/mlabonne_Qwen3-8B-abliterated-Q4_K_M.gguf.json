@@ -5,7 +5,8 @@
     "generation_params": {
       "temperature": 0.7,
       "top_p": 0.9,
-      "repetition_penalty": 1.45
+      "repetition_penalty": 1.45,
+      "instruction_template": "ChatML"
     }
   }
 }

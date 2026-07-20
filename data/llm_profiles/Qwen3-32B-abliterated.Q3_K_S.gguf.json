@@ -1,0 +1,23 @@
+{
+  "Qwen3-32B-abliterated.Q3_K_S.gguf": {
+    "native_language": "en",
+    "nsfw_tolerance": "nsfw",
+    "model_type": "chat",
+    "context_length": 32768,
+    "max_tokens": 4096,
+    "notes": "Qwen3-32B abliterated。/think トークンで推論モードを有効化できる。英語で内部推論してから回答する傾向があり、推論内容が dialogue フィールドに漏れる場合がある。Q3_K_Sは量子化レベル低め（Q3_K_Mより若干軽量・低品質）。",
+    "quirks": {
+      "json_capable": true,
+      "appends_meta_text": false,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false,
+      "leaks_thinking": true
+    },
+    "generation_params": {
+      "temperature": 0.8,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1,
+      "instruction_template": "ChatML"
+    }
+  }
+}

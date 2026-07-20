@@ -1,0 +1,24 @@
+{
+  "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf": {
+    "native_language": "en",
+    "nsfw_tolerance": "sfw",
+    "model_type": "chat",
+    "context_length": 131072,
+    "max_tokens": 4096,
+    "notes": "Mistral 製 14B 指示追従モデル（2025/12版）。高い指示追従性能。NSFW 耐性は弱め（要検証）。Mistral テンプレート使用。",
+    "quirks": {
+      "json_capable": true,
+      "appends_meta_text": false,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false,
+      "leaks_thinking": false
+    },
+    "generation_params": {
+      "temperature": 0.4,
+      "top_p": 0.85,
+      "top_k": 40,
+      "repetition_penalty": 1.05,
+      "instruction_template": "Mistral"
+    }
+  }
+}

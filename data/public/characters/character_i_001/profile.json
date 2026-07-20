@@ -66,6 +66,32 @@
       "image_color": "#4a5568"
     },
     "relationships": {},
-    "game_rules_sheets": {}
+    "game_rules_sheets": {
+      "def_original": {
+        "rulebook_id": "def_original",
+        "skill_point_pool": 500,
+        "skills": {
+          "察知":     55,
+          "推理":     65,
+          "調査":     55,
+          "記憶":     45,
+          "説得":     50,
+          "共感":     55,
+          "意志力":   60,
+          "危機察知": 50,
+          "回避":     50,
+          "運動":     45,
+          "耐久":     45,
+          "社交":     50,
+          "情報収集": 55
+        },
+        "stats": {
+          "思考": { "current": 10, "max": 10 },
+          "情動": { "current": 10,  "max": 10  },
+          "身体": { "current": 10, "max": 10 },
+          "環境": { "current": 10,  "max": 10  }
+        }
+      }
+    }
   }
 }

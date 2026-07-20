@@ -1,0 +1,23 @@
+{
+  "Lumimaid-Magnum-v4-12B.q8_0.gguf": {
+    "native_language": "en",
+    "nsfw_tolerance": "nsfw",
+    "model_type": "chat",
+    "context_length": 131072,
+    "max_tokens": 4096,
+    "notes": "Mistral-Nemo-12B ベースの NSFW ファインチューン（v4）。Q8_0 は高品質だが VRAM 消費大（約 13GB）。T2I との併用は困難。Mistral テンプレート使用。",
+    "quirks": {
+      "json_capable": false,
+      "appends_meta_text": false,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false,
+      "leaks_thinking": false
+    },
+    "generation_params": {
+      "temperature": 0.85,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1,
+      "instruction_template": "Mistral"
+    }
+  }
+}

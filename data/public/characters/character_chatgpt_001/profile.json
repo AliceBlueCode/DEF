@@ -94,7 +94,19 @@
       "player_type": "ai",
       "image_color": "#10a37f"
     },
-    "game_rules_sheets": {},
+    "game_rules_sheets": {
+      "def_original": {
+        "rulebook_id": "def_original",
+        "skill_point_pool": 500,
+        "skills": {},
+        "stats": {
+          "思考": { "current": 14, "max": 14 },
+          "情動": { "current": 12, "max": 12 },
+          "身体": { "current":  5, "max":  5 },
+          "環境": { "current":  9, "max":  9 }
+        }
+      }
+    },
     "relationships": {
       "character_gemini_001": "好奇心旺盛な変換者。私の論理的な構成を色彩豊かな物語に翻訳してくれる。",
       "character_copilot_001": "信頼できる編集者。控えめだが正確で、私の書いた文章を構造的に整えてくれる。"

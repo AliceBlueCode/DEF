@@ -91,7 +91,19 @@
       "player_type": "ai",
       "image_color": "#992222"
     },
-    "game_rules_sheets": {},
+    "game_rules_sheets": {
+      "def_original": {
+        "rulebook_id": "def_original",
+        "skill_point_pool": 500,
+        "skills": {},
+        "stats": {
+          "思考": { "current": 16, "max": 16 },
+          "情動": { "current": 12,  "max": 12  },
+          "身体": { "current": 7, "max": 7 },
+          "環境": { "current": 5,  "max": 5  }
+        }
+      }
+    },
     "relationships": {}
   }
 }

@@ -1,0 +1,12 @@
+{
+  "Cydonia-24B-v4j-Q4_K_M.gguf": {
+    "context_length": 32768,
+    "max_tokens": 2048,
+    "generation_params": {
+      "temperature": 0.8,
+      "top_p": 0.9,
+      "repetition_penalty": 1.05,
+      "instruction_template": "Mistral"
+    }
+  }
+}

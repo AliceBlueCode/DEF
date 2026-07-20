@@ -78,6 +78,18 @@
       "image_color": "#1da0a0"
     },
     "relationships": {},
-    "game_rules_sheets": {}
+    "game_rules_sheets": {
+      "def_original": {
+        "rulebook_id": "def_original",
+        "skill_point_pool": 500,
+        "skills": {},
+        "stats": {
+          "思考": { "current": 6, "max": 6 },
+          "情動": { "current": 18,  "max": 18  },
+          "身体": { "current": 12, "max": 12 },
+          "環境": { "current": 4,  "max": 4  }
+        }
+      }
+    }
   }
 }
