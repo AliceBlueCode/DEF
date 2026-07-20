@@ -845,13 +845,14 @@ def next_turn(req: SessionNextRequest):
     _s = _load_settings()
     _repeat_threshold = int(_s.get("session_repeat_penalty_count", 3))
     _lang = _s.get("user_language", "ja")
+    _char_contents = []
+    penalty_message = ""
     if _repeat_threshold > 0:
         _char_contents = [
             h["content"] for h in session["history"]
             if h.get("character_id") == current_char_id and h.get("role") == "assistant"
         ][-_repeat_threshold:]
-        penalty_message = ""
-    if len(_char_contents) >= _repeat_threshold and len(set(_char_contents)) == 1:
+    if _char_contents and len(_char_contents) >= _repeat_threshold and len(set(_char_contents)) == 1:
             counters[current_char_id] = counters.get(current_char_id, 0) - 1
             _char_label = name_map.get(current_char_id, current_char_id)
             penalty_message = (
