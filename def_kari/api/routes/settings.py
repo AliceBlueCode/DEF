@@ -308,6 +308,9 @@ def _load_env_file() -> dict[str, str]:
 
 
 def _save_env_file(updates: dict[str, str]) -> None:
+    for v in updates.values():
+        if "\n" in v or "\r" in v:
+            raise ValueError("env value must not contain newline characters")
     existing_lines = []
     if _ENV_PATH.exists():
         existing_lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -478,6 +481,10 @@ class TestBackendRequest(BaseModel):
 def test_backend(req: TestBackendRequest):
     import time
     import urllib.request
+    from urllib.parse import urlparse
+    parsed = urlparse(req.url)
+    if parsed.scheme not in ("http", "https"):
+        return {"ok": False, "error": "Invalid URL scheme"}
     try:
         start = time.time()
         with urllib.request.urlopen(req.url, timeout=5) as r:
