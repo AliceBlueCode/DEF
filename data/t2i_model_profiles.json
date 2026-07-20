@@ -6,5 +6,11 @@
   "hassakuXLIllustrious_v21fix.safetensors": {
     "quality_tags": "masterpiece, best quality",
     "negative_prompt": "lowres, bad anatomy, worst quality"
+  },
+  "waiNSFWIllustrious_v140.safetensors": {
+    "quality_tags": "masterpiece, best quality",
+    "negative_prompt": "lowres, bad anatomy, worst quality",
+    "steps": 20,
+    "cfg_scale": 7
   }
 }

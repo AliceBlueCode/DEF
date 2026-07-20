@@ -139,7 +139,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
     window.addEventListener('mouseup', onUp)
   }
 
-  useEffect(() => { if (!novelBackend && backend) setNovelBackend(backend) }, [backend])
+  useEffect(() => { if (backend) setNovelBackend(backend) }, [backend])
   useEffect(() => { if (t2iBackend) setNovelT2iBackend(t2iBackend) }, [t2iBackend])
   useEffect(() => { localStorage.setItem('novel_media_height', String(mediaHeight)) }, [mediaHeight])
   useEffect(() => { localStorage.setItem('novel_candidates_width', String(candidatesWidth)) }, [candidatesWidth])
