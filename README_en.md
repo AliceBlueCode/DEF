@@ -41,7 +41,7 @@ And no matter how many years pass, you can meet again.
 
 -----
 
-## Three Experiences
+## Four Experiences
 
 ### Chat — Build a relationship with your character
 
@@ -52,6 +52,11 @@ Through one-on-one dialogue, you accumulate shared time with your character.
 
 Enjoy discussions, debates, role-play, and improv among multiple characters.
 You can be an observer, or join the conversation as a participant.
+
+### TRPG — Just watch. Or join in.
+
+Rulebooks, scenarios, and a GM Agent let AI characters autonomously run a full TRPG session.
+Dice rolls, judgments, and character sheet management are automated — you can oversee the table as Keeper, or step in as a player.
 
 ### Novel — Write stories with your characters
 
@@ -72,6 +77,9 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 
 ## Screenshots
 
+### Character
+![Character](docs/images/character.png)
+
 ### Chat Mode
 ![Chat](docs/images/chat.png)
 
@@ -81,8 +89,11 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 ### Novel Mode
 ![Novel](docs/images/novel.png)
 
-### Character
-![Character](docs/images/character.png)
+### TRPG Mode — Session Setup
+![TRPG Setup](docs/images/trpg_setup.png)
+
+### TRPG Mode — Session in Progress
+![TRPG Session](docs/images/trpg_session.png)
 
 -----
 
@@ -91,8 +102,9 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 - **Local-First:** LLM, TTS, and T2I all run locally. External API fallback also supported
 - **No GPU required to start:** Text + voice works via external APIs. Switch to local GPU whenever you're ready
 - **3-Modality Integration:** Text, voice, and image work together as a continuous creative experience
-- **3 Modes:** Chat (1-on-1 dialogue), Session (multiple AIs + humans at the same table), Novel (novel writing + AI candidate generation)
+- **4 Modes:** Chat (1-on-1 dialogue), Session (multiple AIs + humans at the same table), TRPG (rulebook, dice, GM Agent), Novel (novel writing + AI candidate generation)
 - **Character Persistence:** Dialogue history, emotions, and generated assets are persisted — resume from where you left off after restart
+- **Thought Visualization:** View and record the LLM's reasoning process for each response in the "Thought" tab
 - **Adapter Pattern:** Freely swap between 5 LLM, 5 TTS, and 5 T2I backends
 - **Zoning:** Clear separation of public and private data. Generated assets are excluded from Git
 

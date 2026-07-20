@@ -41,7 +41,7 @@ Y sin importar cuántos años pasen, pueden volver a encontrarse.
 
 -----
 
-## Tres experiencias
+## Cuatro experiencias
 
 ### Chat — Construye una relación con tu personaje
 
@@ -52,6 +52,11 @@ A través del diálogo uno a uno, acumulas tiempo compartido con tu personaje.
 
 Disfruta de discusiones, debates, juego de roles e improvisación entre múltiples personajes.
 Puedes ser espectador o unirte como participante en la conversación.
+
+### TRPG — Solo observa. O participa.
+
+Los libros de reglas, escenarios y el GM Agent permiten a los personajes IA conducir de forma autónoma una sesión completa de TRPG.
+Los lanzamientos de dados, juicios y gestión de hojas de personaje están automatizados — puedes supervisar la mesa como Guardián, o unirte como jugador.
 
 ### Novel — Escribe historias con tus personajes
 
@@ -72,6 +77,9 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 
 ## Capturas de pantalla
 
+### Personaje
+![Character](docs/images/character.png)
+
 ### Modo Chat
 ![Chat](docs/images/chat.png)
 
@@ -81,8 +89,11 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 ### Modo Novela
 ![Novel](docs/images/novel.png)
 
-### Personaje
-![Character](docs/images/character.png)
+### Modo TRPG — Configuración de sesión
+![TRPG Setup](docs/images/trpg_setup.png)
+
+### Modo TRPG — Sesión en curso
+![TRPG Session](docs/images/trpg_session.png)
 
 -----
 
@@ -91,8 +102,9 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 - **Local-First:** LLM, TTS y T2I funcionan completamente en local. También soporta respaldo con API externa
 - **No requiere GPU para empezar:** Texto + voz funciona vía APIs externas. Cambia a GPU local cuando quieras
 - **Integración de 3 modalidades:** Texto, voz e imagen funcionan juntos como una experiencia creativa continua
-- **3 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), Novela (escritura de novelas + generación de candidatos por IA)
+- **4 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), TRPG (libro de reglas, dados, GM Agent), Novela (escritura de novelas + generación de candidatos por IA)
 - **Persistencia de personajes:** El historial de diálogo, emociones y assets generados se persisten — retoma donde lo dejaste tras reiniciar
+- **Visualización del pensamiento:** Ve y registra el proceso de razonamiento del LLM para cada respuesta en la pestaña "Pensamiento"
 - **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 5 de TTS y 5 de T2I
 - **Zonificación:** Separación clara entre datos públicos y privados. Los assets generados quedan excluidos de Git
 
