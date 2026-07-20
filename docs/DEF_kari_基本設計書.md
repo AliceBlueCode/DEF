@@ -168,6 +168,7 @@ def generate_image(
 |`comfyui`|ローカル|ComfyUI。ワークフローJSON（`data/comfyui_workflows/`で外出し管理、設定タブで切り替え可能）を`/prompt`エンドポイントに送信|
 |`civitai`|外部API|Civitai Orchestration API。モデルAIR形式で指定|
 |`huggingface`|外部API|Hugging Face Inference API。FLUX.1/SD等のモデルをrouter.huggingface.co経由で利用|
+|`openai`|外部API|OpenAI Images API。デフォルトモデル`gpt-image-1`。モデル名は設定タブで変更可能|
 
 ## 2.5 TTS バックエンド抽象インターフェース
 

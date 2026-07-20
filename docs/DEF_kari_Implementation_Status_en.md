@@ -85,7 +85,7 @@ This document records the implementation status of feature specifications (F-num
 |---|---|---|
 | LLM | 5 | Text Generation WebUI / Ollama / OpenAI / Gemini / Anthropic |
 | TTS | 5 | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS |
-| T2I | 4 | A1111 / ComfyUI / Hugging Face / Civitai |
+| T2I | 5 | A1111 / ComfyUI / Hugging Face / Civitai / OpenAI Images |
 
 ---
 

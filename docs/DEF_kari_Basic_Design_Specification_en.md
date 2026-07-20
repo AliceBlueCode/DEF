@@ -178,6 +178,7 @@ Currently implemented T2I backends:
 |`comfyui`|Local|ComfyUI. Workflow JSON (externally managed in `data/comfyui_workflows/`, switchable from the settings tab) sent to the `/prompt` endpoint|
 |`civitai`|External API|Civitai Orchestration API. Models specified in AIR format|
 |`huggingface`|External API|Hugging Face Inference API. FLUX.1/SD and other models via router.huggingface.co|
+|`openai`|External API|OpenAI Images API. Default model `gpt-image-1`. Model name configurable from the settings tab|
 
 ## 2.5 TTS Backend Abstract Interface
 
