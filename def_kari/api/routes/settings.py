@@ -121,8 +121,9 @@ def get_t2i_models(backend: str = ""):
     elif backend == "huggingface":
         models = [
             "black-forest-labs/FLUX.1-schnell",
+            "black-forest-labs/FLUX.1-dev",
+            "stabilityai/stable-diffusion-3.5-large",
             "stabilityai/stable-diffusion-xl-base-1.0",
-            "stabilityai/stable-diffusion-2-1",
         ]
     return {"models": models, "workflows": workflows}
 
@@ -174,8 +175,8 @@ _LLM_PROFILES_DIR = _Path(__file__).parent.parent.parent.parent / "data" / "llm_
 def get_llm_profile(model: str = ""):
     if not model:
         return {"profile": {}}
-    from def_kari.models.registry import get_llm_profile as _get, DEFAULT_QUIRKS
-    return {"profile": _get(model), "default_quirks": DEFAULT_QUIRKS}
+    from def_kari.models.registry import get_or_create_llm_profile, DEFAULT_QUIRKS
+    return {"profile": get_or_create_llm_profile(model), "default_quirks": DEFAULT_QUIRKS}
 
 
 class SaveLlmProfileRequest(BaseModel):

@@ -92,6 +92,24 @@ class World:
 # ── Story ─────────────────────────────────────────────────────────
 
 @dataclass
+class StoryChapter:
+    id: str
+    title: str
+    scene_ids: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> StoryChapter:
+        return cls(
+            id=d.get("id", ""),
+            title=d.get("title", ""),
+            scene_ids=list(d.get("scene_ids", [])),
+        )
+
+    def to_dict(self) -> dict:
+        return dataclasses.asdict(self)
+
+
+@dataclass
 class StoryScene:
     id: str
     title: str
@@ -119,6 +137,7 @@ class Story:
     title: str
     synopsis: str = ""
     world_id: str = ""
+    chapters: list[StoryChapter] = field(default_factory=list)
     scenes: list[StoryScene] = field(default_factory=list)
     flags: dict[str, Any] = field(default_factory=dict)
     current_scene_index: int = 0
@@ -130,6 +149,7 @@ class Story:
             title=d.get("title", ""),
             synopsis=d.get("synopsis", ""),
             world_id=d.get("world_id", ""),
+            chapters=[StoryChapter.from_dict(c) for c in d.get("chapters", [])],
             scenes=[StoryScene.from_dict(s) for s in d.get("scenes", [])],
             flags=dict(d.get("flags", {})),
             current_scene_index=int(d.get("current_scene_index", 0)),
@@ -147,13 +167,20 @@ class Story:
                 location_id=s.get("location_id", ""),
                 required_flags=list(s.get("required_flags", [])),
             ))
+        chapters = [StoryChapter.from_dict(c) for c in data.get("chapters", [])]
+        raw_flags = data.get("flags", {})
+        if isinstance(raw_flags, list):
+            flags = {f["key"]: f["value"] for f in raw_flags if "key" in f}
+        else:
+            flags = dict(raw_flags)
         return cls(
             id=data.get("id", ""),
             title=data.get("title", ""),
             synopsis=data.get("synopsis", ""),
             world_id=data.get("world_id", ""),
+            chapters=chapters,
             scenes=scenes,
-            flags=dict(data.get("flags", {})),
+            flags=flags,
             current_scene_index=0,
         )
 
@@ -163,6 +190,7 @@ class Story:
             "title": self.title,
             "synopsis": self.synopsis,
             "world_id": self.world_id,
+            "chapters": [c.to_dict() for c in self.chapters],
             "scenes": [s.to_dict() for s in self.scenes],
             "flags": self.flags,
             "current_scene_index": self.current_scene_index,
@@ -173,12 +201,42 @@ class Story:
             return self.scenes[self.current_scene_index]
         return None
 
+    def current_chapter(self) -> StoryChapter | None:
+        """現在のシーンが属するチャプターを返す。"""
+        if not self.chapters or not self.scenes:
+            return None
+        current = self.current_scene()
+        if not current:
+            return None
+        return next(
+            (c for c in self.chapters if current.id in c.scene_ids),
+            None,
+        )
+
     def advance_scene(self) -> bool:
         """次のシーンへ進む。最後のシーンの場合は False を返す。"""
         if self.current_scene_index < len(self.scenes) - 1:
             self.current_scene_index += 1
             return True
         return False
+
+    def advance_chapter(self) -> bool:
+        """次のチャプターの最初のシーンへ進む。最後のチャプターの場合は False を返す。"""
+        current_ch = self.current_chapter()
+        if not current_ch or not self.chapters:
+            return self.advance_scene()
+        ch_idx = next((i for i, c in enumerate(self.chapters) if c.id == current_ch.id), -1)
+        if ch_idx < 0 or ch_idx >= len(self.chapters) - 1:
+            return False
+        next_ch = self.chapters[ch_idx + 1]
+        if not next_ch.scene_ids:
+            return False
+        scene_id = next_ch.scene_ids[0]
+        new_idx = next((i for i, s in enumerate(self.scenes) if s.id == scene_id), -1)
+        if new_idx < 0:
+            return False
+        self.current_scene_index = new_idx
+        return True
 
     def set_flag(self, key: str, value: Any) -> None:
         self.flags[key] = value

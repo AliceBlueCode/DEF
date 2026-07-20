@@ -49,25 +49,32 @@ def generate(
 
     # Determine model family from AIR string
     air_parts = model_air.split(":")
-    ecosystem = air_parts[2] if len(air_parts) > 2 and air_parts[:2] == ["urn", "air"] else "sd1"
+    air_ecosystem = air_parts[2] if len(air_parts) > 2 and air_parts[:2] == ["urn", "air"] else "sd1"
+    # Map AIR ecosystem to CivitAI API ecosystem
+    # illustrious/pony → anima (CivitAI API doesn't support illustrious discriminator)
+    _ecosystem_map = {"illustrious": "anima", "pony": "anima", "flux1": "flux"}
+    ecosystem = _ecosystem_map.get(air_ecosystem, air_ecosystem)
     is_flux = "flux" in ecosystem.lower()
+    is_anima = ecosystem == "anima"
     engine = "flux" if is_flux else "sdcpp"
 
-    # Build input params; ecosystem+engine are required discriminators for all models
+    # Build input params; ecosystem+engine+operation are required discriminators
     image_input: dict = {
         "engine": engine,
         "ecosystem": ecosystem,
-        "model": model_air,
+        "operation": "createImage",
         "prompt": prompt,
         "width": width,
         "height": height,
         "steps": steps,
         "quantity": 1,
     }
+    # Anima uses built-in model; no checkpoint or SDXL-specific params
+    if not is_anima and not is_flux:
+        image_input["model"] = model_air
     if is_flux:
-        # Flux uses guidance instead of cfgScale; negativePrompt/clipSkip/scheduler unsupported
         image_input["guidance"] = cfg_scale
-    else:
+    elif not is_anima:
         image_input["negativePrompt"] = negative_prompt
         image_input["cfgScale"] = cfg_scale
         image_input["scheduler"] = scheduler
@@ -77,7 +84,6 @@ def generate(
         image_input["seed"] = seed
 
     payload = {
-        "workflowTemplate": None,
         "steps": [{"$type": "imageGen", "input": image_input}],
     }
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -101,20 +107,25 @@ def generate(
         poll.raise_for_status()
         workflow = poll.json()
 
-    if workflow.get("status") != "succeeded":
-        raise RuntimeError(f"Civitaiワークフロー失敗: {workflow.get('status')}")
+    final_status = workflow.get("status")
 
     image_url = None
     for step in workflow.get("steps", []):
         for img in (step.get("output") or {}).get("images", []):
-            if img.get("url"):
-                image_url = img["url"]
+            # prefer previewUrl when available=false, else url
+            candidate = img.get("url") or img.get("previewUrl")
+            if not candidate:
+                continue
+            if img.get("available") is False:
+                candidate = img.get("previewUrl") or img.get("url")
+            if candidate:
+                image_url = candidate
                 break
         if image_url:
             break
 
     if not image_url:
-        raise RuntimeError("Civitai応答に画像URLがありません。")
+        raise RuntimeError(f"Civitaiワークフロー失敗 (status={final_status}): 画像URLがありません。")
 
     image_resp = requests.get(image_url, timeout=120)
     image_resp.raise_for_status()

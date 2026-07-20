@@ -42,6 +42,8 @@ def chat(
         for _pkey in ("temperature", "top_p", "top_k", "repetition_penalty", "frequency_penalty", "presence_penalty"):
             if _pkey in options:
                 body[_pkey] = options[_pkey]
+        if "instruction_template" in options:
+            body["instruction_template"] = options["instruction_template"]
     print(f"[TGW] request max_tokens={body.get('max_tokens', 'NOT SET')}")
 
     resp = requests.post(

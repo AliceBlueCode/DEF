@@ -2507,6 +2507,15 @@
   flex-shrink: 0;
 }
 
+.avatar-system {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #44444466;
+  font-size: 20px;
+  line-height: 1;
+}
+
 .message-body {
   padding: 10px 14px;
   border-radius: 8px;

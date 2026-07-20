@@ -2,12 +2,33 @@
 
 import datetime
 import json
+import logging
 import os
 import random
 import re
 import secrets
 from collections import OrderedDict
 from pathlib import Path
+
+_log = logging.getLogger("def.session")
+
+
+def _resolve_model(backend_id: str, req_model: str = "") -> str:
+    """バックエンドに対応するモデル名を解決する。
+
+    優先順位: リクエスト指定 > 設定ファイル(llm_ext_model_{backend_id}) > バックエンドデフォルト
+    """
+    if req_model:
+        return req_model
+    try:
+        from def_kari.settings import load_settings
+        per_backend = load_settings().get(f"llm_ext_model_{backend_id}", "")
+        if per_backend:
+            return per_backend
+    except Exception:
+        pass
+    from def_kari.llm.backend import LLM_BACKENDS
+    return LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
 
 from fastapi import APIRouter, Body
 from pydantic import BaseModel
@@ -232,6 +253,119 @@ def _load_action_directives() -> dict:
     return directives
 
 
+def _ai_action_select(
+    backend_id: str,
+    model: str,
+    char: dict,
+    char_id: str,
+    counter: int,
+    round_num: int,
+    history: list[dict],
+    initiative: list[str],
+    name_map: dict,
+    speaker_name: str,
+    lang: str,
+) -> dict:
+    """TRPGモード Round>=2 でAIが取るアクションをLLMに選ばせる。失敗時は {"action": "none"} を返す。"""
+    _default: dict = {"action": "none", "target_name": "", "vote_type": "", "vote_detail": "", "reason": ""}
+    if backend_id not in LLM_BACKENDS:
+        return _default
+
+    other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
+    recent_lines = [h.get("content", "")[:80] for h in history[-3:]]
+    recent_text = "\n".join(recent_lines)
+
+    available = ["none", "skip"]
+    if counter >= 1:
+        available += ["extend", "designate"]
+    if counter >= 3:
+        available.append("vote")
+
+    # 直前にダイスを振っていたら自発スキップ禁止
+    _last_char_entry = next(
+        (h for h in reversed(history) if h.get("character_id") == char_id),
+        None,
+    )
+    if _last_char_entry and _last_char_entry.get("judgment"):
+        available = [a for a in available if a != "skip"]
+
+    # 利用可能なアクションの説明だけ生成（マイナスになる選択肢は説明ごと除外）
+    if lang == "en":
+        _descs: list[str] = [
+            "- none: speak normally (cost 0)",
+            "- skip: voluntary skip, speech power +1",
+        ]
+        if "extend" in available:
+            _descs.append(f"- extend: emphatic speech, cost -1 (current {counter} → {counter - 1})")
+        if "designate" in available:
+            _descs.append(f"- designate: designate next speaker, cost -1 (current {counter} → {counter - 1}), set target_name to one of {other_names}")
+        if "vote" in available:
+            _descs.append(f"- vote: propose vote, cost -3 (current {counter} → {counter - 3}), set vote_type(topic_change/expel/end_session) and vote_detail")
+        system_msg = (char.get("persona_description") or f"You are {speaker_name}.")[:300]
+        user_msg = (
+            f"[TRPG Action Selection]\nRound {round_num}, your turn as {speaker_name}.\n"
+            f"Speech Power: {counter}\nParticipants: {', '.join(other_names)}\n"
+            f"Recent:\n{recent_text}\n\n"
+            f"Choose ONE action from: {available}\n"
+            + "\n".join(_descs) + "\n\n"
+            'Respond with JSON only: {"action":"...","target_name":"","vote_type":"","vote_detail":"","reason":""}'
+        )
+    else:
+        _descs = [
+            "- none: 通常発言（コスト0）",
+            "- skip: 自発的スキップ、発言力+1",
+        ]
+        if "extend" in available:
+            _descs.append(f"- extend: 力強い発言、発言力-1（現在{counter} → {counter - 1}）")
+        if "designate" in available:
+            _descs.append(f"- designate: 次の発言者を指名、発言力-1（現在{counter} → {counter - 1}）、target_nameに{other_names}から選んで指定")
+        if "vote" in available:
+            _descs.append(f"- vote: 投票発議、発言力-3（現在{counter} → {counter - 3}）、vote_type(topic_change/expel/end_session)とvote_detailを指定")
+        system_msg = (char.get("persona_description") or f"あなたは{speaker_name}です。")[:300]
+        user_msg = (
+            f"[TRPGアクション選択]\nラウンド{round_num}、{speaker_name}のターンです。\n"
+            f"発言力: {counter}\n参加者: {', '.join(other_names)}\n"
+            f"直近の会話:\n{recent_text}\n\n"
+            f"以下から1つ選んでください: {available}\n"
+            + "\n".join(_descs) + "\n\n"
+            '{"action":"...","target_name":"","vote_type":"","vote_detail":"","reason":""}のJSONのみで返してください'
+        )
+
+    chat_fn = LLM_BACKENDS[backend_id]["chat"]
+    messages_payload = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_msg},
+    ]
+    from def_kari.resources.vram_lock import get_vram_lock as _get_vl
+    _vl = _get_vl()
+    _vl.acquire()
+    try:
+        raw = chat_fn(messages_payload, model, json_mode=True, options={"num_predict": 80})
+    except Exception:
+        return _default
+    finally:
+        _vl.release()
+
+    if not raw:
+        return _default
+
+    # thinkingタグ除去
+    raw = re.sub(r'<think(?:ing)?[^>]*>.*?</think(?:ing)?>', '', raw, flags=re.DOTALL).strip()
+    # JSONブロック抽出
+    m = re.search(r'\{[^{}]+\}', raw, re.DOTALL)
+    raw_json = m.group() if m else raw
+    try:
+        parsed = json.loads(raw_json)
+    except Exception:
+        return _default
+
+    action = str(parsed.get("action", "none"))
+    if action not in available:
+        action = "none"
+    parsed["action"] = action
+    return {**_default, **{k: str(v) for k, v in parsed.items()}}
+
+
 @router.get("/action-directives")
 def get_action_directives():
     directives = _load_action_directives()
@@ -325,6 +459,8 @@ class SessionStartRequest(BaseModel):
     trpg_rulebook: str = ""
     trpg_scenario: str = ""
     char_game_sheets: dict[str, str] = {}
+    keeper_char_id: str = ""
+    human_keeper: bool = False
 
 
 class SessionNextRequest(BaseModel):
@@ -350,12 +486,15 @@ def start_session(req: SessionStartRequest):
     directive_set_id = req.action_directive_set or _s.get("session_action_directive_set", "default")
 
     session_id = secrets.token_urlsafe(16)
-    initiative = random.sample(req.character_ids, len(req.character_ids))
     profiles = load_profiles()
-    name_map = {}
+    all_name_map = {}
     for cid in req.character_ids:
         char = get_character(cid, profiles)
-        name_map[cid] = char.get("name", cid) if char else cid
+        all_name_map[cid] = char.get("name", cid) if char else cid
+    keeper_char_id = req.keeper_char_id if req.keeper_char_id in req.character_ids else ""
+    player_ids = [c for c in req.character_ids if c != keeper_char_id]
+    initiative = random.sample(player_ids, len(player_ids))
+    name_map = {cid: all_name_map[cid] for cid in player_ids}
 
     if len(_sessions) >= _MAX_SESSIONS:
         _sessions.popitem(last=False)
@@ -367,6 +506,11 @@ def start_session(req: SessionStartRequest):
         for cid, bid in req.char_backends.items()
         if cid in req.character_ids and bid in LLM_BACKENDS
     }
+    _skill_pool_init = 0
+    if req.trpg_mode and req.trpg_rulebook:
+        _rb = _load_trpg_rulebook(req.trpg_rulebook)
+        _skill_pool_init = int(_rb.get("skill_point_pool", 0))
+
     _sessions[session_id] = {
         "id": session_id,
         "initiative": initiative,
@@ -390,13 +534,19 @@ def start_session(req: SessionStartRequest):
         "trpg_scenario": req.trpg_scenario,
         "char_game_sheets": req.char_game_sheets,
         "current_scene_index": 0,
-        "player_knowledge": {cid: [] for cid in req.character_ids},
+        "scene_round_start": 0,
+        "player_knowledge": {cid: [] for cid in player_ids},
         "npc_state": _build_initial_npc_state(req.trpg_scenario),
+        "skill_pool": {cid: _skill_pool_init for cid in player_ids},
+        "skill_values": {cid: {} for cid in player_ids},
+        "keeper_char_id": keeper_char_id,
+        "keeper_char_name": all_name_map.get(keeper_char_id, "") if keeper_char_id else "",
+        "human_keeper": req.human_keeper,
     }
 
     order = [name_map.get(c, c) for c in initiative]
     _autosave(session_id)
-    return {"session_id": session_id, "initiative": initiative, "order": order}
+    return {"session_id": session_id, "initiative": initiative, "order": order, "human_keeper": req.human_keeper}
 
 
 @router.post("/next")
@@ -427,13 +577,17 @@ def next_turn(req: SessionNextRequest):
 
     # 発言力がマイナスなら自動スキップ
     counters = session.setdefault("counters", {})
-    if counters.get(current_char_id, 0) < 0:
-        counters[current_char_id] += 1
+    _ctr_now = counters.get(current_char_id, 0)
+    _log.info("[counter] %s = %d (Round %d)", name_map.get(current_char_id, current_char_id), _ctr_now, session["round"])
+    if _ctr_now < 0:
+        counters[current_char_id] = _ctr_now + 1
         session["turn"] = turn + 1
         session["action_count"] = 0
         _autosave(req.session_id)
+        _log.info("[forced_skip] %s: %d → %d", name_map.get(current_char_id, current_char_id), _ctr_now, _ctr_now + 1)
         return {
             "skipped": True,
+            "counter_before": _ctr_now,
             "character_id": current_char_id,
             "character_name": name_map.get(current_char_id, current_char_id),
             "round": session["round"],
@@ -457,9 +611,7 @@ def next_turn(req: SessionNextRequest):
     backend_id = char_backends.get(current_char_id) or req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
     if backend_id not in LLM_BACKENDS:
         backend_id = DEFAULT_LLM_BACKEND
-    model = req.model
-    if not model:
-        model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
+    model = _resolve_model(backend_id, req.model)
 
     history = []
     for h in session["history"][-20:]:
@@ -488,10 +640,76 @@ def next_turn(req: SessionNextRequest):
     action_count = session.get("action_count", 0)
     other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
 
+    # --- 挿入点①: TRPGモード Round>=2 の AI 行動選択 ---
+    _ai_action: dict = {"action": "none"}
+    _designated_target_name = ""
+    if session.get("trpg_mode") and session["round"] >= 2:
+        _ai_action = _ai_action_select(
+            backend_id, model, char,
+            current_char_id,
+            counters.get(current_char_id, 0),
+            session["round"], session["history"],
+            initiative, name_map, speaker_name, _user_lang,
+        )
+        _log.info("[action] %s chose: %s", speaker_name, _ai_action.get("action"))
+
+    if _ai_action["action"] == "skip":
+        _ctr_before_skip = counters.get(current_char_id, 0)
+        counters[current_char_id] = _ctr_before_skip + 1
+        session["turn"] = turn + 1
+        session["action_count"] = 0
+        _autosave(req.session_id)
+        return {
+            "skipped": True,
+            "voluntary": True,
+            "counter_before": _ctr_before_skip,
+            "character_id": current_char_id,
+            "character_name": name_map.get(current_char_id, current_char_id),
+            "round": session["round"],
+            "counters": dict(counters),
+        }
+
+    if _ai_action["action"] == "vote":
+        _cur = counters.get(current_char_id, 0)
+        if _cur >= 3:
+            counters[current_char_id] = _cur - 3
+            _autosave(req.session_id)
+            return {
+                "action": "vote_proposal",
+                "character_id": current_char_id,
+                "character_name": name_map.get(current_char_id, current_char_id),
+                "vote_type": _ai_action.get("vote_type", "topic_change"),
+                "vote_detail": _ai_action.get("vote_detail", ""),
+                "proposer_text": _ai_action.get("reason", ""),
+                "round": session["round"],
+                "counters": dict(counters),
+            }
+        else:
+            _ai_action["action"] = "none"
+
+    if _ai_action["action"] == "designate":
+        _target_name = _ai_action.get("target_name", "")
+        _target_id = next((c for c in initiative if name_map.get(c, c) == _target_name), None)
+        _cur = counters.get(current_char_id, 0)
+        if _target_id and _target_id != current_char_id and _cur >= 1:
+            counters[current_char_id] = _cur - 1
+            session["designated_next"] = _target_id
+            _designated_target_name = _target_name
+        else:
+            _ai_action["action"] = "none"
+
+    if _ai_action["action"] == "extend":
+        _cur = counters.get(current_char_id, 0)
+        if _cur >= 1:
+            counters[current_char_id] = _cur - 1
+        else:
+            _ai_action["action"] = "none"
+
     directive_set_id = session.get("action_directive_set", "default")
     _directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
 
     _trpg_ctx = ""
+    _scenario = None
     if session.get("trpg_mode"):
         _rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
         _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
@@ -499,12 +717,37 @@ def next_turn(req: SessionNextRequest):
             current_char_id, char, _rulebook, _scenario or None, session, _user_lang
         )
 
+    effective_topic = (
+        _scenario.get("title", topic) if session.get("trpg_mode") and _scenario else topic
+    )
     session_ctx = _build_session_context(
-        topic, rules, initiative, name_map, speaker_name, _user_lang,
+        effective_topic, rules, initiative, name_map, speaker_name, _user_lang,
         trpg_context=_trpg_ctx,
     )
+
+    # 死者視点：runtime_statsでステータスが0になっているキャラは死者として発言させる
+    _runtime_stats = session.get("runtime_stats", {}).get(current_char_id, {})
+    _is_dead = bool(_runtime_stats) and any(v <= 0 for v in _runtime_stats.values())
+    if _is_dead:
+        if _user_lang == "ja":
+            session_ctx += (
+                "\n\n【重要：死者視点】"
+                f"あなた（{speaker_name}）はこのセッションで死亡しています。"
+                "肉体はなく、霊・残留思念・記憶の断片として存在しています。"
+                "生存者に直接触れることはできませんが、その場の空気・気配・走馬灯として存在感を示してください。"
+                "必ず死者の視点から発言し、自分が死んでいることを自覚した言動を取ること。"
+            )
+        else:
+            session_ctx += (
+                "\n\n[IMPORTANT: Dead Character Perspective]"
+                f"You ({speaker_name}) have died in this session."
+                "You exist as a spirit, lingering memory, or echo of your past self."
+                "You cannot physically interact with survivors, but you may manifest as atmosphere, sensation, or ghostly whisper."
+                "Always speak from the perspective of the dead, fully aware that you have died."
+            )
+
     user_text = _build_turn_instruction(
-        action_count, speaker_name, other_names, topic,
+        action_count, speaker_name, other_names, effective_topic,
         session["history"], current_char_id, session, _directives, _user_lang,
     )
 
@@ -521,7 +764,7 @@ def next_turn(req: SessionNextRequest):
     _vram_lock = get_vram_lock()
     _vram_lock.acquire()
     try:
-        result = _player_agent.narrate(
+        _narrate_kwargs = dict(
             character=char,
             user_text=user_text,
             history=history,
@@ -533,6 +776,11 @@ def next_turn(req: SessionNextRequest):
             current_emotion=prev_emotion,
             char_id=current_char_id,
         )
+        result = _player_agent.narrate(**_narrate_kwargs)
+        if not result.get("success"):
+            import time as _time
+            _time.sleep(1)
+            result = _player_agent.narrate(**_narrate_kwargs)
     except Exception as e:
         _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
         return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}
@@ -546,6 +794,8 @@ def next_turn(req: SessionNextRequest):
     if result.get("success") and result.get("result"):
         parsed = result["result"]
         text = parsed.get("dialogue", "")
+        if _is_dead and text:
+            text = f"『行動不能』{text}"
         emotion = parsed.get("emotion", "neutral")
         raw_tags = parsed.get("tags", [])
         tags = raw_tags if isinstance(raw_tags, list) else []
@@ -624,9 +874,12 @@ def next_turn(req: SessionNextRequest):
         session["action_count"] = action_count
 
     _autosave(req.session_id)
+    _char_name = name_map.get(current_char_id, current_char_id)
+    _log.info("[next] Round %d | Turn %d | %s (%s) | %d chars | action=%s",
+              session["round"], turn + 1, _char_name, backend_id, len(text), _ai_action.get("action", "none"))
     return {
         "character_id": current_char_id,
-        "character_name": name_map.get(current_char_id, current_char_id),
+        "character_name": _char_name,
         "text": text,
         "emotion": emotion,
         "tags": tags,
@@ -635,6 +888,8 @@ def next_turn(req: SessionNextRequest):
         "turn": turn + 1,
         "counters": dict(counters),
         "penalty_message": penalty_message,
+        "ai_action": _ai_action.get("action", "none"),
+        "designated_name": _designated_target_name or None,
     }
 
 
@@ -723,24 +978,78 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
         return {"error": "Session not found"}
     if not session.get("trpg_mode"):
         return {"error": "Not in TRPG mode"}
+    if session.get("human_keeper"):
+        return {"error": "Human keeper mode: use POST /keeper endpoint instead"}
 
-    result = _gm_agent.narrate(
-        session=session,
-        backend_id=req.backend or DEFAULT_LLM_BACKEND,
-        inject_history=req.inject_history,
-        session_id=session_id,
+    _keeper_char_id = session.get("keeper_char_id", "")
+    _char_backends_map = session.get("char_backends", {})
+    _effective_backend = (
+        _char_backends_map.get(_keeper_char_id) or req.backend or DEFAULT_LLM_BACKEND
+        if _keeper_char_id
+        else req.backend or DEFAULT_LLM_BACKEND
     )
+
+    from def_kari.resources.vram_lock import get_vram_lock as _get_vram_lock
+    _keeper_lock = _get_vram_lock()
+    _keeper_lock.acquire()
+    try:
+        result = _gm_agent.narrate(
+            session=session,
+            backend_id=_effective_backend,
+            inject_history=req.inject_history,
+            session_id=session_id,
+        )
+    finally:
+        _keeper_lock.release()
     if result.get("error"):
+        _log.error("[keeper] error: %s", result["error"])
         return {"error": result["error"]}
+    _judgments = result.get("judgments", [])
+    _log.info("[keeper] Round %d | %d chars | %d judgments | text: %.60s",
+              session.get("round", 0), len(result["text"]), len(_judgments),
+              result["text"].replace("\n", " "))
+    if _judgments:
+        for _j in _judgments:
+            _log.info("[keeper]   judgment: %s → %s", _j.get("character_name", "?"), _j.get("stat", "?"))
     if req.inject_history and result["text"]:
         _autosave(session_id)
 
-    return {
+    # シーン自動進行判定
+    _scene_advanced_info = None
+    _should_advance = result.get("advance_scene", False)
+    if not _should_advance:
+        # フォールバック: scene_round >= recommended_rounds * 1.5
+        _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+        _scenes = _scenario.get("scenes", [])
+        _cur_idx = session.get("current_scene_index", 0)
+        if _cur_idx < len(_scenes) - 1:
+            _rec = (_scenes[_cur_idx] if _cur_idx < len(_scenes) else {}).get("recommended_rounds")
+            if _rec:
+                _scene_rounds = session.get("round", 0) - session.get("scene_round_start", 0)
+                if _scene_rounds >= _rec * 1.5:
+                    _should_advance = True
+    if _should_advance:
+        _scene_advanced_info = advance_scene(session_id)
+        if _scene_advanced_info.get("error"):
+            _scene_advanced_info = None
+
+    _keeper_display = session.get("keeper_char_name", "")
+    resp: dict = {
         "text": result["text"],
         "character_id": "_keeper",
-        "character_name": "🎩 Keeper",
+        "character_name": f"🎩 {_keeper_display}" if _keeper_display else "🎩 Keeper",
         "judgments": result["judgments"],
     }
+    if _scene_advanced_info:
+        resp["scene_advanced"] = True
+        resp["new_scene_index"] = _scene_advanced_info.get("current_scene_index")
+        resp["new_scene_id"] = _scene_advanced_info.get("scene_id", "")
+        resp["new_scene_title"] = _scene_advanced_info.get("scene_title", "")
+        resp["new_chapter_id"] = _scene_advanced_info.get("chapter_id")
+        resp["new_chapter_title"] = _scene_advanced_info.get("chapter_title")
+    if result.get("propose_end"):
+        resp["propose_end"] = True
+    return resp
 
 
 @router.post("/{session_id}/skip")
@@ -768,6 +1077,291 @@ def skip_turn(session_id: str):
         "character_name": session["name_map"].get(char_id, char_id),
         "round": session["round"],
         "counters": dict(counters),
+    }
+
+
+class JudgmentAllocateRequest(BaseModel):
+    character_id: str
+    stat: str
+    backend: str = DEFAULT_LLM_BACKEND
+
+
+@router.post("/{session_id}/judgment/allocate")
+def judgment_allocate(session_id: str, req: JudgmentAllocateRequest):
+    """スキル値未設定の判定でキャラAIにポイント配分を決定させる。
+
+    配分値をセッションの skill_values に書き込み、skill_pool から減算する。
+    スキル値が既に設定済みの場合はLLMを呼ばずそのまま返す。
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    skill_values = session.setdefault("skill_values", {})
+    char_skills = skill_values.setdefault(req.character_id, {})
+
+    if req.stat in char_skills:
+        return {
+            "character_id": req.character_id,
+            "stat": req.stat,
+            "allocated": char_skills[req.stat],
+            "skill_pool": session.get("skill_pool", {}).get(req.character_id, 0),
+            "already_set": True,
+        }
+
+    skill_pool = session.setdefault("skill_pool", {})
+    pool = skill_pool.get(req.character_id, 0)
+    if pool <= 0:
+        return {
+            "character_id": req.character_id,
+            "character_name": session.get("name_map", {}).get(req.character_id, req.character_id),
+            "stat": req.stat,
+            "allocated": 0,
+            "skill_pool": 0,
+            "already_set": False,
+            "label": "",
+        }
+    max_alloc = min(100, pool)
+    name_map = session.get("name_map", {})
+    char_name = name_map.get(req.character_id, req.character_id)
+
+    _s = load_settings()
+    _lang = _s.get("user_language", "ja") or "ja"
+
+    recent = "\n".join(
+        h["content"] for h in session.get("history", [])[-6:]
+        if h.get("content")
+    )
+
+    if _lang == "ja":
+        alloc_prompt = (
+            f"あなたは「{req.stat}」のスキル判定を行います。\n"
+            f"スキルポイントプール残量: {pool}点\n"
+            f"今回の最大配分: {max_alloc}点（上限100点）\n"
+            f"最近の状況:\n{recent}\n\n"
+            f"何点配分しますか？ 0〜{max_alloc}の整数のみ答えてください。数字以外は不要です。"
+        )
+    else:
+        alloc_prompt = (
+            f"You are making a '{req.stat}' skill check.\n"
+            f"Skill point pool remaining: {pool}\n"
+            f"Maximum allocation this check: {max_alloc} (cap 100)\n"
+            f"Recent context:\n{recent}\n\n"
+            f"How many points do you allocate? Answer with an integer 0–{max_alloc} only."
+        )
+
+    profiles = load_profiles()
+    char = get_character(req.character_id, profiles)
+    backend_id = session.get("char_backends", {}).get(req.character_id) or req.backend
+    if backend_id not in LLM_BACKENDS:
+        backend_id = DEFAULT_LLM_BACKEND
+
+    allocated = 0
+    try:
+        chat_fn = LLM_BACKENDS[backend_id]["chat"]
+        model = _resolve_model(backend_id)
+        persona = (char or {}).get("persona_description", "")
+        messages = [
+            {"role": "system", "content": persona} if persona else
+            {"role": "system", "content": "You are a TRPG character deciding skill point allocation."},
+            {"role": "user", "content": alloc_prompt},
+        ]
+        from def_kari.resources.vram_lock import get_vram_lock
+        _vl = get_vram_lock()
+        _vl.acquire()
+        try:
+            reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 16})
+        finally:
+            _vl.release()
+        import re as _re
+        _m = _re.search(r'\d+', reply or "")
+        allocated = int(_m.group()) if _m else 0
+        allocated = max(0, min(max_alloc, allocated))
+    except Exception:
+        allocated = 0
+
+    char_skills[req.stat] = allocated
+    skill_pool[req.character_id] = max(0, pool - allocated)
+
+    _label = f"🎯 {char_name}: {req.stat} に{allocated}点配分（プール残{skill_pool[req.character_id]}点）"
+    if _lang != "ja":
+        _label = f"🎯 {char_name}: allocated {allocated} pts to {req.stat} (pool remaining: {skill_pool[req.character_id]})"
+
+    session["history"].append({
+        "role": "user",
+        "content": _label,
+        "character_id": req.character_id,
+        "skill_allocation": {"stat": req.stat, "allocated": allocated},
+    })
+    _autosave(session_id)
+    return {
+        "character_id": req.character_id,
+        "character_name": char_name,
+        "stat": req.stat,
+        "allocated": allocated,
+        "skill_pool": skill_pool[req.character_id],
+        "already_set": False,
+        "label": _label,
+    }
+
+
+class JudgmentRollRequest(BaseModel):
+    character_id: str
+    stat: str
+    roll: int
+    stat_value: int = 0
+    success_text: str = ""
+    failure_text: str = ""
+
+
+@router.post("/{session_id}/judgment/roll")
+def judgment_roll(session_id: str, req: JudgmentRollRequest):
+    """ダイスロール結果を受け取り、成否判定してセッション履歴に注入する。
+
+    stat_value が 0 の場合はキャラシートから自動取得する。
+    成功条件: roll <= stat_value
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    stat_value = req.stat_value
+    if stat_value == 0:
+        # skill_values（セッション中に配分済み）を優先
+        _sv = session.get("skill_values", {}).get(req.character_id, {})
+        if req.stat in _sv:
+            stat_value = _sv[req.stat]
+        else:
+            # フォールバック: キャラシートのstat値
+            _cgs = session.get("char_game_sheets", {})
+            _sheet_id = _cgs.get(req.character_id, "")
+            if _sheet_id:
+                _profiles = load_profiles()
+                _char = get_character(req.character_id, _profiles)
+                if _char:
+                    stat_value = (
+                        _char.get("game_rules_sheets", {})
+                        .get(_sheet_id, {})
+                        .get("stats", {})
+                        .get(req.stat, {})
+                        .get("current", 0)
+                    )
+
+    success: bool | None = (req.roll <= stat_value) if stat_value > 0 else None
+
+    name_map = session.get("name_map", {})
+    char_name = name_map.get(req.character_id, req.character_id)
+
+    _s = load_settings()
+    _lang = _s.get("user_language", "ja") or "ja"
+
+    if _lang == "ja":
+        if success is None:
+            result_text = f"🎲 {char_name}: {req.stat}判定 出目{req.roll}"
+        elif success:
+            outcome = req.success_text or "成功"
+            result_text = f"🎲 {char_name}: {req.stat}判定 出目{req.roll}/{stat_value} → 成功（{outcome}）"
+        else:
+            outcome = req.failure_text or "失敗"
+            result_text = f"🎲 {char_name}: {req.stat}判定 出目{req.roll}/{stat_value} → 失敗（{outcome}）"
+    else:
+        if success is None:
+            result_text = f"🎲 {char_name}: {req.stat} check roll {req.roll}"
+        elif success:
+            outcome = req.success_text or "Success"
+            result_text = f"🎲 {char_name}: {req.stat} {req.roll}/{stat_value} → Success ({outcome})"
+        else:
+            outcome = req.failure_text or "Failure"
+            result_text = f"🎲 {char_name}: {req.stat} {req.roll}/{stat_value} → Failure ({outcome})"
+
+    session["history"].append({
+        "role": "user",
+        "content": result_text,
+        "character_id": req.character_id,
+        "judgment": {
+            "stat": req.stat,
+            "roll": req.roll,
+            "stat_value": stat_value,
+            "success": success,
+        },
+    })
+    _autosave(session_id)
+    return {
+        "character_id": req.character_id,
+        "character_name": char_name,
+        "stat": req.stat,
+        "roll": req.roll,
+        "stat_value": stat_value,
+        "success": success,
+        "result_text": result_text,
+    }
+
+
+@router.post("/{session_id}/scene/advance")
+def advance_scene(session_id: str):
+    """現在のシーンを次のシーンへ進める。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+    scenes = scenario.get("scenes", [])
+    current_idx = session.get("current_scene_index", 0)
+    if current_idx >= len(scenes) - 1:
+        return {"error": "Already at last scene", "current_scene_index": current_idx}
+    session["current_scene_index"] = current_idx + 1
+    session["scene_round_start"] = session.get("round", 0)
+    new_idx = session["current_scene_index"]
+    new_scene = scenes[new_idx] if new_idx < len(scenes) else {}
+    chapter = None
+    for ch in scenario.get("chapters", []):
+        if new_scene.get("id", "") in ch.get("scene_ids", []):
+            chapter = ch
+            break
+    _autosave(session_id)
+    return {
+        "current_scene_index": new_idx,
+        "scene_id": new_scene.get("id", ""),
+        "scene_title": new_scene.get("title", ""),
+        "chapter_id": chapter.get("id", "") if chapter else None,
+        "chapter_title": chapter.get("title", "") if chapter else None,
+    }
+
+
+@router.post("/{session_id}/chapter/advance")
+def advance_chapter(session_id: str):
+    """次のチャプターの最初のシーンへ進める。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+    scenes = scenario.get("scenes", [])
+    chapters = scenario.get("chapters", [])
+    if not chapters:
+        return advance_scene(session_id)
+    current_idx = session.get("current_scene_index", 0)
+    current_scene_id = scenes[current_idx].get("id", "") if current_idx < len(scenes) else ""
+    current_ch_idx = next(
+        (i for i, c in enumerate(chapters) if current_scene_id in c.get("scene_ids", [])),
+        -1,
+    )
+    if current_ch_idx < 0 or current_ch_idx >= len(chapters) - 1:
+        return {"error": "Already at last chapter", "current_scene_index": current_idx}
+    next_ch = chapters[current_ch_idx + 1]
+    if not next_ch.get("scene_ids"):
+        return {"error": "Next chapter has no scenes"}
+    first_scene_id = next_ch["scene_ids"][0]
+    new_idx = next((i for i, s in enumerate(scenes) if s.get("id") == first_scene_id), -1)
+    if new_idx < 0:
+        return {"error": f"Scene {first_scene_id} not found in scenario"}
+    session["current_scene_index"] = new_idx
+    new_scene = scenes[new_idx]
+    _autosave(session_id)
+    return {
+        "current_scene_index": new_idx,
+        "scene_id": new_scene.get("id", ""),
+        "scene_title": new_scene.get("title", ""),
+        "chapter_id": next_ch.get("id", ""),
+        "chapter_title": next_ch.get("title", ""),
     }
 
 
@@ -1019,7 +1613,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
         bid = char_backends.get(char_id) or default_backend
         if bid not in LLM_BACKENDS:
             bid = DEFAULT_LLM_BACKEND
-        model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
+        model = _resolve_model(bid)
 
         deliberation_prompt = _sp("deliberation_prompt", _v_lang).format(
             vote_label=vote_label, detail_text=detail_text
@@ -1051,17 +1645,23 @@ def vote_deliberate(session_id: str, req: VoteRequest):
             else:
                 _v_history.append({"role": _h_role, "content": _raw})
         try:
-            result = generate_structured_reply(
-                user_text=deliberation_prompt,
-                history=_v_history,
-                model=model,
-                character=char,
-                backend=bid,
-                allowed_sexual=_v_allowed_sexual,
-                allowed_violence=_v_allowed_violence,
-                current_emotion=_v_prev_emotion,
-                session_context=_v_session_ctx,
-            )
+            from def_kari.resources.vram_lock import get_vram_lock as _get_vl
+            _delib_lock = _get_vl()
+            _delib_lock.acquire()
+            try:
+                result = generate_structured_reply(
+                    user_text=deliberation_prompt,
+                    history=_v_history,
+                    model=model,
+                    character=char,
+                    backend=bid,
+                    allowed_sexual=_v_allowed_sexual,
+                    allowed_violence=_v_allowed_violence,
+                    current_emotion=_v_prev_emotion,
+                    session_context=_v_session_ctx,
+                )
+            finally:
+                _delib_lock.release()
             dialogue = ""
             emotion = "neutral"
             if result.get("success") and result.get("result"):
@@ -1136,7 +1736,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         bid = char_backends.get(char_id) or default_backend
         if bid not in LLM_BACKENDS:
             bid = DEFAULT_LLM_BACKEND
-        model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
+        model = _resolve_model(bid)
         dialogue = deliberation_texts.get(char_id, "")
 
         if _force_approve:
@@ -1162,10 +1762,10 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         except Exception:
             results[char_id] = True
 
-    if proposer_id:
-        # 人間キャラがいる場合: LLM がキーパーとして追加投票
+    if proposer_id and proposer_id != "_keeper":
+        # 人間キャラが発議: LLM がキーパーとして追加投票
         bid = default_backend if default_backend in LLM_BACKENDS else DEFAULT_LLM_BACKEND
-        model = LLM_BACKENDS.get(bid, {}).get("default_model", "")
+        model = _resolve_model(bid)
         if _force_approve:
             results["_keeper"] = True
         else:
@@ -1235,7 +1835,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
     keeper_label = _sp("keeper_label", _v_lang) or "キーパー"
     human_vote_label = vote_for_label if req.keeper_vote else vote_against_label
     keeper_llm_label = vote_for_label if results.get("_keeper") else vote_against_label
-    if proposer_id:
+    if proposer_id and proposer_id != "_keeper":
         vote_detail_str = (
             f"{name_map.get(proposer_id, proposer_id)}: {human_vote_label}, "
             f"{keeper_label}: {keeper_llm_label}"
@@ -1354,7 +1954,7 @@ def get_session_debug():
 def list_saved_sessions():
     files = list_session_mode_files()
     result = []
-    for f in reversed(files):
+    for f in files:
         meta = f.get("metadata", {})
         result.append({
             "filename": Path(f["path"]).name,
@@ -1363,8 +1963,10 @@ def list_saved_sessions():
             "saved_at": meta.get("saved_at", ""),
             "round": meta.get("round", 1),
             "character_names": list(meta.get("name_map", {}).values()),
+            "trpg_scenario_title": meta.get("trpg_scenario_title", ""),
             "private": f.get("private", False),
         })
+    result.sort(key=lambda x: x["saved_at"], reverse=True)
     return {"sessions": result}
 
 
@@ -1417,6 +2019,17 @@ def load_session(req: SessionLoadRequest):
         "actions_per_turn": meta.get("actions_per_turn", 2),
         "action_count": 0,
         "history": data.get("history", []),
+        "trpg_mode": meta.get("trpg_mode", False),
+        "trpg_rulebook": meta.get("trpg_rulebook", ""),
+        "trpg_scenario": meta.get("trpg_scenario", ""),
+        "char_game_sheets": meta.get("char_game_sheets", {}),
+        "current_scene_index": meta.get("current_scene_index", 0),
+        "runtime_stats": meta.get("runtime_stats", {}),
+        "skill_pool": meta.get("skill_pool", {}),
+        "skill_values": meta.get("skill_values", {}),
+        "keeper_char_id": meta.get("keeper_char_id", ""),
+        "keeper_char_name": meta.get("keeper_char_name", ""),
+        "human_keeper": meta.get("human_keeper", False),
     }
     if len(_sessions) >= _MAX_SESSIONS:
         _sessions.popitem(last=False)
@@ -1429,6 +2042,12 @@ def load_session(req: SessionLoadRequest):
         "name_map": session["name_map"],
         "history": session["history"],
         "actions_per_turn": session["actions_per_turn"],
+        "trpg_mode": session["trpg_mode"],
+        "trpg_rulebook": session.get("trpg_rulebook", ""),
+        "char_game_sheets": session["char_game_sheets"],
+        "runtime_stats": session["runtime_stats"],
+        "current_scene_index": session.get("current_scene_index", 0),
+        "human_keeper": session.get("human_keeper", False),
     }
 
 
@@ -1465,6 +2084,18 @@ def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSes
         "name_map": session.get("name_map", {}),
         "actions_per_turn": session.get("actions_per_turn", 2),
         "saved_at": datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "trpg_mode": session.get("trpg_mode", False),
+        "trpg_rulebook": session.get("trpg_rulebook", ""),
+        "trpg_scenario": session.get("trpg_scenario", ""),
+        "trpg_scenario_title": _load_trpg_scenario(session.get("trpg_scenario", "")).get("title", "") if session.get("trpg_scenario") else "",
+        "char_game_sheets": session.get("char_game_sheets", {}),
+        "current_scene_index": session.get("current_scene_index", 0),
+        "runtime_stats": session.get("runtime_stats", {}),
+        "skill_pool": session.get("skill_pool", {}),
+        "skill_values": session.get("skill_values", {}),
+        "keeper_char_id": session.get("keeper_char_id", ""),
+        "keeper_char_name": session.get("keeper_char_name", ""),
+        "human_keeper": session.get("human_keeper", False),
     }
     save_session_mode(
         session_id=session_id,
@@ -1515,17 +2146,22 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
                 unique.append(t)
         return ', '.join(unique[:max_tags])
 
-    def _append_appearance_tags(prompt: str, last_char_id: str | None) -> str:
-        if not last_char_id:
+    def _append_appearance_tags(prompt: str, char_id: str | None) -> str:
+        if not char_id:
             return prompt
         _profiles = load_profiles()
-        _char = get_character(last_char_id, _profiles)
-        _app_tags = _char.get("appearance_tags", "").strip()
+        _app_tags = get_character(char_id, _profiles).get("appearance_tags", "").strip()
         if _app_tags:
-            return prompt + ", " + _app_tags if prompt else _app_tags
+            return (prompt + ", " + _app_tags) if prompt else _app_tags
         return prompt
 
-    _last_char_id = last_round[-1].get("character_id") if last_round else None
+    # TRPGモード: initiative からランダム1人 / 通常: 最後の発言者
+    import random as _random
+    _pc_ids = [cid for cid in initiative if not cid.startswith("_")]
+    if session.get("trpg_mode") and _pc_ids:
+        _scene_char_id = _random.choice(_pc_ids)
+    else:
+        _scene_char_id = last_round[-1].get("character_id") if last_round else None
 
     if t2i_prompt_mode == "passthrough":
         # LLM不使用: history の image_prompt_en を直接流用
@@ -1534,7 +2170,7 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             image_prompt = ", ".join(_ip_parts)
             if not image_prompt and scene:
                 image_prompt = scene
-            image_prompt = _append_appearance_tags(image_prompt, _last_char_id)
+            image_prompt = _append_appearance_tags(image_prompt, _scene_char_id)
             image_prompt = _dedup_tags(image_prompt)
         except Exception as e:
             return {"error": f"image prompt (passthrough) failed: {e}"}
@@ -1586,7 +2222,7 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
 
         try:
             chat_fn = LLM_BACKENDS[backend_id]["chat"]
-            model = LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
+            model = _resolve_model(backend_id)
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
@@ -1599,7 +2235,7 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             finally:
                 _vram_lock_llm.release()
             image_prompt = re.sub(r'#(\w)', r'\1', image_prompt).strip().strip('"').strip("'")
-            image_prompt = _append_appearance_tags(image_prompt, _last_char_id)
+            image_prompt = _append_appearance_tags(image_prompt, _scene_char_id)
             image_prompt = _dedup_tags(image_prompt)
         except Exception as e:
             return {"error": f"image prompt generation failed: {e}"}
@@ -1650,9 +2286,16 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
         finally:
             _vram_lock.release()
         filename = image_path.split("/")[-1].split("\\")[-1]
-        t2i_debug["url"] = f"/api/t2i/image/{filename}"
+        image_url = f"/api/t2i/image/{filename}"
+        t2i_debug["url"] = image_url
         set_t2i_debug(t2i_debug)
-        return {"url": f"/api/t2i/image/{filename}", "prompt": prompt_final}
+        session.setdefault("history", []).append({
+            "character_id": "_scene_image",
+            "content": "",
+            "image_url": image_url,
+        })
+        _autosave(session_id)
+        return {"url": image_url, "prompt": prompt_final}
     except Exception as e:
         return {"error": str(e)}
 
@@ -1663,3 +2306,19 @@ def get_session(session_id: str):
     if not session:
         return {"error": "Session not found"}
     return {"session": session}
+
+
+class StatSyncRequest(BaseModel):
+    character_id: str
+    stats: dict  # { stat_name: current_value }
+
+
+@router.post("/{session_id}/sync_stats")
+def sync_stats(session_id: str, req: StatSyncRequest):
+    """フロントの runtime stat 変更をセッションに反映する（GMコンテキスト用）。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    runtime_stats = session.setdefault("runtime_stats", {})
+    runtime_stats[req.character_id] = req.stats
+    return {"status": "ok"}

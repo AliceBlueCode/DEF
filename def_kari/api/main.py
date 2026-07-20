@@ -1,8 +1,15 @@
 """DEF(kari) FastAPI backend."""
 
+import logging
 import os
 import sys
 import threading
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 # Ensure def_kari package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))

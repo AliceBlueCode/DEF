@@ -258,7 +258,22 @@ export default function SettingsTab({
                 {t('settings.label.modelPending')}
               </span>
             )}
-            <button className="turn-btn" onClick={() => fetchLlmModels(llmBackend)} title={t('settings.label.modelRefresh.title')}>🔄</button>
+            <button className="turn-btn" onClick={() => {
+              fetchLlmModels(llmBackend)
+              if (llmBackend === 'textgen_webui') {
+                const currentModel = get(modelKey, '')
+                if (currentModel) {
+                  setLlmLaunchMsg(t('settings.launch.modelLoading'))
+                  fetch(`/api/settings/load-llm-model?backend=textgen_webui&model=${encodeURIComponent(currentModel)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                      if (data.status === 'ok') setLlmLaunchMsg(t('settings.launch.modelLoaded'))
+                      else setLlmLaunchMsg(`⚠ ${data.message || data.status}`)
+                    })
+                    .catch(e => setLlmLaunchMsg(`⚠ ${e}`))
+                }
+              }
+            }} title={t('settings.label.modelRefresh.title')}>🔄</button>
           </div>
         </div>
         {get(modelKey, llmModels[0] ?? '') && (
@@ -290,6 +305,21 @@ export default function SettingsTab({
           <option value="openai_tts">OpenAI TTS API</option>
         </select>
         {ttsLaunchMsg && <div className="tts-launch-msg">{ttsLaunchMsg}</div>}
+        {ttsBackend === 'voicevox' && (
+          <div className="settings-row" style={{ marginTop: 6 }}>
+            <label>{t('settings.label.voicevoxCpuMode')}</label>
+            <input
+              type="checkbox"
+              checked={!!get('tts_voicevox_cpu_mode', false)}
+              onChange={async e => {
+                const v = e.target.checked
+                await set('tts_voicevox_cpu_mode', v)
+                stopBackend('voicevox')
+                setTimeout(() => launchBackend('voicevox', setTtsLaunchMsg), 1200)
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* ── T2I Backend ── */}
@@ -489,6 +519,26 @@ export default function SettingsTab({
             value={get('session_repeat_penalty_count', 2)}
             onChange={e => set('session_repeat_penalty_count', Number(e.target.value))}
           />
+        </div>
+        <div className="settings-row">
+          <label>{t('settings.label.maxCounter')}</label>
+          <input
+            type="number" min={1} max={20}
+            className="settings-number"
+            value={get('session_max_counter', 5)}
+            onChange={e => set('session_max_counter', Number(e.target.value))}
+          />
+        </div>
+        <div className="settings-row">
+          <label>{t('settings.label.keeperJudgmentMode')}</label>
+          <select
+            value={get('keeper_judgment_mode', 'inline')}
+            onChange={e => set('keeper_judgment_mode', e.target.value)}
+          >
+            {['inline', 'twopass'].map(v => (
+              <option key={v} value={v}>{t(`settings.keeperJudgmentMode.${v}`)}</option>
+            ))}
+          </select>
         </div>
         <div className="settings-row">
           <label>{t('settings.label.t2iPromptMode')}</label>

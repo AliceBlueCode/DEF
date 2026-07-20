@@ -52,6 +52,7 @@ def list_rulebooks():
                 "private": False,
             }
             for bid, b in books.items()
+            if bid != "blank_template"
         ]
     }
 
@@ -159,6 +160,8 @@ class DiceRollRequest(BaseModel):
     rulebook_id: str = ""
     character_id: str = ""
     stat_name: str = ""
+    is_skill: bool = False  # True=技能値直接（×5しない）
+    is_stat: bool = False   # True=能力値生判定（untrained_success_condition を使用）
 
 
 @router.post("/dice")
@@ -173,7 +176,21 @@ def dice_roll(req: DiceRollRequest):
         books = _load_rulebooks()
         rulebook = books.get(req.rulebook_id, {})
         if rulebook:
-            judgment = judge(result["total"], req.skill_value, rulebook)
+            if req.is_skill:
+                # 技能値配分済みの場合は roll_lte_skill として扱う
+                from copy import deepcopy
+                rb_override = deepcopy(rulebook)
+                rb_override.setdefault("judgment", {})["success_condition"] = "roll_lte_skill"
+                judgment = judge(result["total"], req.skill_value, rb_override)
+            elif req.is_stat:
+                # 能力値生判定: untrained_success_condition（例: roll_lte_stat_x5）を使用
+                from copy import deepcopy
+                rb_override = deepcopy(rulebook)
+                uc = rulebook.get("judgment", {}).get("untrained_success_condition", "roll_lte_stat_x5")
+                rb_override.setdefault("judgment", {})["success_condition"] = uc
+                judgment = judge(result["total"], req.skill_value, rb_override)
+            else:
+                judgment = judge(result["total"], req.skill_value, rulebook)
 
     # セッション履歴注入（判定ロール自動化用）
     if req.session_id and req.character_id:
@@ -201,7 +218,7 @@ def dice_roll(req: DiceRollRequest):
             sess["history"].append({
                 "role": "user",
                 "content": msg,
-                "character_id": "_dice",
+                "character_id": req.character_id,
             })
 
     # イベントバス通知（判定が行われたセッションに記録する）
@@ -224,6 +241,43 @@ def dice_roll(req: DiceRollRequest):
         "total": result["total"],
         "modifier": result["modifier"],
         "judgment": judgment,
+    }
+
+
+class DamageRollRequest(BaseModel):
+    session_id: str = ""
+    character_id: str = ""
+    rulebook_id: str = "def_original"
+
+
+@router.post("/damage")
+def damage_roll(req: DamageRollRequest):
+    result = roll_dice("1d100")
+    roll_val = result["total"]
+
+    books = _load_rulebooks()
+    rulebook = books.get(req.rulebook_id, {})
+    entries = rulebook.get("damage_mechanics", {}).get("damage_table", {}).get("entries", [])
+
+    entry = next((e for e in entries if e.get("roll") == roll_val), None)
+    if not entry:
+        return {"error": "Entry not found", "roll": roll_val}
+
+    if entry.get("result") == "即死":
+        return {
+            "roll": roll_val,
+            "result": "即死",
+            "stat": None,
+            "delta": None,
+            "flavor": entry.get("flavor", ""),
+        }
+
+    return {
+        "roll": roll_val,
+        "result": "damage",
+        "stat": entry["stat"],
+        "delta": entry["delta"],
+        "flavor": entry.get("flavor", ""),
     }
 
 

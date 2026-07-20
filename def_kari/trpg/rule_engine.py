@@ -89,7 +89,7 @@ def judge(roll_total: int, skill_value: int, rulebook: dict) -> dict:
         fumble = roll_total >= fumble_threshold
     elif jtype == "roll_lte_skill":
         judgment_value = skill_value
-        critical_threshold = judgment.get("critical_threshold", max(1, skill_value // divisor))
+        critical_threshold = judgment.get("critical_threshold", max(1, skill_value // 10))
         success = roll_total <= skill_value
         critical = roll_total <= critical_threshold
         fumble = roll_total >= fumble_threshold

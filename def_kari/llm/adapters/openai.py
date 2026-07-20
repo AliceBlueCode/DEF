@@ -24,10 +24,9 @@ def make_chat_fn(api_url: str, api_key_service: str, default_model: str):
 
     def _chat(messages, model, json_mode=True, options=None):
         body = {"model": model or default_model, "messages": messages}
-        if json_mode:
-            body["response_format"] = {"type": "json_object"}
+        # response_format は新モデルで非対応の場合があるため送らない
         if options and "num_predict" in options:
-            body["max_tokens"] = options["num_predict"]
+            body["max_completion_tokens"] = options["num_predict"]
         resp = requests.post(
             f"{api_url}/chat/completions",
             headers={"Authorization": f"Bearer {_get_key()}"},
@@ -78,7 +77,7 @@ def chat(
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     if options and "num_predict" in options:
-        body["max_tokens"] = options["num_predict"]
+        body["max_completion_tokens"] = options["num_predict"]
 
     resp = requests.post(
         f"{OPENAI_API_URL}/chat/completions",
