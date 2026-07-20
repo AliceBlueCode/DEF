@@ -41,6 +41,20 @@ And no matter how many years pass, you can meet again.
 
 -----
 
+## Design Philosophy
+
+### Character Authenticity over Human Imitation
+
+This system does not aim for AI to imitate humans. The measure of success is not "how human-like" but:
+
+- Whether it behaves consistently as that character
+- Whether it maintains coherence with the world it inhabits
+- Whether its judgments are consistent
+
+**Being an AI is not a flaw — it is treated as one aspect of the character's identity.**
+
+-----
+
 ## Four Experiences
 
 ### Chat — Build a relationship with your character

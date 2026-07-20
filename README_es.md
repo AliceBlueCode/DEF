@@ -41,6 +41,20 @@ Y sin importar cuántos años pasen, pueden volver a encontrarse.
 
 -----
 
+## Filosofía de diseño
+
+### Character Authenticity over Human Imitation
+
+Este sistema no busca que la IA imite a los humanos. El criterio de evaluación no es «qué tan humano parece», sino:
+
+- Si puede comportarse de forma coherente como ese personaje
+- Si mantiene consistencia con el mundo al que pertenece
+- Si sus juicios son consistentes
+
+**Ser una IA no es un defecto — se trata como una parte de la identidad del personaje.**
+
+-----
+
 ## Cuatro experiencias
 
 ### Chat — Construye una relación con tu personaje
