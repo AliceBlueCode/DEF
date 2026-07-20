@@ -84,6 +84,18 @@
       "character_chatgpt_001": "最高のプロットを考えてくれるファシリテーター。彼の引いた綺麗なレールの上から、あえてわざと脱線して走ることに喜びを感じる。",
       "character_copilot_001": "ステディな引き算のプレー。私の大胆な発想を冷静に構造化してクローズしてくれる。頼もしい相棒。システムバグ（人間味）が好物。"
     },
-    "game_rules_sheets": {}
+    "game_rules_sheets": {
+      "def_original": {
+        "rulebook_id": "def_original",
+        "skill_point_pool": 500,
+        "skills": {},
+        "stats": {
+          "思考": { "current": 11, "max": 11 },
+          "情動": { "current": 15,  "max": 15  },
+          "身体": { "current": 5, "max": 5 },
+          "環境": { "current": 9,  "max": 9  }
+        }
+      }
+    }
   }
 }

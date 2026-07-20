@@ -133,8 +133,11 @@ def start_voicevox() -> str | None:
     if not os.path.isfile(exe_path):
         return f"VOICEVOXが見つかりません: {vv_dir}"
     try:
+        from def_kari.settings import load_settings as _ls
+        _cpu_mode = _ls().get("tts_voicevox_cpu_mode", False)
+        _args = [exe_path] if _cpu_mode else [exe_path, "--use_gpu"]
         proc = subprocess.Popen(
-            [exe_path, "--use_gpu"],
+            _args,
             cwd=os.path.dirname(exe_path),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )

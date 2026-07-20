@@ -51,7 +51,12 @@ def make_chat_fn(api_url: str, api_key_service: str, default_model: str):
             timeout=120,
         )
         resp.raise_for_status()
-        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        data = resp.json()
+        cand = data.get("candidates", [{}])[0]
+        if not cand.get("content"):
+            reason = cand.get("finishReason") or data.get("promptFeedback", {}).get("blockReason", "unknown")
+            raise RuntimeError(f"Gemini: コンテンツなし (finishReason={reason})")
+        return cand["content"]["parts"][0]["text"]
 
     def _list_models():
         try:
@@ -122,7 +127,12 @@ def chat(
         timeout=120,
     )
     resp.raise_for_status()
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    data = resp.json()
+    cand = data.get("candidates", [{}])[0]
+    if not cand.get("content"):
+        reason = cand.get("finishReason") or data.get("promptFeedback", {}).get("blockReason", "unknown")
+        raise RuntimeError(f"Gemini: コンテンツなし (finishReason={reason})")
+    return cand["content"]["parts"][0]["text"]
 
 
 def list_models() -> list[str]:

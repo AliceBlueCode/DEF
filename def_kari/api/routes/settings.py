@@ -121,8 +121,9 @@ def get_t2i_models(backend: str = ""):
     elif backend == "huggingface":
         models = [
             "black-forest-labs/FLUX.1-schnell",
+            "black-forest-labs/FLUX.1-dev",
+            "stabilityai/stable-diffusion-3.5-large",
             "stabilityai/stable-diffusion-xl-base-1.0",
-            "stabilityai/stable-diffusion-2-1",
         ]
     return {"models": models, "workflows": workflows}
 
@@ -174,8 +175,8 @@ _LLM_PROFILES_DIR = _Path(__file__).parent.parent.parent.parent / "data" / "llm_
 def get_llm_profile(model: str = ""):
     if not model:
         return {"profile": {}}
-    from def_kari.models.registry import get_llm_profile as _get, DEFAULT_QUIRKS
-    return {"profile": _get(model), "default_quirks": DEFAULT_QUIRKS}
+    from def_kari.models.registry import get_or_create_llm_profile, DEFAULT_QUIRKS
+    return {"profile": get_or_create_llm_profile(model), "default_quirks": DEFAULT_QUIRKS}
 
 
 class SaveLlmProfileRequest(BaseModel):
@@ -307,6 +308,9 @@ def _load_env_file() -> dict[str, str]:
 
 
 def _save_env_file(updates: dict[str, str]) -> None:
+    for v in updates.values():
+        if "\n" in v or "\r" in v:
+            raise ValueError("env value must not contain newline characters")
     existing_lines = []
     if _ENV_PATH.exists():
         existing_lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -477,6 +481,10 @@ class TestBackendRequest(BaseModel):
 def test_backend(req: TestBackendRequest):
     import time
     import urllib.request
+    from urllib.parse import urlparse
+    parsed = urlparse(req.url)
+    if parsed.scheme not in ("http", "https"):
+        return {"ok": False, "error": "Invalid URL scheme"}
     try:
         start = time.time()
         with urllib.request.urlopen(req.url, timeout=5) as r:

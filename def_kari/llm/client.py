@@ -152,6 +152,8 @@ def _repair_types(parsed: dict) -> dict:
         parsed["dialogue"] = ""
     elif not isinstance(dialogue, str):
         parsed["dialogue"] = str(dialogue)
+    else:
+        parsed["dialogue"] = _strip_dialogue_metadata(dialogue)
 
     emotion = parsed.get("emotion")
     if isinstance(emotion, list):
@@ -271,6 +273,21 @@ def _call_llm(
 
     messages.append({"role": "user", "content": user_text})
 
+    # response_format 非対応モデル向け: 最後にJSON形式をリマインドする（json_capable なモデルのみ）
+    _json_capable = (quirks or {}).get("json_capable", True)
+    if _json_capable:
+        _is_ja_lang = _user_lang == "ja"
+        if _is_ja_lang:
+            messages.append({"role": "system", "content":
+                "必ず以下のJSON形式のみで返答すること（JSONオブジェクト以外のテキストは出力不可）:\n"
+                "{\"dialogue\": \"セリフ\", \"emotion\": \"感情名\", \"image_prompt_en\": \"danbooru tags\", \"tags\": []}"
+            })
+        else:
+            messages.append({"role": "system", "content":
+                "IMPORTANT: Output ONLY a JSON object (no other text):\n"
+                "{\"dialogue\": \"reply\", \"emotion\": \"emotion_name\", \"image_prompt_en\": \"danbooru tags\", \"tags\": []}"
+            })
+
     if lightweight:
         options = LIGHTWEIGHT_OPTIONS
     else:
@@ -331,6 +348,9 @@ def generate_structured_reply(
         )
     except (requests.RequestException, RuntimeError) as exc:
         attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": [f"{type(exc).__name__}: {exc}"]})
+        return {"success": False, "result": None, "attempts": attempts}
+    if not raw:
+        attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": ["APIから空のレスポンスが返されました（レート制限・安全フィルターの可能性）"]})
         return {"success": False, "result": None, "attempts": attempts}
     raw_before_strip = raw
     raw = _strip_thinking(raw)
@@ -457,7 +477,41 @@ def _extract_dialogue(raw: str) -> str:
             continue
         lines.append(stripped)
 
-    return "\n".join(lines) if lines else raw.strip().split("\n")[0]
+    result = "\n".join(lines) if lines else raw.strip().split("\n")[0]
+    # モデルが出力全体をJSON文字列リテラルとして包んだ場合（例: "\"content\""）を剥がす
+    if result.startswith('\\"') and result.endswith('\\"'):
+        result = result[2:-2].replace("\\n", "\n").replace('\\"', '"')
+    elif result.startswith('"') and result.endswith('"') and len(result) > 2:
+        result = result[1:-1].replace("\\n", "\n").replace('\\"', '"')
+
+    # 繰り返しループ検出: 同一文字/単語が大量に続く出力を空として返す
+    if len(result) > 200:
+        _sample = result[:400]
+        _unique_ratio = len(set(_sample)) / len(_sample)
+        if _unique_ratio < 0.05:
+            return ""
+        # 短いトークンが50回以上連続する場合も破棄
+        _rep = re.search(r'(.{1,20}?)\1{50,}', result)
+        if _rep:
+            return ""
+
+    return result
+
+
+_METADATA_IN_DIALOGUE_RE = re.compile(
+    # *[image_prompt_en: ...]*  / *[tags: [...]]*  (内側の[]を許容)
+    r'\*?\s*\[(?:image_prompt_en|image_prompt|tags|emotions?)(?:[^\[\]]|\[[^\]]*\])*\]\*?'
+    r'|\*image_prompt_en\s*:[^\*]+\*'                               # *image_prompt_en: ...*
+    r'|\*\s*\[[^\]぀-鿿]*\]\s*\*'                          # *["word", "word"]* など日本語なし括弧
+    r'|\n\s*---+\s*(?:\n|$)',                                       # --- 区切り線
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_dialogue_metadata(dialogue: str) -> str:
+    """dialogue フィールドに混入したメタデータ行を除去する。"""
+    result = _METADATA_IN_DIALOGUE_RE.sub("", dialogue)
+    return result.strip()
 
 
 _PLAIN_IMAGE_PROMPT_RE = re.compile(r"image_prompt_en\s*[:=]\s*(.+)", re.IGNORECASE)

@@ -33,15 +33,12 @@ def generate_tts(req: TTSRequest):
     text = apply_name_reading(req.text, char)
 
     try:
-        if req.backend in _LOCAL_TTS_BACKENDS:
-            _vram_lock = get_vram_lock()
-            _vram_lock.acquire()
-            try:
-                audio_bytes = synthesize(text, speaker_id, req.backend)
-            finally:
-                _vram_lock.release()
-        else:
+        _vram_lock = get_vram_lock()
+        _vram_lock.acquire()
+        try:
             audio_bytes = synthesize(text, speaker_id, req.backend)
+        finally:
+            _vram_lock.release()
         return Response(content=audio_bytes, media_type="audio/wav")
     except Exception as e:
         from fastapi import HTTPException

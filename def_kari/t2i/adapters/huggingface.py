@@ -7,6 +7,7 @@ from pathlib import Path
 import requests
 
 INFERENCE_URL = "https://router.huggingface.co"
+INFERENCE_PROVIDER = "hf-inference"
 DEFAULT_MODEL = os.environ.get("HF_DEFAULT_MODEL", "black-forest-labs/FLUX.1-schnell")
 ASSET_DIR = Path(__file__).parent.parent.parent.parent / "assets"
 
@@ -58,7 +59,7 @@ def generate(
     if params:
         body["parameters"] = params
 
-    url = f"{INFERENCE_URL}/hf-inference/models/{model_id}"
+    url = f"{INFERENCE_URL}/{INFERENCE_PROVIDER}/models/{model_id}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     print(f"[HF T2I] POST {url}")
     resp = requests.post(url, headers=headers, json=body, timeout=120)

@@ -5,6 +5,9 @@
     "model_type": "novel",
     "context_length": 4096,
     "max_tokens": 256,
+    "generation_params": {
+      "instruction_template": "Mistral"
+    },
     "quirks": {
       "json_capable": false,
       "appends_meta_text": true,

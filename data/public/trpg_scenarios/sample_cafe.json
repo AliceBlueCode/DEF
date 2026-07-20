@@ -1,0 +1,158 @@
+{
+  "id": "sample_cafe",
+  "title": "深夜の喫茶店",
+  "rulebook_id": "def_original",
+  "synopsis": "深夜の喫茶店に集まった探索者たちが、奇妙な老人と地図の謎に巻き込まれていく短編シナリオ。",
+  "chapters": [
+    {
+      "id": "ch_01",
+      "title": "謎の始まり",
+      "scene_ids": ["scene_01", "scene_02"]
+    },
+    {
+      "id": "ch_02",
+      "title": "地下への扉",
+      "scene_ids": ["scene_03", "scene_04"]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_01",
+      "title": "深夜の喫茶店",
+      "recommended_rounds": 2,
+      "description": "深夜0時、閉店間際の喫茶店。外は雨。カウンターに腰を落ち着けた探索者たちは、ふと奇妙な客に気づく。",
+      "gm_notes": "老人はすでに1時間ここにいる。マスターとは顔見知りで、毎月この日に決まって来る。マスターは老人の素性を知っているが、聞かれなければ話さない。",
+      "npcs": [],
+      "triggers": [],
+      "choices": []
+    },
+    {
+      "id": "scene_02",
+      "title": "奇妙な客",
+      "recommended_rounds": 3,
+      "description": "隅のテーブルに座る老人は、誰とも話さずコーヒーを見つめている。その手元には、古びた地図が広げられている。",
+      "gm_notes": "地図の裏には極小の文字で『信じる者だけが扉を見つける』と書かれている。老人は話しかけてきた探索者を静かに観察し、信頼できると判断した者にだけ地図を渡す。",
+      "judgments": [
+        {
+          "id": "read_map",
+          "description": "地図を詳しく読み解こうとする",
+          "stat": "察知",
+          "success": "地図の裏面に極小の文字が書かれているのに気づく",
+          "failure": "古びた地図からは特に気になるものは見当たらない"
+        },
+        {
+          "id": "persuade_elder",
+          "description": "老人に話しかけ、信頼を得ようとする",
+          "stat": "説得",
+          "success": "老人がわずかに表情を緩め、地図に触れることを許してくれる",
+          "failure": "老人は無言でコーヒーカップに視線を戻す"
+        }
+      ],
+      "npcs": ["elder"],
+      "triggers": [
+        { "condition": "inspect_map", "description": "地図を調べると、この街の地下に広がる謎の構造物が描かれている。" }
+      ],
+      "choices": [
+        { "id": "approach", "label": "老人に話しかける" },
+        { "id": "ignore", "label": "放っておく" }
+      ]
+    },
+    {
+      "id": "scene_03",
+      "title": "老人の告白",
+      "recommended_rounds": 2,
+      "description": "老人がゆっくりと口を開く。「あなたたちなら……信じられる」。地図を差し出しながら、地下に眠る秘密を語り始める。",
+      "gm_notes": "老人（黒川建築家の末裔）が初めて素性を明かす。地図の入口がこの喫茶店の床下にあること、地下には罠があること、最深部に手記があることを断片的に話す。全てを話すつもりはなく、探索者が質問しなければ黙る。",
+      "judgments": [
+        {
+          "id": "read_elder",
+          "description": "老人の言葉の裏を読もうとする",
+          "stat": "共感",
+          "success": "老人が何かを隠していると確信する。罠についての話を避けようとしている",
+          "failure": "老人の表情からは何も読み取れない"
+        }
+      ],
+      "npcs": ["elder"],
+      "triggers": [
+        { "condition": "ask_about_trap", "description": "罠について問うと、老人は「……それは、あなたたちが自分で判断することだ」と言って目を伏せる。" }
+      ],
+      "choices": [
+        { "id": "accept_map", "label": "地図を受け取る" },
+        { "id": "refuse_map", "label": "断る" }
+      ]
+    },
+    {
+      "id": "scene_04",
+      "title": "地下への扉",
+      "recommended_rounds": 2,
+      "description": "喫茶店の床板の一枚が、かすかにずれている。地図と照合すると、ここが入口だと分かる。梯子の先に、暗い地下空間が口を開けている。",
+      "gm_notes": "入口は厨房の床下。マスターは止めないが「戻ってこなかった人もいる」とだけ言う。地下に降りた時点でこのシナリオの本編は終わり、次のシナリオへ続く。",
+      "judgments": [
+        {
+          "id": "spot_entrance",
+          "description": "床板のずれに気づく",
+          "stat": "察知",
+          "success": "厨房の隅、特定の床板だけが微妙にずれているのに気づく",
+          "failure": "どこに入口があるのか分からない"
+        },
+        {
+          "id": "descend_safely",
+          "description": "暗い梯子を安全に降りる",
+          "stat": "運動",
+          "success": "音を立てずに地下へ降りることができた",
+          "failure": "梯子を踏み外し、大きな音を立ててしまった"
+        }
+      ],
+      "npcs": [],
+      "triggers": [
+        { "condition": "descend", "description": "梯子を降りると、石造りの通路が続いている。地図の示す方向に、かすかな光が見える。" }
+      ],
+      "choices": [
+        { "id": "descend", "label": "地下に降りる" },
+        { "id": "turn_back", "label": "引き返す" }
+      ]
+    }
+  ],
+  "npcs": [
+    {
+      "id": "elder",
+      "name": "白髪の老人",
+      "description": "ひとりでコーヒーを見つめている白髪の老人。静かで、こちらを値踏みするような目をしている。",
+      "gm_notes": "実はこの街の地下構造物を設計した建築家・黒川の末裔。地図を渡すことで、本気の探索者だけを地下へ導こうとしている。地下には危険があることも知っている。",
+      "goal": "真剣な探索者だけを選別し、地下構造物へ導く。軽い好奇心だけの人間には地図を渡さない。",
+      "knowledge": [
+        "地下構造物の入口はこの喫茶店の地下にある",
+        "地図には罠の場所が記載されていない（意図的に省いた）",
+        "地下の最深部に黒川が残した手記がある"
+      ],
+      "relationship": {}
+    }
+  ],
+  "end_condition": "探索者たちが喫茶店の床下の入口から地下へ降り、先に続く石造りの通路に踏み出した時点でシナリオ終了。",
+  "flags": [
+    {
+      "key": "map_examined",
+      "value": false,
+      "gm_only": false,
+      "description": "探索者が地図を詳しく調べたか"
+    },
+    {
+      "key": "elder_trusts_investigators",
+      "value": false,
+      "gm_only": false,
+      "description": "老人が探索者を信頼したか（地図を渡す条件）"
+    },
+    {
+      "key": "elder_is_descendant",
+      "value": true,
+      "gm_only": true,
+      "description": "老人が黒川建築家の末裔である（GM専用情報）"
+    },
+    {
+      "key": "underground_entrance_below_cafe",
+      "value": true,
+      "gm_only": true,
+      "description": "地下構造物の入口がこの喫茶店の地下にある（GM専用情報）"
+    }
+  ]
+}

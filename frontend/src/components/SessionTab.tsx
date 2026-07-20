@@ -18,6 +18,7 @@ type SessionMessage = {
   imageStatus?: 'generating' | 'done' | 'error'
   imageUrl?: string
   imageError?: string
+  _genId?: string
 }
 
 type SavedSession = {
@@ -26,6 +27,7 @@ type SavedSession = {
   saved_at: string
   round: number
   character_names: string[]
+  trpg_scenario_title?: string
 }
 
 type Props = {
@@ -42,6 +44,18 @@ function isContentBlocked(tags: string[], allowedSexual: string[], allowedViolen
   return tags.some(tag =>
     (SEXUAL_TAGS.includes(tag) && !allowedSexual.includes(tag)) ||
     (VIOLENCE_TAGS.includes(tag) && !allowedViolence.includes(tag))
+  )
+}
+
+// ── ダイスローラー（投票行の右に配置）────────────────────────
+function DiceRow({ onOpenDialog, onAdvanceScene }: { onOpenDialog: () => void; onAdvanceScene?: () => void }) {
+  const t = useT()
+  return (
+    <>
+      <span style={{ flex: 1 }} />
+      {onAdvanceScene && <button onClick={onAdvanceScene} className="keeper-add-btn" style={{ marginRight: 4 }}>{t('trpg.scene.advance')}</button>}
+      <button onClick={onOpenDialog} className="keeper-add-btn">{t('trpg.dice.roll')}</button>
+    </>
   )
 }
 
@@ -118,20 +132,34 @@ function CharMultiSelect({
 // ── メインコンポーネント ──────────────────────────────────────
 type RuleOption = { id: string; label: string }
 type DirectiveOption = { id: string; label: string; rating: string; recommended_for: number[] }
+type RulebookOption = { id: string; label: string; dice_system: string }
+type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string }
+type KeeperJudgment = { character_id: string; character_name: string; stat: string; stat_value: number; damage_on?: 'failure' | 'fumble' | 'any' }
 
 export default function SessionTab({ characters, backend, ttsBackend, t2iBackend }: Props) {
   const t = useT()
   const [selectedChars, setSelectedChars] = useState<string[]>([])
   const [topic, setTopic] = useState('')
   const [ruleSet, setRuleSet] = useState('default')
+  const [trpgMode, setTrpgMode] = useState(false)
+  const trpgModeRef = useRef(false)
+  const [rulebookOptions, setRulebookOptions] = useState<RulebookOption[]>([])
+  const [selectedRulebook, setSelectedRulebook] = useState('')
+  const [scenarioOptions, setScenarioOptions] = useState<ScenarioOption[]>([])
+  const [selectedScenario, setSelectedScenario] = useState('')
   const [ruleOptions, setRuleOptions] = useState<RuleOption[]>([])
   const [directiveSet, setDirectiveSet] = useState('default')
   const [directiveOptions, setDirectiveOptions] = useState<DirectiveOption[]>([])
   const [sessionId, setSessionId] = useState('')
+  const sessionIdRef = useRef('')
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(false)
+  const [sessionStarting, setSessionStarting] = useState(false)
   const [round, setRound] = useState(1)
+  const [currentSceneIndex, setCurrentSceneIndex] = useState(0)
+  const [activeTurnCharId, setActiveTurnCharId] = useState('')
   const [initiative, setInitiative] = useState<string[]>([])
+  const initiativeRef = useRef<string[]>([])
   const [allowedSexual, setAllowedSexual] = useState<string[]>(['sfw'])
   const [allowedViolence, setAllowedViolence] = useState<string[]>(['violence'])
   const [safetyLevel, setSafetyLevel] = useState('off')
@@ -140,8 +168,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [actionsPerTurn, setActionsPerTurn] = useState(0)
   const [sceneImageStatus, setSceneImageStatus] = useState<'idle' | 'generating' | 'error'>('idle')
   const actionsPerTurnRef = useRef(0)
-  const [, setTtsEnabled] = useState(true)
-  const ttsEnabledRef = useRef(true)
+  const [, setTtsEnabled] = useState(false)
+  const ttsEnabledRef = useRef(false)
   const ttsHumanEnabledRef = useRef(false)
   const prefetchRef = useRef<any>(null)
   const [standingFallback, setStandingFallback] = useState<Set<string>>(new Set())
@@ -153,9 +181,20 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [charBackends, setCharBackends] = useState<Record<string, string>>({})
   const [llmBackendOptions, setLlmBackendOptions] = useState<{ id: string; label: string }[]>([])
   const [showBackendDialog, setShowBackendDialog] = useState(false)
+  const [charGameSheets, setCharGameSheets] = useState<Record<string, string>>({})
+  const [charGameSheetOptions, setCharGameSheetOptions] = useState<Record<string, string[]>>({})
+  const [showGameSheetDialog, setShowGameSheetDialog] = useState(false)
+  const [charRoles, setCharRoles] = useState<Record<string, 'investigator' | 'keeper'>>({})
+  const keeperCharId = Object.entries(charRoles).find(([, r]) => r === 'keeper')?.[0] ?? ''
+  const keeperCount = Object.values(charRoles).filter(r => r === 'keeper').length
+  const [humanKeeper, setHumanKeeper] = useState(false)
+  const [waitingForKeeperTurn, setWaitingForKeeperTurn] = useState(false)
+  const isHumanKeeperRef = useRef(false)
   const [keeperInput, setKeeperInput] = useState('')
   const [pendingActions, setPendingActions] = useState<string[]>([])
   const [counters, setCounters] = useState<Record<string, number>>({})
+  const [maxCounter, setMaxCounter] = useState(5)
+  const maxCounterRef = useRef(5)
   const [designateTarget, setDesignateTarget] = useState('')
   const [showVoteDialog, setShowVoteDialog] = useState(false)
   const [voteType, setVoteType] = useState<'topic_change' | 'expel' | 'end_session'>('topic_change')
@@ -170,8 +209,19 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [humanPending, setHumanPending] = useState<string[]>([])
   const [interruptMode, setInterruptMode] = useState(false)
   const [hasDiscarded, setHasDiscarded] = useState(false)
-  const wasAutoAdvancingRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [charSheetData, setCharSheetData] = useState<Record<string, any>>({})
+  const [showSheetPanel, setShowSheetPanel] = useState(false)
+  const [showDiceDialog, setShowDiceDialog] = useState(false)
+  const [diceDialogChars, setDiceDialogChars] = useState<string[]>([])
+  const [diceDialogLocked, setDiceDialogLocked] = useState(false)
+  const [diceDialogStatKey, setDiceDialogStatKey] = useState('')
+  const [diceDialogSkillKey, setDiceDialogSkillKey] = useState('')
+  const [autoJudgmentStat, setAutoJudgmentStat] = useState('')
+  const autoJudgmentStatRef = useRef('')
+  const [pendingJudgments, setPendingJudgments] = useState<KeeperJudgment[]>([])
+  const wasAutoAdvancingRef = useRef(false)
+  const keeperFiredRoundRef = useRef(0)
 
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
@@ -192,9 +242,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           setActionsPerTurn(s.session_actions_per_turn)
           actionsPerTurnRef.current = s.session_actions_per_turn
         }
-        if ('tts_enabled' in s) {
-          setTtsEnabled(!!s.tts_enabled)
-          ttsEnabledRef.current = !!s.tts_enabled
+        {
+          const v = typeof s.session_max_counter === 'number' ? s.session_max_counter : 5
+          setMaxCounter(v)
+          maxCounterRef.current = v
+        }
+        {
+          const v = 'tts_enabled' in s ? !!s.tts_enabled : true
+          setTtsEnabled(v)
+          ttsEnabledRef.current = v
         }
         if ('tts_human_enabled' in s) {
           ttsHumanEnabledRef.current = !!s.tts_human_enabled
@@ -215,6 +271,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         setActionsPerTurn(value)
         actionsPerTurnRef.current = value
       }
+      if (key === 'session_max_counter' && value) {
+        setMaxCounter(value)
+        maxCounterRef.current = value
+      }
       if (key === 'safety_level') setSafetyLevel(value === 'warn' ? 'off' : value)
     }
     window.addEventListener('def-settings-change', onSettingsChange)
@@ -232,6 +292,23 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       .then(d => {
         if (d.directives?.length) {
           setDirectiveOptions(d.directives)
+        }
+      })
+      .catch(() => {})
+    fetch('/api/trpg/rulebooks')
+      .then(r => r.json())
+      .then(d => {
+        if (d.rulebooks?.length) {
+          setRulebookOptions(d.rulebooks)
+          setSelectedRulebook(d.rulebooks[0].id)
+        }
+      })
+      .catch(() => {})
+    fetch('/api/trpg/scenarios')
+      .then(r => r.json())
+      .then(d => {
+        if (d.scenarios?.length) {
+          setScenarioOptions(d.scenarios)
         }
       })
       .catch(() => {})
@@ -263,22 +340,46 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
   const startSession = async () => {
     if (selectedChars.length < 1) return
-    setLoading(true)
+    setSessionStarting(true)
     try {
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_ids: selectedChars, topic, backend, rule_set: ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends }),
+        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {}, keeper_char_id: trpgMode ? keeperCharId : '', human_keeper: trpgMode ? humanKeeper : false }),
       })
       const data = await res.json()
+      sessionIdRef.current = data.session_id
       setSessionId(data.session_id)
+      trpgModeRef.current = trpgMode
+      initiativeRef.current = data.initiative || []
       setInitiative(data.initiative || [])
       setMessages([])
       setRound(1)
+      setCurrentSceneIndex(0)
+      setActiveTurnCharId('')
+      setCounters({})
+      keeperFiredRoundRef.current = 0
+      isHumanKeeperRef.current = data.human_keeper || false
+      setWaitingForKeeperTurn(false)
+      setPendingJudgments([])
+      setStandingFallback(new Set())
       setWaitingForHuman(false)
       const humanChar = characters.find(c => selectedChars.includes(c.id) && c.player_type === 'human')
       setHumanCharId(humanChar?.id ?? '')
       setHumanCharName(humanChar?.name ?? '')
+      if (trpgMode && Object.keys(charGameSheets).length > 0) {
+        const sheetData: Record<string, any> = {}
+        await Promise.all(
+          Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
+            try {
+              const r = await fetch(`/api/characters/${charId}/game_sheets`)
+              const d = await r.json()
+              if (d.game_sheets?.[sheetId]) sheetData[charId] = normalizeSheetStats({ ...d.game_sheets[sheetId], _sheet_id: sheetId })
+            } catch {}
+          })
+        )
+        setCharSheetData(sheetData)
+      }
       const firstCharId = (data.initiative || [])[0]
       if (humanChar && firstCharId === humanChar.id) {
         // 人間が先頭: nextTurn を呼ばず直接入力待ちに
@@ -290,7 +391,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     } catch (e) {
       console.error(e)
     } finally {
-      setLoading(false)
+      setSessionStarting(false)
     }
   }
 
@@ -351,6 +452,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }).then(r => r.json()).catch(() => null)
 
   const nextTurn = async (sessionIdOverride?: string, batchRemaining?: number) => {
+    if (!sessionIdRef.current) return
     const sid = sessionIdOverride ?? sessionId
     if (!sid) return
     const rem = batchRemaining ?? actionsPerTurnRef.current
@@ -366,7 +468,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
       if (!data || data.error) { console.error(data?.error); return }
 
-      if (data.counters) setCounters(data.counters)
+      if (data.counters) setCounters(capCounters(data.counters))
+      if (data.character_id) setActiveTurnCharId(data.character_id)
 
       // 人間プレイヤーのターン
       if (data.waiting_for_human) {
@@ -383,13 +486,21 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         return
       }
 
-      // 自動スキップ
+      // スキップ（自動 or 自発）
+      // counter_before < 0 なら強制スキップ、>= 0 なら自発スキップ
       if (data.skipped) {
         setRound(data.round)
+        const ctrB: number | null = typeof data.counter_before === 'number' ? data.counter_before : null
+        const isForced = ctrB !== null && ctrB < 0
+        const skipText = isForced
+          ? `⏭ ${data.character_name} は発言力不足のためスキップ [${ctrB}→${(ctrB as number) + 1}]`
+          : ctrB !== null
+            ? `⏭ ${data.character_name} はスキップ（発言力 ${ctrB}→${ctrB + 1}）`
+            : t('session.msg.humanSkip', { name: data.character_name })
         setMessages(prev => [...prev, {
           character_id: '_keeper',
           character_name: '⚙ System',
-          text: t('session.msg.skipSystem', { name: data.character_name }),
+          text: skipText,
           emotion: '', tags: [],
         }])
         if (rem > 0 || autoAdvanceRef.current) {
@@ -397,6 +508,61 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         }
         return
       }
+
+      // AI による投票発議
+      if (data.action === 'vote_proposal') {
+        if (data.counters) setCounters(capCounters(data.counters))
+        setMessages(prev => [...prev, {
+          character_id: '_keeper',
+          character_name: '⚙ System',
+          text: `🗳 ${data.character_name} が投票を発議 [発言力-3]`,
+          emotion: '', tags: [],
+        }])
+        try {
+          const delibRes = await fetch(`/api/session/${sid}/vote/deliberate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              vote_type: data.vote_type || 'topic_change',
+              detail: data.vote_detail || '',
+              target_id: '',
+              proposer_id: data.character_id,
+              proposer_text: data.proposer_text || '',
+            }),
+          })
+          const delibData = await delibRes.json()
+          if (delibData.counters) setCounters(capCounters(delibData.counters))
+          if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
+            for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
+              setMessages(prev => [...prev, {
+                character_id: d.character_id,
+                character_name: d.character_name,
+                text: d.text,
+                emotion: d.emotion,
+                tags: [],
+              }])
+            }
+          }
+          setMessages(prev => [...prev, {
+            character_id: '_keeper',
+            character_name: 'GM',
+            text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`,
+            emotion: '', tags: [],
+            isKeeperVote: true,
+          }])
+          // キーパーが決断するまで自動進行を一時停止
+          wasAutoAdvancingRef.current = autoAdvanceRef.current
+          setAutoAdvance(false)
+          autoAdvanceRef.current = false
+        } catch (e) {
+          console.error(e)
+        }
+        return
+      }
+
+      // TRPGモード: ラウンド末尾キャラ判定（このキャラが喋り終えたらキーパーを発火）
+      const isLastOfRound = trpgModeRef.current && initiativeRef.current.length > 0 &&
+        initiativeRef.current[initiativeRef.current.length - 1] === data.character_id
 
       const char = charMap[data.character_id]
       let newMsgIndex = -1
@@ -422,6 +588,28 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         }])
       }
 
+      if (data.ai_action === 'extend') {
+        const ctr = data.counters?.[data.character_id]
+        const ctrStr = typeof ctr === 'number' ? ` → 残${ctr}` : ''
+        setMessages(prev => [...prev, {
+          character_id: '_keeper',
+          character_name: '⚙ System',
+          text: `⚡ ${data.character_name} が力強く発言 [発言力-1${ctrStr}]`,
+          emotion: '', tags: [],
+        }])
+      }
+
+      if (data.ai_action === 'designate' && data.designated_name) {
+        const ctr = data.counters?.[data.character_id]
+        const ctrStr = typeof ctr === 'number' ? ` → 残${ctr}` : ''
+        setMessages(prev => [...prev, {
+          character_id: '_keeper',
+          character_name: '⚙ System',
+          text: `👉 ${data.character_name} が ${data.designated_name} を指名 [発言力-1${ctrStr}]`,
+          emotion: '', tags: [],
+        }])
+      }
+
       // T2I 生成（非同期・ノンブロッキング）
       if (data.image_prompt_en && t2iBackend && newMsgIndex >= 0) {
         generateImage(data.image_prompt_en, newMsgIndex)
@@ -437,13 +625,21 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           const last = prev.length - 1
           return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m)
         })
-        // 音声再生と並行して次セリフを先読み
-        if (willContinue && !prefetchRef.current) {
+        // TRPGラウンド末尾では先読みしない（キーパー後に次ラウンド1番目を新規取得するため）
+        if (willContinue && !prefetchRef.current && !isLastOfRound) {
           fetchNextData(sid).then(d => {
             if (d && !d.error) prefetchRef.current = d
           })
         }
         await playAudio(ttsUrl)
+      }
+
+      // TRPGモード自動進行: ラウンド末尾でキーパーを発火（次ラウンド全員が文脈を持てる）
+      // nextRem <= 0 でそのキャラの最後のアクション確定後にのみ発火（2アクション目がある場合は1回目をスキップ）
+      // keeperFiredRoundRef で同一ラウンド内の並行呼び出しによる二重発火を防ぐ
+      if (isLastOfRound && autoAdvanceRef.current && nextRem <= 0 && keeperFiredRoundRef.current !== data.round) {
+        await fireKeeperTurn(sid, data.round)
+        return
       }
 
       if (nextRem > 0) {
@@ -523,6 +719,379 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
+  type KeeperResult = {
+    text: string
+    character_name?: string
+    judgments: KeeperJudgment[]
+    scene_advanced?: boolean
+    new_scene_index?: number
+    new_scene_title?: string
+    new_chapter_title?: string | null
+    propose_end?: boolean
+  }
+
+  const fetchAIKeeperResult = async (sid: string): Promise<KeeperResult | null> => {
+    try {
+      const res = await fetch(`/api/session/${sid}/ai_keeper`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend }),
+      })
+      const d = await res.json()
+      if (d.error) { console.error(d.error); return null }
+      return {
+        text: d.text ?? '',
+        character_name: d.character_name ?? '',
+        judgments: d.judgments ?? [],
+        scene_advanced: d.scene_advanced ?? false,
+        new_scene_index: d.new_scene_index,
+        new_scene_title: d.new_scene_title ?? '',
+        new_chapter_title: d.new_chapter_title ?? null,
+        propose_end: d.propose_end ?? false,
+      }
+    } catch (e) {
+      console.error(e)
+      return null
+    }
+  }
+
+  const fireKeeperTurn = async (sid: string, round: number) => {
+    keeperFiredRoundRef.current = round
+    setActiveTurnCharId('')
+    if (isHumanKeeperRef.current) {
+      wasAutoAdvancingRef.current = autoAdvanceRef.current
+      setAutoAdvance(false)
+      autoAdvanceRef.current = false
+      setWaitingForKeeperTurn(true)
+      return
+    }
+    const keeperResult = await fetchAIKeeperResult(sid)
+    if (keeperResult?.text) {
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: keeperResult.character_name || '🎩 Keeper', text: keeperResult.text, emotion: '', tags: [],
+      }])
+    }
+    if (keeperResult?.scene_advanced) {
+      if (typeof keeperResult.new_scene_index === 'number') setCurrentSceneIndex(keeperResult.new_scene_index)
+      const sceneLabel = keeperResult.new_scene_title
+        ? `【シーン進行】${keeperResult.new_chapter_title ? `${keeperResult.new_chapter_title} / ` : ''}${keeperResult.new_scene_title}`
+        : '【シーン進行】次のシーンへ'
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: '📍 Scene', text: sceneLabel, emotion: '', tags: [],
+      }])
+      generateSceneImage()
+    }
+    if (keeperResult?.propose_end) {
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: '⚙ System',
+        text: '🏁 Keeper がセッション終了を提案しています',
+        emotion: '', tags: [],
+      }])
+      try {
+        const delibRes = await fetch(`/api/session/${sid}/vote/deliberate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vote_type: 'end_session', detail: '', target_id: '', proposer_id: '_keeper', proposer_text: '' }),
+        })
+        const delibData = await delibRes.json()
+        if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
+          for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
+            setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: [] }])
+          }
+        }
+        setMessages(prev => [...prev, {
+          character_id: '_keeper', character_name: 'GM',
+          text: 'Keeper のセッション終了提案: 全員の意見は？',
+          emotion: '', tags: [], isKeeperVote: true,
+        }])
+        wasAutoAdvancingRef.current = autoAdvanceRef.current
+        setAutoAdvance(false)
+        autoAdvanceRef.current = false
+      } catch (e) { console.error(e) }
+      return
+    }
+    if (keeperResult?.judgments && keeperResult.judgments.length > 0) {
+      wasAutoAdvancingRef.current = autoAdvanceRef.current
+      setAutoAdvance(false)
+      autoAdvanceRef.current = false
+      setPendingJudgments(keeperResult.judgments)
+    }
+    if (autoJudgmentStatRef.current && Object.keys(charSheetData).length > 0) {
+      for (const [charId, sheet] of Object.entries(charSheetData)) {
+        if (isCharDead(charId)) continue
+        const statVal = (sheet as any)?.stats?.[autoJudgmentStatRef.current]?.current ?? 0
+        if (statVal <= 0) continue
+        const j: KeeperJudgment = {
+          character_id: charId,
+          character_name: charMap[charId]?.name ?? charId,
+          stat: autoJudgmentStatRef.current,
+          stat_value: statVal,
+        }
+        const roll = await rollJudgmentAuto(sid, j)
+        if (roll) {
+          const jv = roll.judgment?.judgment_value ?? statVal
+          let outcome = ''
+          if (roll.judgment?.critical) outcome = t('trpg.outcome.critical')
+          else if (roll.judgment?.fumble) outcome = t('trpg.outcome.fumble')
+          else if (roll.judgment?.success) outcome = t('trpg.outcome.success')
+          else if (roll.judgment) outcome = t('trpg.outcome.failure')
+          setMessages(prev => [...prev, {
+            character_id: j.character_id,
+            character_name: `🎲 ${j.character_name}`,
+            text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+            emotion: '', tags: [],
+          }])
+          if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
+        }
+      }
+    }
+    if (autoAdvanceRef.current) {
+      setTimeout(() => nextTurn(sid, actionsPerTurnRef.current), 300)
+    }
+  }
+
+  const rollJudgmentAuto = async (sid: string, j: KeeperJudgment, isSkill = false) => {
+    if (j.stat_value === 0) {
+      // stat_value=0 は死亡または未習得。死亡キャラはダメージを受けないよう success:true を返す
+      const dead = isCharDead(j.character_id)
+      return { total: 0, judgment: { success: dead, fumble: false, critical: false, judgment_value: 0 } }
+    }
+    try {
+      const res = await fetch('/api/trpg/dice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notation: '1d100',
+          session_id: sid,
+          skill_value: j.stat_value,
+          rulebook_id: selectedRulebook,
+          character_id: j.character_id,
+          stat_name: j.stat,
+          is_skill: isSkill,
+        }),
+      })
+      const d = await res.json()
+      if (d.error) { console.error(d.error); return null }
+      return d
+    } catch (e) {
+      console.error(e)
+      return null
+    }
+  }
+
+  const isCharDead = (charId: string, sheetOverride?: Record<string, any>): boolean => {
+    const sheet = (sheetOverride ?? charSheetData)[charId]
+    if (!sheet?.stats) return false
+    return Object.values(sheet.stats as Record<string, { current: number }>).some(s => s.current <= 0)
+  }
+
+  const shouldApplyDamage = (judgment: { success?: boolean; fumble?: boolean; critical?: boolean } | null | undefined, damageOn?: string): boolean => {
+    if (!judgment) return false
+    if (!damageOn) return !!judgment.fumble
+    if (damageOn === 'fumble') return !!judgment.fumble
+    if (damageOn === 'failure') return !judgment.success
+    if (damageOn === 'any') return true
+    return !!judgment.fumble
+  }
+
+  const rollDamage = async (charId: string, charName: string) => {
+    try {
+      const res = await fetch('/api/trpg/damage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, character_id: charId, rulebook_id: selectedRulebook }),
+      })
+      const d = await res.json()
+      if (d.error) return
+      const syncStats = (updatedStats: Record<string, any>) => {
+        const flat = Object.fromEntries(
+          Object.entries(updatedStats).map(([k, v]: [string, any]) => [k, v.current ?? 0])
+        )
+        fetch(`/api/session/${sessionId}/sync_stats`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ character_id: charId, stats: flat }),
+        }).catch(e => console.error('sync_stats failed:', e))
+      }
+
+      if (d.result === '即死') {
+        setCharSheetData(prev => {
+          const sheet = prev[charId]
+          if (!sheet?.stats) return prev
+          const zeroed = Object.fromEntries(
+            Object.entries(sheet.stats as Record<string, any>).map(([k, v]) => [k, { ...(v as any), current: 0 }])
+          )
+          syncStats(zeroed)
+          return { ...prev, [charId]: { ...sheet, stats: zeroed } }
+        })
+        setMessages(prev => [...prev, {
+          character_id: charId,
+          character_name: `💀 ${charName}`,
+          text: `【即死】${d.flavor}`,
+          emotion: '', tags: [],
+        }])
+      } else {
+        const stat: string = d.stat
+        const delta: number = d.delta
+        setCharSheetData(prev => {
+          const sheet = prev[charId]
+          if (!sheet || !sheet.stats?.[stat]) return prev
+          const newCurrent = Math.max(0, (sheet.stats[stat].current ?? 0) + delta)
+          const updatedStats = { ...sheet.stats, [stat]: { ...sheet.stats[stat], current: newCurrent } }
+          syncStats(updatedStats)
+          return { ...prev, [charId]: { ...sheet, stats: updatedStats } }
+        })
+        setMessages(prev => [...prev, {
+          character_id: charId,
+          character_name: `💥 ${charName}`,
+          text: `【ダメージ】${stat}${delta} (出目:${d.roll}) ${d.flavor}`,
+          emotion: '', tags: [],
+        }])
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const rollAllPendingJudgments = async () => {
+    const list = [...pendingJudgments]
+    setPendingJudgments([])
+    for (const j of list) {
+      if (isCharDead(j.character_id)) continue
+      const roll = await rollJudgmentAuto(sessionId, j)
+      if (roll) {
+        const jv = roll.judgment?.judgment_value ?? j.stat_value
+        let outcome = ''
+        if (roll.judgment?.critical) outcome = 'クリティカル！'
+        else if (roll.judgment?.fumble) outcome = 'ファンブル…'
+        else if (roll.judgment?.success) outcome = '成功'
+        else if (roll.judgment) outcome = '失敗'
+        setMessages(prev => [...prev, {
+          character_id: j.character_id,
+          character_name: `🎲 ${j.character_name}`,
+          text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+          emotion: '', tags: [],
+        }])
+        if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
+      }
+    }
+    if (wasAutoAdvancingRef.current) {
+      setAutoAdvance(true)
+      autoAdvanceRef.current = true
+    }
+    wasAutoAdvancingRef.current = false
+    setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
+  }
+
+  const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
+    if (isCharDead(j.character_id)) {
+      setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
+      return
+    }
+    const roll = await rollJudgmentAuto(sessionId, j)
+    if (roll) {
+      const jv = roll.judgment?.judgment_value ?? j.stat_value
+      let outcome = ''
+      if (roll.judgment?.critical) outcome = 'クリティカル！'
+      else if (roll.judgment?.fumble) outcome = 'ファンブル…'
+      else if (roll.judgment?.success) outcome = '成功'
+      else if (roll.judgment) outcome = '失敗'
+      setMessages(prev => [...prev, {
+        character_id: j.character_id,
+        character_name: `🎲 ${j.character_name}`,
+        text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+        emotion: '', tags: [],
+      }])
+      if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
+    }
+    setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const normalizeSheetStats = (sheet: any): any => {
+    if (!sheet?.stats) return sheet
+    const stats: Record<string, any> = {}
+    for (const [k, v] of Object.entries(sheet.stats)) {
+      if (typeof v === 'number') {
+        stats[k] = { current: v, max: v }
+      } else {
+        stats[k] = v
+      }
+    }
+    return { ...sheet, stats }
+  }
+
+  const capCounters = (c: Record<string, number>) =>
+    Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Math.min(v, maxCounterRef.current)]))
+
+  const openDiceDialog = () => {
+    const withSheet = initiative.filter(id => charSheetData[id])
+    setDiceDialogChars(withSheet)
+    setDiceDialogLocked(false)
+    setShowDiceDialog(true)
+  }
+
+  const openDiceDialogForHuman = () => {
+    setDiceDialogChars(humanCharId ? [humanCharId] : [])
+    setDiceDialogLocked(true)
+    setShowDiceDialog(true)
+  }
+
+  const rollDiceDialog = async (type: 'stat' | 'skill', key: string) => {
+    if (!key) return
+    for (const charId of diceDialogChars) {
+      const sheet = charSheetData[charId]
+      if (!sheet) continue
+      const raw = type === 'skill'
+        ? (sheet.skills?.[key]?.current ?? sheet.skills?.[key])
+        : sheet.stats?.[key]?.current
+      const resolvedVal: number | undefined = typeof raw === 'number' ? raw : undefined
+      const body: any = { notation: '1d100' }
+      if (resolvedVal) {
+        body.skill_value = resolvedVal
+        body.rulebook_id = selectedRulebook
+        body.is_skill = type === 'skill'
+        body.is_stat = type === 'stat'
+      }
+      try {
+        const res = await fetch('/api/trpg/dice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json()
+        if (data.error) continue
+        let text = `[${data.rolls?.join(', ')}] = ${data.total}`
+        if (data.judgment) {
+          const j = data.judgment
+          text += `　/ ${key}(${j.judgment_value})`
+          const label = j.critical ? t('trpg.outcome.criticalLabel') : j.fumble ? t('trpg.outcome.fumbleLabel') : j.success ? t('trpg.outcome.successLabel') : t('trpg.outcome.failureLabel')
+          text += `　→ ${label}`
+        } else if (resolvedVal) {
+          text += `　/ ${key}(${resolvedVal})`
+        }
+        const charName = charMap[charId]?.name ?? charId
+        setMessages(prev => [...prev, { character_id: charId, character_name: `🎲 ${charName}`, text, emotion: '', tags: [] }])
+      } catch (e) {
+        console.error(e)
+      }
+    }
+  }
+
+  const openGameSheetDialog = async () => {
+    const opts: Record<string, string[]> = {}
+    await Promise.all(selectedChars.map(async id => {
+      try {
+        const res = await fetch(`/api/characters/${id}/game_sheets`)
+        const data = await res.json()
+        opts[id] = Object.keys(data.game_sheets ?? {})
+      } catch {
+        opts[id] = []
+      }
+    }))
+    setCharGameSheetOptions(opts)
+    setShowGameSheetDialog(true)
+  }
+
   const openRuleDialog = async () => {
     const id = ruleSet || (ruleOptions[0]?.id ?? 'default')
     setRuleEditId(id)
@@ -564,28 +1133,56 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
       const nameMap: Record<string, string> = data.name_map || {}
       const history: any[] = data.history || []
+      // _dice 旧データ用: "🎲 CharName【stat】..." からキャラ名を逆引き
+      const reverseNameMap: Record<string, string> = {}
+      for (const [id, n] of Object.entries(nameMap)) reverseNameMap[n] = id
+
       const reconstructed: SessionMessage[] = history.map(h => {
-        if (h.role === 'user') {
+        if (h.character_id === 'human') {
           return { character_id: 'human', character_name: 'You', text: h.content, emotion: '', tags: [], isHuman: true }
         }
-        const name = nameMap[h.character_id] || h.character_id
+        if (h.character_id === '_scene_image') {
+          return {
+            character_id: '__scene__',
+            character_name: '',
+            text: '',
+            emotion: '',
+            tags: [],
+            isSceneImage: true,
+            imageStatus: h.image_url ? 'done' : 'error',
+            imageUrl: (h.image_url as string) || undefined,
+          } as SessionMessage
+        }
+        let cid: string = h.character_id || ''
+        // 旧セーブデータ互換: _dice → コンテンツからキャラ名を解析して実IDに変換
+        if (cid === '_dice') {
+          const m = h.content.match(/^🎲\s+(.+?)(?:【|$)/)
+          const parsedName = m?.[1]?.trim()
+          const resolvedId = parsedName ? reverseNameMap[parsedName] : undefined
+          if (resolvedId) cid = resolvedId
+        }
+        const name = cid === '_keeper' ? '🎩 Keeper' : (nameMap[cid] || cid)
         const prefix = name + ': '
         const text = h.content.startsWith(prefix) ? h.content.slice(prefix.length) : h.content
         return {
-          character_id: h.character_id,
+          character_id: cid,
           character_name: name,
           text,
           emotion: h.emotion || '',
           tags: h.tags || [],
-          imageColor: charMap[h.character_id]?.image_color,
+          imageColor: charMap[cid]?.image_color,
           imageUrl: (h.image_url as string) || undefined,
           audioUrl: (h.audio_url as string) || undefined,
         }
       })
 
+      sessionIdRef.current = data.session_id
       setSessionId(data.session_id)
+      initiativeRef.current = data.initiative || []
       setInitiative(data.initiative || [])
       setRound(data.round || 1)
+      setCurrentSceneIndex(data.current_scene_index || 0)
+      setActiveTurnCharId('')
       setMessages(reconstructed)
       setStandingFallback(new Set())
       setWaitingForHuman(false)
@@ -595,6 +1192,42 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       if (data.actions_per_turn) {
         setActionsPerTurn(data.actions_per_turn)
         actionsPerTurnRef.current = data.actions_per_turn
+      }
+
+      // TRPGフィールド復元
+      const isTrpg: boolean = data.trpg_mode || false
+      trpgModeRef.current = isTrpg
+      setTrpgMode(isTrpg)
+      if (data.trpg_rulebook) setSelectedRulebook(data.trpg_rulebook)
+      isHumanKeeperRef.current = data.human_keeper || false
+      setWaitingForKeeperTurn(false)
+      setCharSheetData({})
+      const charGameSheets: Record<string, string> = data.char_game_sheets || {}
+      if (isTrpg && Object.keys(charGameSheets).length > 0) {
+        const runtimeStats: Record<string, Record<string, number>> = data.runtime_stats || {}
+        const sheetData: Record<string, any> = {}
+        await Promise.all(
+          Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
+            try {
+              const r = await fetch(`/api/characters/${charId}/game_sheets`)
+              const d = await r.json()
+              if (d.game_sheets?.[sheetId]) {
+                const sheet = normalizeSheetStats({ ...d.game_sheets[sheetId], _sheet_id: sheetId })
+                const statOverrides = runtimeStats[charId]
+                if (statOverrides && sheet.stats) {
+                  const stats = { ...sheet.stats }
+                  for (const [statKey, currentVal] of Object.entries(statOverrides)) {
+                    if (stats[statKey]) stats[statKey] = { ...stats[statKey], current: currentVal }
+                  }
+                  sheetData[charId] = { ...sheet, stats }
+                } else {
+                  sheetData[charId] = sheet
+                }
+              }
+            } catch {}
+          })
+        )
+        setCharSheetData(sheetData)
       }
     } catch (e) {
       console.error(e)
@@ -607,14 +1240,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (sessionId && messages.length > 0) {
       await saveCurrentSession()
     }
+    sessionIdRef.current = ''
     setSessionId('')
     setMessages([])
+    initiativeRef.current = []
     setInitiative([])
     setRound(1)
     setAutoAdvance(false)
     autoAdvanceRef.current = false
     setSceneImageStatus('idle')
     setWaitingForHuman(false)
+    setWaitingForKeeperTurn(false)
+    isHumanKeeperRef.current = false
     setHumanCharId('')
     setHumanCharName('')
     fetchSavedSessions()
@@ -645,7 +1282,12 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       tags: [],
     }])
     setPendingActions([])
-    if (autoAdvanceRef.current) {
+    if (waitingForKeeperTurn) {
+      setWaitingForKeeperTurn(false)
+      setAutoAdvance(true)
+      autoAdvanceRef.current = true
+      setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
+    } else if (autoAdvanceRef.current) {
       setAutoAdvance(false)
       autoAdvanceRef.current = false
     }
@@ -656,7 +1298,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     const res = await fetch(`/api/session/${sessionId}/skip`, { method: 'POST' })
     const data = await res.json()
     if (data.error) return
-    if (data.counters) setCounters(data.counters)
+    if (data.counters) setCounters(capCounters(data.counters))
     setRound(data.round)
     setMessages(prev => [...prev, {
       character_id: '_keeper',
@@ -692,7 +1334,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     })
     const data = await res.json()
     if (data.error) return
-    if (data.counters) setCounters(data.counters)
+    if (data.counters) setCounters(capCounters(data.counters))
     generateSceneImage()
   }
 
@@ -759,7 +1401,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
     }
 
-    if (data.counters) setCounters(data.counters)
+    if (data.counters) setCounters(capCounters(data.counters))
     if (typeof data.round === 'number') setRound(data.round)
     setHumanInput('')
     setHumanPending([])
@@ -774,7 +1416,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setAutoAdvance(true)
       autoAdvanceRef.current = true
     }
-    if (autoAdvanceRef.current) {
+    // 人間がラウンド末尾だった場合、nextTurn を呼ぶ前にキーパーを発火
+    const humanIsLastOfRound = trpgModeRef.current &&
+      initiativeRef.current.length > 0 &&
+      initiativeRef.current[initiativeRef.current.length - 1] === humanCharId &&
+      keeperFiredRoundRef.current !== data.round
+    if (humanIsLastOfRound && autoAdvanceRef.current) {
+      await fireKeeperTurn(sessionId!, data.round)
+    } else if (autoAdvanceRef.current) {
       setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
     }
   }
@@ -791,7 +1440,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       })
       const data = await res.json()
       if (data.error) return
-      if (data.counters) setCounters(data.counters)
+      if (data.counters) setCounters(capCounters(data.counters))
       if (data.deliberations && Array.isArray(data.deliberations)) {
         for (const d of data.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
           setMessages(prev => [...prev, {
@@ -863,7 +1512,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           emotion: '', tags: [],
         },
       ])
-      if (data.initiative) setInitiative(data.initiative)
+      if (data.initiative) { initiativeRef.current = data.initiative; setInitiative(data.initiative) }
       if (data.ended) endSession()
       setVoteDetail('')
       setVoteTarget('')
@@ -873,10 +1522,29 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
+  const advanceScene = async () => {
+    if (!sessionId) return
+    try {
+      const res = await fetch(`/api/session/${sessionId}/scene/advance`, { method: 'POST' })
+      const data = await res.json()
+      if (data.error) { console.error('scene/advance:', data.error); return }
+      if (typeof data.current_scene_index === 'number') setCurrentSceneIndex(data.current_scene_index)
+      const sceneLabel = data.scene_title
+        ? `【シーン進行】${data.chapter_title ? `${data.chapter_title} / ` : ''}${data.scene_title}`
+        : '【シーン進行】次のシーンへ'
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: '📍 Scene', text: sceneLabel, emotion: '', tags: [],
+      }])
+      generateSceneImage()
+    } catch (e) {
+      console.error('advanceScene error:', e)
+    }
+  }
+
   const generateSceneImage = async () => {
     if (!sessionId || !t2iBackend) return
     setSceneImageStatus('generating')
-    const placeholderIdx = messages.length
+    const genId = Math.random().toString(36).slice(2)
     setMessages(prev => [...prev, {
       character_id: '__scene__',
       character_name: '',
@@ -885,6 +1553,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       tags: [],
       isSceneImage: true,
       imageStatus: 'generating',
+      _genId: genId,
     }])
     try {
       const res = await fetch(`/api/session/${sessionId}/generate-image`, {
@@ -894,14 +1563,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       })
       const data = await res.json()
       if (data.error) {
-        setMessages(prev => prev.map((m, i) => i === placeholderIdx ? { ...m, imageStatus: 'error', imageError: data.error } : m))
+        setMessages(prev => prev.map(m => m._genId === genId ? { ...m, imageStatus: 'error', imageError: data.error } : m))
         setSceneImageStatus('error')
       } else {
-        setMessages(prev => prev.map((m, i) => i === placeholderIdx ? { ...m, imageStatus: 'done', imageUrl: data.url } : m))
+        setMessages(prev => prev.map(m => m._genId === genId ? { ...m, imageStatus: 'done', imageUrl: data.url } : m))
         setSceneImageStatus('idle')
       }
     } catch {
-      setMessages(prev => prev.map((m, i) => i === placeholderIdx ? { ...m, imageStatus: 'error', imageError: t('session.msg.imageFailed') } : m))
+      setMessages(prev => prev.map(m => m._genId === genId ? { ...m, imageStatus: 'error', imageError: t('session.msg.imageFailed') } : m))
       setSceneImageStatus('error')
     }
   }
@@ -912,14 +1581,26 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       <div className="tab-content session-tab">
         <div className="session-setup-scroll">
         <div className="session-setup">
-          <h2>{t('session.setup.heading')}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <h2 style={{ margin: 0 }}>{t('session.setup.heading')}</h2>
+            <button
+              className={`toggle-btn${trpgMode ? ' active' : ''}`}
+              onClick={() => { const next = !trpgMode; trpgModeRef.current = next; setTrpgMode(next) }}
+              style={{ padding: '4px 16px', borderRadius: 20, border: '1px solid var(--border-color, #aaa)', background: trpgMode ? '#4a6cf7' : 'transparent', color: trpgMode ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.9em' }}
+            >
+              {trpgMode ? t('trpg.mode.on') : t('trpg.mode.off')}
+            </button>
+          </div>
 
           <div className="session-field">
             <label className="session-label">{t('session.setup.charSelect.label')}</label>
             <CharMultiSelect
               characters={characters}
               selected={selectedChars}
-              onChange={setSelectedChars}
+              onChange={next => {
+                setSelectedChars(next)
+                setCharRoles(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => next.includes(id))) as Record<string, 'investigator' | 'keeper'>)
+              }}
             />
           </div>
 
@@ -930,6 +1611,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 {llmBackendOptions.length > 0 && (
                   <button className="novel-hdr-btn" onClick={() => setShowBackendDialog(true)} title={t('session.setup.aiSettingsBtn.title')}>{t('session.setup.aiSettingsBtn')}</button>
                 )}
+                {trpgMode && (
+                  <button className="novel-hdr-btn" onClick={openGameSheetDialog} title={t('trpg.gameChar.setupBtn.title')}>{t('trpg.gameChar.setupBtn')}</button>
+                )}
               </div>
               <ul className="session-participants-list">
                 {selectedChars.map(id => (
@@ -938,6 +1622,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     {charBackends[id] && (
                       <span style={{ fontSize: '0.75em', opacity: 0.6, marginLeft: '6px' }}>
                         [{llmBackendOptions.find(b => b.id === charBackends[id])?.label ?? charBackends[id]}]
+                      </span>
+                    )}
+                    {trpgMode && charRoles[id] === 'keeper' && (
+                      <span style={{ fontSize: '0.75em', marginLeft: '6px', color: '#4a6cf7' }}>{t('trpg.role.keeper')}</span>
+                    )}
+                    {trpgMode && charGameSheets[id] && charRoles[id] !== 'keeper' && (
+                      <span style={{ fontSize: '0.75em', opacity: 0.6, marginLeft: '6px', color: '#4a6cf7' }}>
+                        [{charGameSheets[id]}]
                       </span>
                     )}
                   </li>
@@ -950,7 +1642,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             <p className="session-hint">{t('session.setup.noCharHint')}</p>
           )}
 
-          {ruleOptions.length > 0 && (
+          {!trpgMode && ruleOptions.length > 0 && (
             <div className="session-field">
               <label className="session-label">{t('session.setup.ruleLabel')}</label>
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -964,12 +1656,70 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     <option key={r.id} value={r.id}>{r.label}</option>
                   ))}
                 </select>
-                <button className="novel-hdr-btn" onClick={openRuleDialog} title="ルールを編集">✏️</button>
+                <button className="novel-hdr-btn" onClick={openRuleDialog} title={t('session.setup.ruleEditBtn.title')}>✏️</button>
               </div>
             </div>
           )}
 
-          {actionsPerTurn > 1 && (() => {
+          {trpgMode && rulebookOptions.length > 0 && (
+            <div className="session-field">
+              <label className="session-label">{t('trpg.rulebook.label')}</label>
+              <select
+                className="session-select"
+                value={selectedRulebook}
+                onChange={e => setSelectedRulebook(e.target.value)}
+              >
+                {rulebookOptions.map(r => (
+                  <option key={r.id} value={r.id}>{r.label}（{r.dice_system}）</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {trpgMode && scenarioOptions.length > 0 && (
+            <div className="session-field">
+              <label className="session-label">{t('trpg.scenario.label')}</label>
+              <select
+                className="session-select"
+                value={selectedScenario}
+                onChange={e => setSelectedScenario(e.target.value)}
+              >
+                <option value="">{t('trpg.scenario.none')}</option>
+                {scenarioOptions.map(s => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+              {selectedScenario && scenarioOptions.find(s => s.id === selectedScenario)?.synopsis && (
+                <p style={{ fontSize: '0.82em', opacity: 0.7, marginTop: 4, marginBottom: 0 }}>
+                  {scenarioOptions.find(s => s.id === selectedScenario)?.synopsis}
+                </p>
+              )}
+            </div>
+          )}
+
+          {trpgMode && (
+            <div className="session-field">
+              <label className="session-label">{t('trpg.keeper.label')}</label>
+              {keeperCharId ? (
+                <span style={{ fontSize: '0.85em', color: '#4a6cf7', padding: '4px 2px' }}>{t('trpg.keeper.aiAssigned')}</span>
+              ) : (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    className={`toggle-btn${!humanKeeper ? ' active' : ''}`}
+                    onClick={() => setHumanKeeper(false)}
+                    style={{ padding: '4px 14px', borderRadius: 16, border: '1px solid var(--border-color, #aaa)', background: !humanKeeper ? '#4a6cf7' : 'transparent', color: !humanKeeper ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.85em' }}
+                  >{t('trpg.keeper.ai')}</button>
+                  <button
+                    className={`toggle-btn${humanKeeper ? ' active' : ''}`}
+                    onClick={() => setHumanKeeper(true)}
+                    style={{ padding: '4px 14px', borderRadius: 16, border: '1px solid var(--border-color, #aaa)', background: humanKeeper ? '#4a6cf7' : 'transparent', color: humanKeeper ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.85em' }}
+                  >{t('trpg.keeper.human')}</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!trpgMode && actionsPerTurn > 1 && (() => {
             const filtered = directiveOptions.filter(d => d.recommended_for.length === 0 || d.recommended_for.includes(actionsPerTurn))
             return filtered.length > 0 && (
               <div className="session-field">
@@ -987,21 +1737,23 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             )
           })()}
 
-          <div className="session-field">
-            <label className="session-label">{t('session.setup.topicLabel')}</label>
-            <input
-              className="session-topic-input"
-              type="text"
-              value={topic}
-              onChange={e => setTopic(e.target.value)}
-              placeholder={t('session.setup.topicPlaceholder')}
-            />
-          </div>
+          {!trpgMode && (
+            <div className="session-field">
+              <label className="session-label">{t('session.setup.topicLabel')}</label>
+              <input
+                className="session-topic-input"
+                type="text"
+                value={topic}
+                onChange={e => setTopic(e.target.value)}
+                placeholder={t('session.setup.topicPlaceholder')}
+              />
+            </div>
+          )}
 
           <button
             className="start-btn"
             onClick={startSession}
-            disabled={selectedChars.length < 1 || loading}
+            disabled={selectedChars.length < 1 || sessionStarting}
           >
             {t('session.setup.startBtn')}
           </button>
@@ -1012,7 +1764,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               <div className="session-saved-list">
                 {savedSessions.map(s => (
                   <div key={s.filename} className="session-saved-item" onClick={() => loadSavedSession(s.filename)}>
-                    <span className="saved-topic">{s.topic || t('session.setup.savedUntitled')}</span>
+                    <span className="saved-topic">{s.trpg_scenario_title || s.topic || t('session.setup.savedUntitled')}</span>
                     <span className="saved-meta">{s.character_names.join(' · ')} | Round {s.round}</span>
                     <span className="saved-date">{s.saved_at.replace('_', ' ')}</span>
                     <button
@@ -1092,6 +1844,69 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           </div>
         </div>
       )}
+      {showGameSheetDialog && (
+        <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowGameSheetDialog(false) }}>
+          <div className="plot-dialog" style={{ maxWidth: 440 }}>
+            <div className="plot-dialog-header">
+              <span>{t('trpg.gameChar.dialogHeader')}</span>
+              <button className="plot-dialog-close" onClick={() => setShowGameSheetDialog(false)}>×</button>
+            </div>
+            <div className="plot-dialog-body" style={{ padding: '16px' }}>
+              {keeperCount >= 2 && (
+                <div style={{ color: '#e05', fontSize: '0.82em', marginBottom: '10px' }}>
+                  {t('trpg.keeper.maxOneWarn')}
+                </div>
+              )}
+              {selectedChars.map(id => {
+                const role = charRoles[id] ?? 'investigator'
+                const isKeeper = role === 'keeper'
+                const options = charGameSheetOptions[id] ?? []
+                return (
+                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <img src={`/api/characters/${id}/icon`} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
+                    <span style={{ width: 80, fontWeight: 500, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{charMap[id]?.name ?? id}</span>
+                    <button
+                      className="novel-hdr-btn"
+                      style={{ flexShrink: 0, fontSize: '0.78em', padding: '2px 8px', background: isKeeper ? '#4a6cf7' : undefined, color: isKeeper ? '#fff' : undefined }}
+                      onClick={() => setCharRoles(prev => ({ ...prev, [id]: isKeeper ? 'investigator' : 'keeper' }))}
+                    >
+                      {isKeeper ? t('trpg.role.keeper') : t('trpg.role.investigator')}
+                    </button>
+                    {!isKeeper && (
+                      <select
+                        className="session-select"
+                        style={{ flex: 1 }}
+                        value={charGameSheets[id] ?? ''}
+                        onChange={e => setCharGameSheets(prev => {
+                          const next = { ...prev }
+                          if (e.target.value) next[id] = e.target.value
+                          else delete next[id]
+                          return next
+                        })}
+                      >
+                        <option value="">{t('trpg.gameChar.noSheet')}</option>
+                        {options.map(sid => (
+                          <option key={sid} value={sid}>{sid}</option>
+                        ))}
+                      </select>
+                    )}
+                    {isKeeper && (
+                      <span style={{ flex: 1, fontSize: '0.78em', opacity: 0.5 }}>{t('trpg.gameChar.sheetNotRequired')}</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="plot-dialog-footer">
+              <button
+                className="novel-hdr-btn apply-btn"
+                onClick={() => setShowGameSheetDialog(false)}
+                disabled={keeperCount >= 2}
+              >{t('trpg.gameChar.confirmBtn')}</button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     )
   }
@@ -1103,21 +1918,38 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     <div className="tab-content session-tab">
       <div className="session-header">
         <span className="session-info">
-          Round {round} | {initiative.map(id => {
+          {trpgMode && <span style={{ marginRight: 8 }}>Scene {currentSceneIndex + 1} |</span>}
+          Round {round} | {initiative.map((id, idx) => {
             const name = nameMap[id] || id
             const c = counters[id] ?? 0
             const cStr = c > 0 ? `[+${c}]` : `[${c}]`
-            return `${name}${cStr}`
-          }).join(' → ')}
+            const isActive = id === activeTurnCharId
+            const atMax = c >= maxCounter
+            return (
+              <span key={id} style={atMax ? { color: '#e05' } : undefined}>
+                {idx > 0 && ' → '}
+                {isActive ? <strong>{name}{cStr}</strong> : `${name}${cStr}`}
+              </span>
+            )
+          })}
         </span>
         <div className="session-header-actions">
           {saveStatus && <span className="save-status">{saveStatus}</span>}
+          {trpgMode && Object.keys(charSheetData).length > 0 && (
+            <button
+              className="novel-hdr-btn"
+              onClick={() => setShowSheetPanel(v => !v)}
+              title="キャラクターシート"
+              style={{ opacity: showSheetPanel ? 1 : 0.55 }}
+            >📋</button>
+          )}
           <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
           <button className="end-btn" onClick={endSession}>{t('session.header.endBtn')}</button>
         </div>
       </div>
 
-      <div className="session-stage">
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div className="session-stage" style={{ flex: 1, minWidth: 0 }}>
         {/* 立ち絵オーバーレイ */}
         <div className="session-standing">
           {initiative.map((cid, idx) => {
@@ -1166,7 +1998,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 <div key={i} className="session-msg keeper-msg">
                   <div className="session-msg-body keeper-body">
                     <div className="session-msg-header">
-                      <span className="session-msg-name keeper-name">🎩 Keeper</span>
+                      <span className="session-msg-name keeper-name">{m.character_name || '🎩 Keeper'}</span>
                     </div>
                     <div className="session-msg-text keeper-text">{m.text}</div>
                   </div>
@@ -1195,7 +2027,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             return (
               <div key={i} className={`session-msg ${m.isHuman ? 'human' : ''}`}>
                 {!m.isHuman && (
-                  <img src={`/api/characters/${m.character_id}/icon`} alt="" className="avatar" />
+                  m.character_id.startsWith('_')
+                    ? <span className="avatar avatar-system">{m.character_id === '_dice' ? '🎲' : m.character_id === '_keeper' ? '🎩' : '⚙️'}</span>
+                    : <img src={`/api/characters/${m.character_id}/icon`} alt="" className="avatar" />
                 )}
                 <div
                   className="session-msg-body"
@@ -1250,6 +2084,42 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           )}
           <div ref={messagesEndRef} />
         </div>
+      </div>
+      {trpgMode && showSheetPanel && Object.keys(charSheetData).length > 0 && (
+        <div style={{ width: 220, overflowY: 'auto', borderLeft: '1px solid var(--border-color, #444)', padding: '10px 8px', flexShrink: 0, fontSize: '0.8em' }}>
+          {Object.entries(charSheetData).map(([charId, sheet]) => {
+            const stats: Record<string, { current: number; max?: number }> = sheet.stats ?? {}
+            const isDead = Object.values(stats).some(v => v.current <= 0)
+            return (
+              <div key={charId} style={{ marginBottom: 16, opacity: isDead ? 0.5 : 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                  <img src={`/api/characters/${charId}/icon`} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', filter: isDead ? 'grayscale(1)' : 'none' }} />
+                  <span style={{ fontWeight: 600 }}>{isDead ? '💀 ' : ''}{charMap[charId]?.name ?? charId}</span>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ opacity: 0.5 }}>
+                      <th style={{ textAlign: 'left', padding: '1px 3px', fontWeight: 'normal' }}>能力</th>
+                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>現在値</th>
+                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>最大値</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(stats).map(([key, val]) => (
+                      <tr key={key}>
+                        <td style={{ padding: '2px 3px' }}>【{key}】</td>
+                        <td style={{ textAlign: 'right', padding: '2px 3px', fontVariantNumeric: 'tabular-nums', color: val.current <= 0 ? 'var(--danger-color, #e55)' : undefined }}>{val.current}</td>
+                        <td style={{ textAlign: 'right', padding: '2px 3px', fontVariantNumeric: 'tabular-nums', opacity: 0.7 }}>{val.max}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {isDead && <div style={{ marginTop: 4, fontSize: '0.85em', opacity: 0.7 }}>死亡 — 死者視点で継続</div>}
+              </div>
+            )
+          })}
+        </div>
+      )}
       </div>
 
       <div className="session-controls">
@@ -1309,6 +2179,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 </button>
               )}
               <button onClick={() => setShowVoteDialog(true)} disabled={autoAdvance || (counters[humanCharId] ?? 0) < 3} className="keeper-add-btn" title={t('session.ctrl.voteBtn.title')}>{t('session.ctrl.voteBtn')}</button>
+              {false && trpgMode && Object.keys(charSheetData).length > 0 && (
+                <select className="session-select" style={{ flex: 'none', maxWidth: 80 }} value={autoJudgmentStat} onChange={e => { setAutoJudgmentStat(e.target.value); autoJudgmentStatRef.current = e.target.value }} title={t('trpg.autoJudgment.title')}>
+                  <option value="">{t('trpg.autoJudgment')}</option>
+                  {[...new Set(Object.values(charSheetData).flatMap((s: any) => Object.keys(s?.stats ?? {})))].map(stat => (
+                    <option key={stat} value={stat}>{stat}</option>
+                  ))}
+                </select>
+              )}
+              {trpgMode && charSheetData[humanCharId] && <DiceRow onOpenDialog={openDiceDialogForHuman} />}
             </div>
             {humanPending.length > 0 && (
               <div className="keeper-pending">
@@ -1319,6 +2198,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               </div>
             )}
           </>
+        )}
+        {!humanCharId && waitingForKeeperTurn && (
+          <div className="session-controls-row" style={{ background: 'rgba(74,108,247,0.12)', border: '1px solid #4a6cf7', borderRadius: 8, padding: '6px 10px' }}>
+            <span style={{ fontWeight: 600, color: '#4a6cf7' }}>{t('trpg.keeper.turnBanner')}</span>
+          </div>
         )}
         {!humanCharId && <div className="session-controls-row">
           <button
@@ -1371,6 +2255,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </>
           )}
           <button onClick={() => setShowVoteDialog(true)} disabled={autoAdvance} className="keeper-add-btn" title={t('session.ctrl.voteBtnKeeper.title')}>{t('session.ctrl.voteBtnKeeper')}</button>
+          {false && trpgMode && Object.keys(charSheetData).length > 0 && (
+            <select className="session-select" style={{ flex: 'none', maxWidth: 80 }} value={autoJudgmentStat} onChange={e => { setAutoJudgmentStat(e.target.value); autoJudgmentStatRef.current = e.target.value }} title={t('trpg.autoJudgment.title')}>
+              <option value="">{t('trpg.autoJudgment')}</option>
+              {[...new Set(Object.values(charSheetData).flatMap((s: any) => Object.keys(s?.stats ?? {})))].map(stat => (
+                <option key={stat} value={stat}>{stat}</option>
+              ))}
+            </select>
+          )}
+          {trpgMode && Object.keys(charSheetData).length > 0 && <DiceRow onOpenDialog={openDiceDialog} onAdvanceScene={advanceScene} />}
         </div>}
       </div>
 
@@ -1437,6 +2330,118 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           </div>
         </div>
       )}
+      {pendingJudgments.length > 0 && (
+        <div className="dialog-backdrop">
+          <div className="dialog" style={{ minWidth: 280, maxWidth: 400 }}>
+            <div className="dialog-header">
+              <span>{t('trpg.judgment.header')}</span>
+            </div>
+            <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {pendingJudgments.map((j, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9em' }}>
+                  <span style={{ flex: 1, opacity: 0.85 }}>
+                    {j.stat_value > 0
+                      ? t('trpg.judgment.item', { name: j.character_name, stat: j.stat, value: j.stat_value })
+                      : t('trpg.judgment.itemNoValue', { name: j.character_name, stat: j.stat })}
+                  </span>
+                  <button
+                    className="keeper-redo-btn"
+                    style={{ fontSize: '0.8em', padding: '2px 8px' }}
+                    onClick={() => rollDamage(j.character_id, j.character_name)}
+                  >{t('trpg.judgment.damage')}</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: '8px 16px 16px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="keeper-redo-btn" onClick={() => {
+                setPendingJudgments([])
+                if (wasAutoAdvancingRef.current) {
+                  setAutoAdvance(true)
+                  autoAdvanceRef.current = true
+                }
+                wasAutoAdvancingRef.current = false
+                setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
+              }}>{t('trpg.judgment.skip')}</button>
+              <button className="novel-hdr-btn apply-btn" onClick={rollAllPendingJudgments}>{t('trpg.judgment.rollAll')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showDiceDialog && (() => {
+        const sheetChars = initiative.filter(id => charSheetData[id])
+        const allStatKeys = [...new Set(sheetChars.flatMap(id => Object.keys(charSheetData[id]?.stats ?? {})))]
+        const allSkillKeys = [...new Set(sheetChars.flatMap(id => Object.keys(charSheetData[id]?.skills ?? {})))]
+        const allSelected = sheetChars.length > 0 && sheetChars.every(id => diceDialogChars.includes(id))
+        const noChars = diceDialogChars.length === 0
+        return (
+          <div className="plot-dialog-overlay" onClick={e => { if (e.target === e.currentTarget) setShowDiceDialog(false) }}>
+            <div className="plot-dialog" style={{ maxWidth: 440 }}>
+              <div className="plot-dialog-header">
+                <span>{t('trpg.diceDialog.header')}</span>
+                <button className="plot-dialog-close" onClick={() => setShowDiceDialog(false)}>×</button>
+              </div>
+              <div className="plot-dialog-body" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {diceDialogLocked ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 600 }}>{t('trpg.diceDialog.targets')}</span>
+                    {diceDialogChars[0] && (
+                      <>
+                        <img src={`/api/characters/${diceDialogChars[0]}/icon`} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }} />
+                        <span>{charMap[diceDialogChars[0]]?.name ?? diceDialogChars[0]}</span>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('trpg.diceDialog.targets')}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                      {sheetChars.map(id => {
+                        const checked = diceDialogChars.includes(id)
+                        return (
+                          <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', padding: '3px 8px', borderRadius: 12, border: `1px solid ${checked ? '#4a6cf7' : 'var(--border-color, #aaa)'}`, background: checked ? 'rgba(74,108,247,0.1)' : 'transparent' }}>
+                            <input type="checkbox" checked={checked} style={{ margin: 0 }} onChange={() =>
+                              setDiceDialogChars(prev => checked ? prev.filter(x => x !== id) : [...prev, id])
+                            } />
+                            <img src={`/api/characters/${id}/icon`} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+                            <span style={{ fontSize: '0.88em' }}>{charMap[id]?.name ?? id}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="novel-hdr-btn" style={{ fontSize: '0.78em', padding: '2px 10px' }} onClick={() => setDiceDialogChars(sheetChars)}>{allSelected ? t('trpg.diceDialog.allSelected') : t('trpg.diceDialog.selectAll')}</button>
+                      <button className="novel-hdr-btn" style={{ fontSize: '0.78em', padding: '2px 10px' }} onClick={() => setDiceDialogChars([])}>{t('trpg.diceDialog.deselect')}</button>
+                    </div>
+                  </div>
+                )}
+                {allStatKeys.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 600, minWidth: 72, flexShrink: 0 }}>{t('trpg.diceDialog.stat')}</span>
+                    <select className="session-select" style={{ flex: 1 }} value={diceDialogStatKey} onChange={e => setDiceDialogStatKey(e.target.value)}>
+                      <option value="">選択…</option>
+                      {allStatKeys.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button className="keeper-send-btn" disabled={noChars || !diceDialogStatKey} onClick={() => rollDiceDialog('stat', diceDialogStatKey)}>{t('trpg.diceDialog.rollBtn')}</button>
+                  </div>
+                )}
+                {allSkillKeys.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 600, minWidth: 72, flexShrink: 0 }}>{t('trpg.diceDialog.skill')}</span>
+                    <select className="session-select" style={{ flex: 1 }} value={diceDialogSkillKey} onChange={e => setDiceDialogSkillKey(e.target.value)}>
+                      <option value="">選択…</option>
+                      {allSkillKeys.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button className="keeper-send-btn" disabled={noChars || !diceDialogSkillKey} onClick={() => rollDiceDialog('skill', diceDialogSkillKey)}>{t('trpg.diceDialog.rollBtn')}</button>
+                  </div>
+                )}
+              </div>
+              <div className="plot-dialog-footer">
+                <button className="novel-hdr-btn" onClick={() => setShowDiceDialog(false)}>{t('dialog.closeBtn')}</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
