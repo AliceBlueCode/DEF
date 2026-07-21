@@ -267,6 +267,8 @@ When a damage event occurs — combat, traps, psychological shock, or any other 
 
 ## Incapacitation & Death
 
+**Characters die. Players do not. Death is not an escape.**
+
 A character becomes **incapacitated** when **any stat drops to 0 or below**.
 
 However, they do not leave the session. Incapacitated characters continue to participate from a **dead character perspective**.
