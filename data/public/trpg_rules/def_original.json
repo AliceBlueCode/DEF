@@ -7,7 +7,7 @@
   "judgment": {
     "success_condition": "roll_lte_skill",
     "untrained_success_condition": "roll_lte_stat_x5",
-    "critical_threshold_divisor": 5,
+    "critical_threshold_divisor": 10,
     "fumble_threshold": 100
   },
   "stats": {
@@ -25,7 +25,7 @@
     "non_human_note": "人間から外れた存在（妖怪・神霊・AI・半人半異形など）は合計40点の制約を受けない。キーパーが承認した場合、能力値合計の上限を超えてよい。"
   },
   "skill_point_pool": 540,
-  "skill_note": "スキルポイント540点をキャラクター作成時に自由に技能へ配分する。基礎値はステータス×3、上限は99。無訓練判定はステータス×5で行う。基礎値合計960＋フリー540＝総計1500。",
+  "skill_note": "スキルポイント540点をキャラクター作成時に自由に技能へ配分する。基礎値はステータス×3、上限は99。ステータス判定はステータス×5で行う。基礎値合計960＋フリー540＝総計1500。",
   "skill_rules": {
     "base_value_multiplier": 3,
     "untrained_multiplier": 5,
