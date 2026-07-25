@@ -41,6 +41,19 @@ type T2IDebugInfo = {
   error?: string
 }
 
+type NovelT2IDebugInfo = {
+  mode?: string
+  tag_format?: string
+  backend?: string
+  model?: string
+  scene_text?: string
+  prompt_generated?: string
+  width?: number
+  height?: number
+  url?: string
+  error?: string
+}
+
 type TFn = (key: string, vars?: Record<string, string | number>) => string
 
 function buildSummaryText(debug: DebugInfo, label: string, t: TFn): string {
@@ -221,11 +234,67 @@ function T2IDebugSection({ debug }: { debug: T2IDebugInfo }) {
   )
 }
 
+function NovelT2IDebugSection({ debug }: { debug: NovelT2IDebugInfo }) {
+  const t = useT()
+  const [copied, setCopied] = useState(false)
+  const summaryText = [
+    `mode: ${debug.mode ?? ''}  tag_format: ${debug.tag_format ?? ''}`,
+    `backend: ${debug.backend ?? ''}  model: ${debug.model ?? ''}`,
+    `size: ${debug.width ?? ''}x${debug.height ?? ''}`,
+    '',
+    'scene_text:',
+    debug.scene_text ?? '',
+    '',
+    'prompt_generated:',
+    debug.prompt_generated ?? '',
+  ].join('\n')
+
+  const copy = () => {
+    navigator.clipboard.writeText(summaryText).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="debug-mode-section">
+      <h2 className="debug-mode-title">{t('debug.section.novelT2i')}</h2>
+      <div className="debug-meta">
+        {debug.mode && <span>mode: <b>{debug.mode}</b></span>}
+        {debug.tag_format && <span>tag_format: <b>{debug.tag_format}</b></span>}
+        {debug.backend && <span>{t('debug.meta.backend', { backend: debug.backend })}</span>}
+        {debug.model && <span>{t('debug.meta.model', { model: debug.model })}</span>}
+        {debug.width && <span>{t('debug.meta.size', { w: debug.width, h: debug.height ?? '' })}</span>}
+        {debug.url && <span><a href={debug.url} target="_blank" rel="noreferrer">{t('debug.meta.generatedImage')}</a></span>}
+        {debug.error && <span className="debug-fail">❌ {debug.error}</span>}
+      </div>
+      <section className="debug-section">
+        <h3>{t('debug.novelT2i.sceneText')}</h3>
+        <pre className="debug-code small">{debug.scene_text || t('debug.none')}</pre>
+      </section>
+      <section className="debug-section">
+        <h3>{t('debug.novelT2i.promptGenerated')}</h3>
+        <pre className="debug-code">{debug.prompt_generated || t('debug.none')}</pre>
+      </section>
+      <section className="debug-section">
+        <div className="debug-copy-header">
+          <h3>{t('debug.section.copyText')}</h3>
+          <button onClick={copy} className="debug-copy-btn">
+            {copied ? t('debug.copyBtn.copied') : t('debug.copyBtn')}
+          </button>
+        </div>
+        <pre className="debug-code">{summaryText}</pre>
+      </section>
+    </div>
+  )
+}
+
 export default function DebugTab() {
   const t = useT()
   const [chatDebug, setChatDebug] = useState<DebugInfo | null>(null)
   const [sessionDebug, setSessionDebug] = useState<DebugInfo | null>(null)
   const [t2iDebug, setT2iDebug] = useState<T2IDebugInfo | null>(null)
+  const [novelT2iDebug, setNovelT2iDebug] = useState<NovelT2IDebugInfo | null>(null)
   const [loading, setLoading] = useState(false)
 
   const fetchAll = useCallback(() => {
@@ -234,10 +303,12 @@ export default function DebugTab() {
       fetch('/api/chat/debug').then(r => r.json()),
       fetch('/api/session/debug').then(r => r.json()),
       fetch('/api/t2i/debug').then(r => r.json()),
-    ]).then(([chat, session, t2i]) => {
+      fetch('/api/novel/t2i/debug').then(r => r.json()),
+    ]).then(([chat, session, t2i, novelT2i]) => {
       setChatDebug(Object.keys(chat).length ? chat : null)
       setSessionDebug(Object.keys(session).length ? session : null)
       setT2iDebug(Object.keys(t2i).length ? t2i : null)
+      setNovelT2iDebug(Object.keys(novelT2i).length ? novelT2i : null)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -259,6 +330,7 @@ export default function DebugTab() {
           ? <T2IDebugSection debug={t2iDebug} />
           : <div className="debug-mode-section"><p style={{color:'var(--text-muted,#888)'}}>{t('debug.t2i.notYetGenerated')}</p></div>
         }
+        {novelT2iDebug && <NovelT2IDebugSection debug={novelT2iDebug} />}
       </div>
     </div>
   )

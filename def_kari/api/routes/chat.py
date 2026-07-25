@@ -85,6 +85,11 @@ def chat(req: ChatRequest):
     if isinstance(_last_emotion, list):
         _last_emotion = ", ".join(_last_emotion)
 
+    _t2i_backend = settings.get("t2i_backend", "")
+    _t2i_model = settings.get(f"t2i_model_{_t2i_backend}", "") if _t2i_backend else ""
+    from def_kari.models.t2i_profiles import get_tag_format
+    _tag_format = get_tag_format(_t2i_model or None)
+
     from def_kari.resources.vram_lock import get_vram_lock
     _vram_lock = get_vram_lock()
     _vram_lock.acquire()
@@ -99,6 +104,7 @@ def chat(req: ChatRequest):
             allowed_sexual=_allowed_sexual,
             allowed_violence=_allowed_violence,
             current_emotion=_last_emotion,
+            tag_format=_tag_format,
         )
     except Exception as e:
         _last_debug = {"error": str(e), "success": False, "attempts": []}

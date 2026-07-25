@@ -12,5 +12,11 @@
     "negative_prompt": "lowres, bad anatomy, worst quality",
     "steps": 20,
     "cfg_scale": 7
+  },
+  "paruparu_illustrious_v3.2.safetensors": {
+    "quality_tags": "masterpiece, best quality",
+    "negative_prompt": "lowres, bad anatomy, bad hands, worst quality, low quality, \nrealistic, photo, 3d, blurry, watermark, text, bad hands, deformed, fused limbs",
+    "steps": 20,
+    "cfg_scale": 5
   }
 }

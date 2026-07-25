@@ -48,3 +48,23 @@ T2I_BACKEND_LABELS = {
     "openai": "OpenAI DALL-E (外部API)",
 }
 DEFAULT_T2I_BACKEND = "huggingface"
+
+_T2I_COMPATIBLE_IDS: set[str] = set()
+
+
+def _register_compatible_t2i_backends():
+    try:
+        from def_kari.compatible_backends_store import all_backends_with_keys
+        for entry in all_backends_with_keys():
+            if "t2i" not in entry.get("capabilities", []):
+                continue
+            name = entry["name"]
+            if name not in T2I_BACKENDS:
+                T2I_BACKENDS.append(name)
+            T2I_BACKEND_LABELS[name] = entry.get("label", name)
+            _T2I_COMPATIBLE_IDS.add(name)
+    except Exception:
+        pass
+
+
+_register_compatible_t2i_backends()

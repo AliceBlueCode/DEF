@@ -233,6 +233,7 @@ def _call_llm(
     allowed_violence: list[str] | None = None,
     current_emotion: str = "",
     session_context: str = "",
+    tag_format: str = "danbooru",
 ) -> str:
     character = character or {}
     persona = character.get("persona_description", "You are a helpful assistant.")
@@ -254,6 +255,7 @@ def _call_llm(
         relationships=relationships or None,
         current_emotion=_emotion_str,
         session_context=session_context,
+        tag_format=tag_format,
     )
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -276,16 +278,20 @@ def _call_llm(
     # response_format 非対応モデル向け: 最後にJSON形式をリマインドする（json_capable なモデルのみ）
     _json_capable = (quirks or {}).get("json_capable", True)
     if _json_capable:
+        from def_kari.llm.prompts import _TAG_FORMAT_DESC
+        _fmt = _TAG_FORMAT_DESC.get(tag_format, _TAG_FORMAT_DESC["danbooru"])
         _is_ja_lang = _user_lang == "ja"
         if _is_ja_lang:
             messages.append({"role": "system", "content":
                 "必ず以下のJSON形式のみで返答すること（JSONオブジェクト以外のテキストは出力不可）:\n"
-                "{\"dialogue\": \"セリフ\", \"emotion\": \"感情名\", \"image_prompt_en\": \"danbooru tags\", \"tags\": []}"
+                "{\"dialogue\": \"セリフ\", \"emotion\": \"感情名\", "
+                f"\"image_prompt_en\": \"{_fmt['ja']}で\", \"tags\": []}}"
             })
         else:
             messages.append({"role": "system", "content":
                 "IMPORTANT: Output ONLY a JSON object (no other text):\n"
-                "{\"dialogue\": \"reply\", \"emotion\": \"emotion_name\", \"image_prompt_en\": \"danbooru tags\", \"tags\": []}"
+                "{\"dialogue\": \"reply\", \"emotion\": \"emotion_name\", "
+                f"\"image_prompt_en\": \"{_fmt['en']}\", \"tags\": []}}"
             })
 
     if lightweight:
@@ -322,6 +328,7 @@ def generate_structured_reply(
     allowed_violence: list[str] | None = None,
     current_emotion: str = "",
     session_context: str = "",
+    tag_format: str = "danbooru",
 ) -> dict:
     """F-14のフォールバックチェーン(4段構成)を実行し、最終結果と各段階のログを返す。"""
     character = character or {}
@@ -345,6 +352,7 @@ def generate_structured_reply(
             allowed_violence=allowed_violence,
             current_emotion=current_emotion,
             session_context=session_context,
+            tag_format=tag_format,
         )
     except (requests.RequestException, RuntimeError) as exc:
         attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": [f"{type(exc).__name__}: {exc}"]})

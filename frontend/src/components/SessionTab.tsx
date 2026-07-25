@@ -165,6 +165,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [safetyLevel, setSafetyLevel] = useState('off')
   const [autoAdvance, setAutoAdvance] = useState(false)
   const autoAdvanceRef = useRef(false)
+  const [autoStopMsg, setAutoStopMsg] = useState<string | null>(null)
   const [actionsPerTurn, setActionsPerTurn] = useState(0)
   const [sceneImageStatus, setSceneImageStatus] = useState<'idle' | 'generating' | 'error'>('idle')
   const actionsPerTurnRef = useRef(0)
@@ -649,6 +650,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
     } catch (e) {
       console.error(e)
+      if (autoAdvanceRef.current) setAutoStopMsg('生成エラーで自動進行を停止しました')
       setAutoAdvance(false)
       autoAdvanceRef.current = false
     } finally {
@@ -675,6 +677,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     const next = !autoAdvance
     setAutoAdvance(next)
     autoAdvanceRef.current = next
+    if (next) setAutoStopMsg(null)
     if (next && !loading) {
       if (waitingForHuman) {
         submitHumanTurn('skip')
@@ -2134,6 +2137,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               >
                 {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
               </button>
+              {autoStopMsg && !autoAdvance && (
+                <span style={{ fontSize: 11, color: 'var(--error-color, #e74c3c)', opacity: 0.85 }}>⚠ {autoStopMsg}</span>
+              )}
               <input
                 className="keeper-input"
                 style={{ flex: 1 }}
@@ -2212,6 +2218,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           >
             {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
           </button>
+          {autoStopMsg && !autoAdvance && (
+            <span style={{ fontSize: 11, color: 'var(--error-color, #e74c3c)', opacity: 0.85 }}>⚠ {autoStopMsg}</span>
+          )}
           <input
             className="keeper-input"
             type="text"

@@ -46,6 +46,8 @@ def generate(
 
     current_ckpt = workflow.get("4", {}).get("inputs", {}).get("ckpt_name", "")
     if model:
+        import re as _re
+        model = _re.sub(r'\s*\[.*?\]\s*$', '', model).strip()
         workflow["4"]["inputs"]["ckpt_name"] = model
     elif not current_ckpt:
         try:
@@ -60,8 +62,10 @@ def generate(
     workflow["6"]["inputs"]["text"] = prompt
     workflow["7"]["inputs"]["text"] = negative_prompt or ""
     workflow["3"]["inputs"]["seed"] = seed if seed >= 0 else int(time.time())
-    workflow["3"]["inputs"]["steps"] = steps
-    workflow["3"]["inputs"]["cfg"] = cfg_scale
+    if steps > 0:
+        workflow["3"]["inputs"]["steps"] = steps
+    if cfg_scale > 0:
+        workflow["3"]["inputs"]["cfg"] = cfg_scale
 
     resp = requests.post(f"{url}/prompt", json={"prompt": workflow}, timeout=10)
     if not resp.ok:

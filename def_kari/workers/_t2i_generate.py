@@ -31,9 +31,20 @@ def generate_image(
     backend: str = "a1111",
     negative_prompt: str = "",
     seed: int = -1,
-    steps: int = 20,
-    cfg_scale: float = 7,
+    steps: int = 0,
+    cfg_scale: float = 0.0,
 ) -> str:
+    if model_name and (steps == 0 or cfg_scale == 0.0):
+        try:
+            from def_kari.models.t2i_profiles import get_profile
+            _profile = get_profile(model_name)
+            if steps == 0:
+                steps = _profile["steps"]
+            if cfg_scale == 0.0:
+                cfg_scale = _profile["cfg_scale"]
+        except Exception:
+            pass
+
     if backend == "a1111":
         return _a1111_generate(prompt, width, height, model_name, negative_prompt, seed, steps, cfg_scale)
     elif backend == "civitai":
@@ -42,7 +53,8 @@ def generate_image(
         return _huggingface_generate(prompt, width, height, model_name, negative_prompt, seed, steps, cfg_scale)
     elif backend == "comfyui":
         return _comfyui_generate(prompt, width, height, model_name, negative_prompt, seed, steps, cfg_scale)
-    raise ValueError(f"Unknown T2I backend: {backend}")
+    # OpenAI互換バックエンド（compatible_backends.jsonのt2i対応エントリ）
+    return _compatible_generate(backend, prompt, width, height, model_name, negative_prompt, seed)
 
 
 def _a1111_generate(
@@ -273,7 +285,9 @@ def _comfyui_generate(
         raise RuntimeError(f"ComfyUIワークフローが見つかりません: data/comfyui_workflows/{_wf_name}.json")
     current_ckpt = workflow.get("4", {}).get("inputs", {}).get("ckpt_name", "")
     if model_name:
-        workflow["4"]["inputs"]["ckpt_name"] = model_name
+        import re as _re
+        comfyui_model = _re.sub(r'\s*\[.*?\]\s*$', '', model_name).strip()
+        workflow["4"]["inputs"]["ckpt_name"] = comfyui_model
     elif not current_ckpt:
         try:
             info = requests.get(f"{COMFYUI_URL}/object_info/CheckpointLoaderSimple", timeout=5).json()
@@ -342,6 +356,54 @@ def list_comfyui_models() -> list[str]:
         return data.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name", [[]])[0]
     except Exception:
         return []
+
+
+def _compatible_generate(
+    backend_name: str,
+    prompt: str, width: int, height: int, model_name: str | None,
+    negative_prompt: str, seed: int,
+) -> str:
+    from def_kari.compatible_backends_store import all_backends_with_keys
+    entry = next((e for e in all_backends_with_keys() if e["name"] == backend_name and "t2i" in e.get("capabilities", [])), None)
+    if not entry:
+        raise ValueError(f"T2I compatible backend not found: {backend_name}")
+
+    model = model_name or entry.get("model", "")
+    size = f"{width or 1024}x{height or 1024}"
+    body: dict = {"prompt": prompt, "n": 1, "size": size, "response_format": "b64_json"}
+    if model:
+        body["model"] = model
+
+    headers = {"Authorization": f"Bearer {entry['api_key']}", "Content-Type": "application/json"}
+    if entry.get("extra_headers"):
+        headers.update(entry["extra_headers"])
+
+    resp = requests.post(
+        f"{entry['base_url'].rstrip('/')}/images/generations",
+        headers=headers,
+        json=body,
+        timeout=120,
+    )
+    if not resp.ok:
+        print(f"[COMPATIBLE T2I] {resp.status_code}: {resp.text[:500]}")
+    resp.raise_for_status()
+
+    data = resp.json().get("data", [{}])[0]
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{backend_name}_{int(time.time() * 1000)}.png"
+    out_path = ASSET_DIR / filename
+
+    if "b64_json" in data:
+        out_path.write_bytes(base64.b64decode(data["b64_json"]))
+    elif "url" in data:
+        img_resp = requests.get(data["url"], timeout=60)
+        img_resp.raise_for_status()
+        out_path.write_bytes(img_resp.content)
+    else:
+        raise RuntimeError(f"Compatible T2I: 画像データが見つかりません: {list(data.keys())}")
+
+    print(f"[COMPATIBLE T2I] generated: {out_path}")
+    return str(out_path)
 
 
 def list_a1111_models() -> list[str]:

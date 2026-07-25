@@ -20,7 +20,7 @@ RESPONSE_SCHEMA = {
         },
         "image_prompt_en": {
             "type": "string",
-            "description": "英語の画像生成プロンプト(Danbooruタグ等)",
+            "description": "英語の画像生成プロンプト（モデルのタグ形式に従う）",
         },
         "tags": {
             "type": "array",
@@ -39,7 +39,7 @@ IMAGE_PROMPT_SCHEMA = {
     "properties": {
         "image_prompt_en": {
             "type": "string",
-            "description": "英語の画像生成プロンプト(Danbooruタグ等)",
+            "description": "英語の画像生成プロンプト（モデルのタグ形式に従う）",
         },
     },
     "required": ["image_prompt_en"],

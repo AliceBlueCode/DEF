@@ -33,6 +33,7 @@ data/private/thoughts/*
 data/api_keys.enc.json
 data/api_keys.key
 data/secret.key
+data/compatible_backends.key.json
 
 # User settings (machine-specific)
 data/mvp_settings.json

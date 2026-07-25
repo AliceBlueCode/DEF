@@ -70,6 +70,37 @@ def _register_external_services():
 
 _register_external_services()
 
+
+_COMPATIBLE_IDS: set[str] = set()
+
+
+def _register_compatible_backends():
+    try:
+        from def_kari.compatible_backends_store import all_backends_with_keys
+        from def_kari.llm.adapters.compatible import make_chat_fn
+        for entry in all_backends_with_keys():
+            if "llm" not in entry.get("capabilities", ["llm"]):
+                continue
+            name = entry["name"]
+            chat_fn, list_fn = make_chat_fn(
+                base_url=entry["base_url"],
+                api_key=entry["api_key"],
+                default_model=entry["model"],
+                extra_headers=entry.get("extra_headers") or None,
+            )
+            LLM_BACKENDS[name] = {
+                "chat": chat_fn,
+                "list_models": list_fn,
+                "default_model": entry["model"],
+            }
+            LLM_BACKEND_LABELS[name] = entry.get("label", name)
+            _COMPATIBLE_IDS.add(name)
+    except Exception:
+        pass
+
+
+_register_compatible_backends()
+
 DEFAULT_LLM_BACKEND = os.environ.get("LLM_BACKEND", "openai")
 if DEFAULT_LLM_BACKEND not in LLM_BACKENDS:
     DEFAULT_LLM_BACKEND = "openai"

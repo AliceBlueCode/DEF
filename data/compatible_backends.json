@@ -1,0 +1,54 @@
+{
+  "groq": {
+    "base_url": "https://api.groq.com/openai/v1",
+    "model": "llama-3.3-70b-versatile",
+    "extra_headers": {},
+    "capabilities": [
+      "llm",
+      "vlm"
+    ],
+    "label": "groq"
+  },
+  "grok": {
+    "base_url": "https://api.x.ai/v1",
+    "model": "grok-4.5",
+    "extra_headers": {},
+    "capabilities": [
+      "llm",
+      "vlm"
+    ],
+    "label": "grok"
+  },
+  "grok_t2i": {
+    "base_url": "https://api.x.ai/v1",
+    "model": "grok-imagine-image",
+    "extra_headers": {},
+    "capabilities": [
+      "t2i"
+    ],
+    "label": "grok_t2i"
+  },
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "extra_headers": {
+      "HTTP-Referer": "http://localhost:3000",
+      "X-Title": "DEF"
+    },
+    "capabilities": [
+      "llm"
+    ],
+    "label": "OpenRouter"
+  },
+  "groq_tts": {
+    "base_url": "https://api.groq.com/openai/v1",
+    "model": "canopylabs/orpheus-v1-english",
+    "extra_headers": {},
+    "capabilities": [
+      "tts"
+    ],
+    "label": "Groq TTS (Orpheus)",
+    "max_chars_per_request": 200,
+    "response_format": "wav"
+  }
+}

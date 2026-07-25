@@ -60,6 +60,8 @@ class PlayerAgent:
         except Exception:
             settings = {}
         user_lang = settings.get("user_language", "ja") or "ja"
+        from def_kari.models.t2i_profiles import get_current_tag_format
+        _tag_format = get_current_tag_format()
 
         # ① episodic memory 注入
         _resolved_char_id = char_id or character.get("id", "")
@@ -96,6 +98,7 @@ class PlayerAgent:
             allowed_sexual=allowed_sexual,
             allowed_violence=allowed_violence,
             current_emotion=current_emotion,
+            tag_format=_tag_format,
         )
 
     # ── 内部メソッド ──────────────────────────────────────────────

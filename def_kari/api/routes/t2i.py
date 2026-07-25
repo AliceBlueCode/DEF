@@ -23,8 +23,8 @@ class T2IRequest(BaseModel):
     width: int = 0
     height: int = 0
     seed: int = -1
-    steps: int = 20
-    cfg_scale: float = 7.0
+    steps: int = 0
+    cfg_scale: float = 0.0
 
 
 @router.post("/")
@@ -39,6 +39,11 @@ def generate_t2i(req: T2IRequest):
     height = req.height or settings.get("t2i_height", 768)
     workflow = settings.get("comfyui_workflow", "default") if backend == "comfyui" else ""
 
+    from def_kari.models.t2i_profiles import get_quality_settings, get_profile
+    _profile = get_profile(model)
+    steps = req.steps if req.steps > 0 else _profile["steps"]
+    cfg_scale = req.cfg_scale if req.cfg_scale > 0 else _profile["cfg_scale"]
+
     global _last_t2i_debug
     _last_t2i_debug = {
         "backend": backend,
@@ -48,11 +53,10 @@ def generate_t2i(req: T2IRequest):
         "width": int(width),
         "height": int(height),
         "seed": req.seed,
-        "steps": req.steps,
-        "cfg_scale": req.cfg_scale,
+        "steps": steps,
+        "cfg_scale": cfg_scale,
     }
     try:
-        from def_kari.models.t2i_profiles import get_quality_settings
         quality_tags, default_neg = get_quality_settings(model)
         prompt = req.prompt
         if quality_tags:
@@ -77,8 +81,8 @@ def generate_t2i(req: T2IRequest):
                 backend=backend,
                 negative_prompt=negative_prompt,
                 seed=req.seed,
-                steps=req.steps,
-                cfg_scale=req.cfg_scale,
+                steps=steps,
+                cfg_scale=cfg_scale,
                 workflow_name=workflow,
             )
         finally:

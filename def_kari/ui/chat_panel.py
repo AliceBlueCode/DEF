@@ -125,6 +125,7 @@ def _regenerate_turn(msg: dict, task_q) -> None:
             if m["id"] != msg["id"]
         ]
 
+        from def_kari.models.t2i_profiles import get_current_tag_format
         result = generate_structured_reply(
             msg["user_text"],
             history=history_before,
@@ -132,6 +133,7 @@ def _regenerate_turn(msg: dict, task_q) -> None:
             character=_character,
             backend=_backend,
             quirks=_quirks,
+            tag_format=get_current_tag_format(),
         )
 
         if result["success"] and result["result"]:

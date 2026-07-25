@@ -10,7 +10,8 @@ _settings_lock = threading.Lock()
 
 from def_kari.settings import load_settings, save_settings
 from def_kari.llm.backend import LLM_BACKENDS, LLM_BACKEND_LABELS, DEFAULT_LLM_BACKEND
-from def_kari.config import T2I_BACKENDS, T2I_BACKEND_LABELS, DEFAULT_T2I_BACKEND
+from def_kari.config import DEFAULT_T2I_BACKEND
+from def_kari.t2i.backend import T2I_BACKENDS, T2I_BACKEND_LABELS
 
 router = APIRouter()
 
@@ -65,14 +66,20 @@ def update_settings(req: SaveSettingsRequest):
 
 @router.get("/backends")
 def get_backends():
+    from def_kari.tts.backend import TTS_BACKENDS, TTS_BACKEND_LABELS, DEFAULT_TTS_BACKEND
     return {
         "llm": {
             "backends": list(LLM_BACKENDS.keys()),
             "labels": LLM_BACKEND_LABELS,
             "default": DEFAULT_LLM_BACKEND,
         },
+        "tts": {
+            "backends": list(TTS_BACKENDS.keys()),
+            "labels": TTS_BACKEND_LABELS,
+            "default": DEFAULT_TTS_BACKEND,
+        },
         "t2i": {
-            "backends": T2I_BACKENDS,
+            "backends": list(T2I_BACKENDS.keys()),
             "labels": T2I_BACKEND_LABELS,
             "default": DEFAULT_T2I_BACKEND,
         },
@@ -450,6 +457,128 @@ def save_backend_dirs(req: SaveBackendDirsRequest):
         else:
             os.environ.pop(k, None)
     return {"status": "ok"}
+
+
+class CompatibleBackendRequest(BaseModel):
+    name: str
+    base_url: str
+    model: str = ""
+    extra_headers: dict = {}
+    capabilities: list[str] = ["llm"]
+    label: str = ""
+    api_key: str | None = None
+
+
+@router.get("/compatible-backends")
+def get_compatible_backends():
+    from def_kari.compatible_backends_store import list_backends
+    return {"backends": list_backends()}
+
+
+@router.post("/compatible-backends")
+def add_compatible_backend(req: CompatibleBackendRequest):
+    from def_kari.compatible_backends_store import list_backends, save_backend
+    existing = {b["name"] for b in list_backends()}
+    if req.name in existing:
+        return {"error": f"'{req.name}' は既に存在します"}
+    save_backend(req.name, req.base_url, req.model, req.extra_headers,
+                 req.capabilities, req.label, req.api_key)
+    _reload_compatible_backends()
+    return {"status": "ok"}
+
+
+@router.put("/compatible-backends/{name}")
+def update_compatible_backend(name: str, req: CompatibleBackendRequest):
+    from def_kari.compatible_backends_store import save_backend
+    save_backend(name, req.base_url, req.model, req.extra_headers,
+                 req.capabilities, req.label, req.api_key)
+    _reload_compatible_backends()
+    return {"status": "ok"}
+
+
+@router.delete("/compatible-backends/{name}")
+def delete_compatible_backend(name: str):
+    from def_kari.compatible_backends_store import delete_backend
+    if not delete_backend(name):
+        return {"error": "not found"}
+    _reload_compatible_backends()
+    return {"status": "ok"}
+
+
+def _reload_compatible_backends():
+    """追加・更新・削除後にLLM/TTS/T2I BACKENDSを即時反映する。compatible管理分だけ差し替える。"""
+    from def_kari.compatible_backends_store import all_backends_with_keys
+    entries = all_backends_with_keys()
+
+    # LLM
+    try:
+        from def_kari.llm.backend import LLM_BACKENDS, LLM_BACKEND_LABELS, _COMPATIBLE_IDS
+        from def_kari.llm.adapters.compatible import make_chat_fn
+        for name in list(_COMPATIBLE_IDS):
+            LLM_BACKENDS.pop(name, None)
+            LLM_BACKEND_LABELS.pop(name, None)
+        _COMPATIBLE_IDS.clear()
+        for entry in entries:
+            if "llm" not in entry.get("capabilities", ["llm"]):
+                continue
+            name = entry["name"]
+            chat_fn, list_fn = make_chat_fn(
+                base_url=entry["base_url"],
+                api_key=entry["api_key"],
+                default_model=entry["model"],
+                extra_headers=entry.get("extra_headers") or None,
+            )
+            LLM_BACKENDS[name] = {"chat": chat_fn, "list_models": list_fn, "default_model": entry["model"]}
+            LLM_BACKEND_LABELS[name] = entry.get("label", name)
+            _COMPATIBLE_IDS.add(name)
+    except Exception:
+        pass
+
+    # TTS
+    try:
+        from def_kari.tts.backend import TTS_BACKENDS, TTS_BACKEND_LABELS, _COMPATIBLE_TTS_IDS
+        from def_kari.tts.adapters.compatible_tts import make_synthesize_fn
+        for name in list(_COMPATIBLE_TTS_IDS):
+            TTS_BACKENDS.pop(name, None)
+            TTS_BACKEND_LABELS.pop(name, None)
+        _COMPATIBLE_TTS_IDS.clear()
+        for entry in entries:
+            if "tts" not in entry.get("capabilities", []):
+                continue
+            name = entry["name"]
+            TTS_BACKENDS[name] = make_synthesize_fn(
+                base_url=entry["base_url"],
+                api_key=entry["api_key"],
+                default_model=entry.get("model", "tts-1"),
+            )
+            TTS_BACKEND_LABELS[name] = entry.get("label", name)
+            _COMPATIBLE_TTS_IDS.add(name)
+    except Exception:
+        pass
+
+    # T2I
+    try:
+        from def_kari.t2i.backend import T2I_BACKENDS as _T2I_B, T2I_BACKEND_LABELS as _T2I_L, _COMPATIBLE_T2I_IDS
+        from def_kari.t2i.adapters.compatible import make_generate_fn
+        for name in list(_COMPATIBLE_T2I_IDS):
+            _T2I_B.pop(name, None)
+            _T2I_L.pop(name, None)
+        _COMPATIBLE_T2I_IDS.clear()
+        for entry in entries:
+            if "t2i" not in entry.get("capabilities", []):
+                continue
+            name = entry["name"]
+            _T2I_B[name] = make_generate_fn(
+                base_url=entry["base_url"],
+                api_key=entry["api_key"],
+                default_model=entry.get("model", ""),
+                name=name,
+                extra_headers=entry.get("extra_headers") or None,
+            )
+            _T2I_L[name] = entry.get("label", name)
+            _COMPATIBLE_T2I_IDS.add(name)
+    except Exception:
+        pass
 
 
 @router.get("/browse-dir")

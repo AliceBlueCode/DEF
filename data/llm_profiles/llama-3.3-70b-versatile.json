@@ -1,0 +1,17 @@
+{
+  "llama-3.3-70b-versatile": {
+    "native_language": "en",
+    "nsfw_tolerance": "sfw",
+    "model_type": "chat",
+    "context_length": 8192,
+    "max_tokens": 1024,
+    "quirks": {
+      "json_capable": true,
+      "appends_meta_text": false,
+      "outputs_url_in_prompt": false,
+      "emotion_in_text": false,
+      "leaks_thinking": false
+    },
+    "generation_params": {}
+  }
+}

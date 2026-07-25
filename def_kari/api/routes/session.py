@@ -236,6 +236,52 @@ except Exception:
     pass
 
 
+def _apply_char_tags(prompt: str, char_id: str | None, profiles: dict | None = None) -> str:
+    """appearance_tags・image_name_tags・LoRA をプロンプトに適用する。
+    name_tags を先頭、appearance_tags を追加、LoRA 構文を末尾に付加。"""
+    if not char_id:
+        return prompt
+    if profiles is None:
+        profiles = load_profiles()
+    _char = get_character(char_id, profiles)
+    _app_tags = _char.get("appearance_tags", "").strip()
+    _name_tags = _char.get("image_name_tags", "").strip()
+    _lora = _char.get("lora") or []
+
+    _clean = re.sub(r'<lora:[^>]+>', '', prompt).strip().strip(',').strip()
+    _existing = [t.strip() for t in _clean.split(',') if t.strip()]
+    _existing_lower = {t.lower() for t in _existing}
+
+    _prefix_raw = [t.strip() for t in (_name_tags + ',' + _app_tags).split(',') if t.strip()]
+    _prefix = [t for t in _prefix_raw if t.lower() not in _existing_lower]
+
+    from def_kari.characters import build_lora_prompt
+    _lora_str = build_lora_prompt(_lora)
+
+    result = ', '.join(_prefix + _existing)
+    if _lora_str:
+        result = (result + ' ' + _lora_str).strip()
+    return result
+
+
+def _clean_history_for_retake(history: list, remove: int) -> tuple[list, int]:
+    """履歴末尾から assistant エントリを remove 件削除する。
+    _scene_image エントリ（role なし）はカウントせずスキップして削除する。"""
+    new_history = list(history)
+    removed = 0
+    while new_history:
+        entry = new_history[-1]
+        if entry.get("character_id") == "_scene_image":
+            new_history.pop()
+            continue
+        if removed < remove and entry.get("role") == "assistant":
+            new_history.pop()
+            removed += 1
+        else:
+            break
+    return new_history, removed
+
+
 def _load_action_directives() -> dict:
     directives: dict = {}
     for d in _DIRECTIVE_DIRS:
@@ -300,7 +346,7 @@ def _ai_action_select(
         if "designate" in available:
             _descs.append(f"- designate: designate next speaker, cost -1 (current {counter} → {counter - 1}), set target_name to one of {other_names}")
         if "vote" in available:
-            _descs.append(f"- vote: propose vote, cost -3 (current {counter} → {counter - 3}), set vote_type(topic_change/expel/end_session) and vote_detail")
+            _descs.append(f"- vote: propose vote, consumes all speech power (current {counter} → 0), set vote_type(topic_change/expel/end_session) and vote_detail")
         system_msg = (char.get("persona_description") or f"You are {speaker_name}.")[:300]
         user_msg = (
             f"[TRPG Action Selection]\nRound {round_num}, your turn as {speaker_name}.\n"
@@ -320,7 +366,7 @@ def _ai_action_select(
         if "designate" in available:
             _descs.append(f"- designate: 次の発言者を指名、発言力-1（現在{counter} → {counter - 1}）、target_nameに{other_names}から選んで指定")
         if "vote" in available:
-            _descs.append(f"- vote: 投票発議、発言力-3（現在{counter} → {counter - 3}）、vote_type(topic_change/expel/end_session)とvote_detailを指定")
+            _descs.append(f"- vote: 投票発議、発言力を全て消費（現在{counter} → 0）、vote_type(topic_change/expel/end_session)とvote_detailを指定")
         system_msg = (char.get("persona_description") or f"あなたは{speaker_name}です。")[:300]
         user_msg = (
             f"[TRPGアクション選択]\nラウンド{round_num}、{speaker_name}のターンです。\n"
@@ -672,7 +718,7 @@ def next_turn(req: SessionNextRequest):
     if _ai_action["action"] == "vote":
         _cur = counters.get(current_char_id, 0)
         if _cur >= 3:
-            counters[current_char_id] = _cur - 3
+            counters[current_char_id] = 0
             _autosave(req.session_id)
             return {
                 "action": "vote_proposal",
@@ -921,16 +967,7 @@ def retake_turn(session_id: str):
         remove = actions_per_turn
         session["action_count"] = 0
 
-    # assistantのメッセージだけを対象に末尾からremove件削除
-    removed = 0
-    new_history = list(history)
-    while removed < remove and new_history:
-        if new_history[-1].get("role") == "assistant":
-            new_history.pop()
-            removed += 1
-        else:
-            break
-    session["history"] = new_history
+    session["history"], removed = _clean_history_for_retake(history, remove)
 
     _autosave(session_id)
     return {"removed": removed}
@@ -1650,6 +1687,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
             _delib_lock = _get_vl()
             _delib_lock.acquire()
             try:
+                from def_kari.models.t2i_profiles import get_current_tag_format as _get_tag_fmt
                 result = generate_structured_reply(
                     user_text=deliberation_prompt,
                     history=_v_history,
@@ -1660,6 +1698,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
                     allowed_violence=_v_allowed_violence,
                     current_emotion=_v_prev_emotion,
                     session_context=_v_session_ctx,
+                    tag_format=_get_tag_fmt(),
                 )
             finally:
                 _delib_lock.release()
@@ -2135,6 +2174,10 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
     from def_kari.settings import load_settings as _load_settings
     _settings = _load_settings()
     t2i_prompt_mode = req.t2i_prompt_mode or _settings.get("t2i_prompt_mode", "current")
+    from def_kari.models.t2i_profiles import get_current_tag_format as _get_tag_fmt
+    _tag_format = _get_tag_fmt()
+    _is_tag_based = _tag_format in ("danbooru", "e621")
+    _fmt_label = {"danbooru": "Danbooru", "e621": "e621", "natural": "natural language", "other": "English"}.get(_tag_format, "Danbooru")
 
     def _dedup_tags(prompt: str, max_tags: int = 256) -> str:
         raw = [t.strip() for t in prompt.split(',') if t.strip()]
@@ -2146,15 +2189,6 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
                 seen.add(k)
                 unique.append(t)
         return ', '.join(unique[:max_tags])
-
-    def _append_appearance_tags(prompt: str, char_id: str | None) -> str:
-        if not char_id:
-            return prompt
-        _profiles = load_profiles()
-        _app_tags = get_character(char_id, _profiles).get("appearance_tags", "").strip()
-        if _app_tags:
-            return (prompt + ", " + _app_tags) if prompt else _app_tags
-        return prompt
 
     # TRPGモード: initiative からランダム1人 / 通常: 最後の発言者
     import random as _random
@@ -2171,7 +2205,7 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             image_prompt = ", ".join(_ip_parts)
             if not image_prompt and scene:
                 image_prompt = scene
-            image_prompt = _append_appearance_tags(image_prompt, _scene_char_id)
+            image_prompt = _apply_char_tags(image_prompt, _scene_char_id)
             image_prompt = _dedup_tags(image_prompt)
         except Exception as e:
             return {"error": f"image prompt (passthrough) failed: {e}"}
@@ -2184,38 +2218,68 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             for h in last_round
         ) if last_round else ""
 
-        scene_line = f"Base scene tags: {scene}" if scene else ""
+        scene_line = f"Base scene: {scene}" if scene else ""
         topic_line = f"Session topic: {topic}" if topic else ""
         dialogue_line = f"Recent dialogue (for character count and mood):\n{dialogue_block}" if dialogue_block else ""
 
         if t2i_prompt_mode == "dedicated":
             # dedicated: 出力制約を強化（thinkingモデル対策）
-            user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
-                "\n\nIMMEDIATELY output 10-20 Danbooru image tags, comma-separated. "
-                "Visual tags only (characters, setting, mood, lighting). "
-                "NO words like 'courageous', 'bold', 'daring' — only what can be SEEN. "
-                "NO explanation. NO reasoning. First token must be a tag."
-            )
-            system_prompt = (
-                "Image tag generator. Output comma-separated Danbooru tags ONLY. "
-                "Start your response with the first tag immediately. "
-                "No prose, no reasoning, no abstract concepts. "
-                "Only visual descriptors: people, objects, setting, lighting, color, composition."
-            )
+            if _is_tag_based:
+                system_prompt = (
+                    f"Scene tag generator for Stable Diffusion. Output comma-separated {_fmt_label} tags ONLY. "
+                    "CHARACTER APPEARANCE IS ALREADY SET — DO NOT output hair color, eye color, clothing, body type. "
+                    "Output ONLY: setting, background, weather, time of day, lighting, composition, camera angle, "
+                    "character count, pose, action, expression/emotion. "
+                    "Start with the first tag immediately. No prose, no reasoning."
+                )
+                user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+                    f"\n\nIMMEDIATELY output 8-15 scene {_fmt_label} tags, comma-separated. "
+                    "SCENE & ENVIRONMENT ONLY — no hair/eye/clothing tags. "
+                    "NO explanation. NO reasoning. First token must be a tag."
+                )
+            else:
+                system_prompt = (
+                    "Scene description generator for Stable Diffusion. "
+                    "Output a concise English visual description of SETTING, LIGHTING, and ACTION ONLY. "
+                    "CHARACTER APPEARANCE IS ALREADY SET — do not describe hair, eyes, or clothing. "
+                    "No reasoning, no abstract concepts."
+                )
+                user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+                    "\n\nIMMEDIATELY output a short English scene description (1-3 sentences). "
+                    "Describe setting, lighting, mood, and action only. NO character appearance. "
+                    "NO explanation. NO reasoning. Start with the description directly."
+                )
             num_predict = 128
         else:
-            # current: 既存のプロンプト
-            user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
-                "\n\nOutput ONLY Danbooru-style image tags in English, comma-separated. "
-                "Start from the base scene tags above and add character count, emotions, and mood from the dialogue. "
-                "No explanation. No reasoning. Tags only."
-            )
-            system_prompt = (
-                "You are an image prompt generator for Stable Diffusion. "
-                "Output ONLY Danbooru-style image tags, comma-separated. "
-                "Do NOT think out loud. Do NOT explain. Output tags immediately."
-            )
-            num_predict = 512
+            # current
+            if _is_tag_based:
+                system_prompt = (
+                    f"You are a scene tag generator for Stable Diffusion. "
+                    f"Output ONLY {_fmt_label}-style tags, comma-separated. "
+                    "CHARACTER APPEARANCE IS ALREADY SET — DO NOT output hair color, eye color, clothing, body type. "
+                    "Output ONLY: setting, background, lighting, weather, time of day, composition, "
+                    "camera angle, character count, pose, action, expression/emotion. "
+                    "Do NOT think out loud. Do NOT explain. Output tags immediately."
+                )
+                user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+                    f"\n\nOutput ONLY {_fmt_label}-style scene tags in English, comma-separated. "
+                    "SCENE & ENVIRONMENT ONLY — no hair/eye/clothing tags. "
+                    "Include: setting, lighting, mood, pose/action, expression. "
+                    "No explanation. No reasoning. Tags only."
+                )
+            else:
+                system_prompt = (
+                    "You are a scene description generator for Stable Diffusion. "
+                    "Output ONLY a concise English description of SETTING, LIGHTING, and ACTION. "
+                    "CHARACTER APPEARANCE IS ALREADY SET — do not describe hair, eyes, or clothing. "
+                    "Do NOT think out loud. Do NOT explain. Output the description immediately."
+                )
+                user_text = "\n".join(filter(None, [scene_line, topic_line, dialogue_line])) + (
+                    "\n\nOutput ONLY a short English scene description (2-4 sentences). "
+                    "Describe setting, lighting, mood, and character action/emotion. NO character appearance. "
+                    "No explanation. No reasoning. Visual details only."
+                )
+            num_predict = 256
 
         backend_id = req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
         if backend_id not in LLM_BACKENDS:
@@ -2236,8 +2300,9 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             finally:
                 _vram_lock_llm.release()
             image_prompt = re.sub(r'#(\w)', r'\1', image_prompt).strip().strip('"').strip("'")
-            image_prompt = _append_appearance_tags(image_prompt, _scene_char_id)
-            image_prompt = _dedup_tags(image_prompt)
+            image_prompt = _apply_char_tags(image_prompt, _scene_char_id)
+            if _is_tag_based:
+                image_prompt = _dedup_tags(image_prompt)
         except Exception as e:
             return {"error": f"image prompt generation failed: {e}"}
 

@@ -7,6 +7,10 @@ Covers:
   4. i18n              (i18n.py)
   5. Settings          (settings.py)
   6. Episode save/load pattern
+  7. ComfyUI hash strip
+  8. T2I profile steps/cfg loading
+  9. _apply_char_tags tag merging
+ 10. _clean_history_for_retake
 """
 
 import json
@@ -1273,3 +1277,328 @@ class TestBuildSystemPromptDirectivePlacement:
             user_language="ja",
         )
         assert _META_DIRECTIVE["default"]["ja"] in prompt
+
+
+# ---------------------------------------------------------------------------
+# 7. ComfyUI hash strip
+# ---------------------------------------------------------------------------
+class TestComfyUIHashStrip:
+    """comfyui.generate がモデル名の [hash] を除去してから ComfyUI に渡すことを確認。"""
+
+    def test_hash_stripped_from_model_name(self):
+        """'model.safetensors [abc1234]' → 'model.safetensors' に変換される。"""
+        import re
+        model = "paruparu_illustrious_v3.2.safetensors [a1b2c3d4]"
+        stripped = re.sub(r'\s*\[.*?\]\s*$', '', model).strip()
+        assert stripped == "paruparu_illustrious_v3.2.safetensors"
+
+    def test_no_hash_unchanged(self):
+        """ハッシュなしのモデル名はそのまま。"""
+        import re
+        model = "paruparu_illustrious_v3.2.safetensors"
+        stripped = re.sub(r'\s*\[.*?\]\s*$', '', model).strip()
+        assert stripped == "paruparu_illustrious_v3.2.safetensors"
+
+    def test_empty_model_unchanged(self):
+        """空文字列はそのまま。"""
+        import re
+        model = ""
+        stripped = re.sub(r'\s*\[.*?\]\s*$', '', model).strip()
+        assert stripped == ""
+
+    def test_comfyui_generate_strips_hash(self):
+        """comfyui.generate() が workflow へ渡すモデル名からハッシュを除去することを確認。"""
+        import copy
+        from def_kari.t2i.adapters import comfyui
+
+        fake_workflow = {
+            "4": {"inputs": {"ckpt_name": ""}},
+            "5": {"inputs": {"width": 512, "height": 768}},
+            "6": {"inputs": {"text": ""}},
+            "7": {"inputs": {"text": ""}},
+            "3": {"inputs": {"seed": 0, "steps": 20, "cfg": 7.0}},
+        }
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["workflow"] = copy.deepcopy(json.get("prompt", {}))
+            resp = mock.MagicMock()
+            resp.ok = True
+            resp.json.return_value = {"prompt_id": "test-id"}
+            return resp
+
+        hist_resp = mock.MagicMock()
+        hist_resp.status_code = 200
+        hist_resp.json.return_value = {
+            "test-id": {
+                "outputs": {"9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}},
+                "status": {"status_str": "success"},
+            }
+        }
+        img_resp = mock.MagicMock()
+        img_resp.raise_for_status = mock.MagicMock()
+        img_resp.content = b'\x89PNG\r\n'
+
+        with mock.patch.object(comfyui, '_load_workflow', return_value=copy.deepcopy(fake_workflow)), \
+             mock.patch('requests.post', side_effect=fake_post), \
+             mock.patch('requests.get', side_effect=[hist_resp, img_resp]), \
+             mock.patch('pathlib.Path.mkdir'), \
+             mock.patch('pathlib.Path.write_bytes'):
+            try:
+                comfyui.generate(
+                    prompt="test",
+                    model="test_model.safetensors [deadbeef]",
+                    workflow_name="default",
+                )
+            except Exception:
+                pass
+
+        assert captured.get("workflow"), "POST が呼ばれなかった"
+        ckpt = captured["workflow"].get("4", {}).get("inputs", {}).get("ckpt_name", "")
+        assert "[" not in ckpt, f"hash not stripped: {ckpt}"
+        assert ckpt == "test_model.safetensors"
+
+
+# ---------------------------------------------------------------------------
+# 8. T2I profile steps/cfg loading
+# ---------------------------------------------------------------------------
+class TestT2IProfileGenerationParams:
+    """T2Iモデルプロファイルの steps/cfg_scale が生成時に正しく使われることを確認。"""
+
+    def test_get_profile_returns_defaults_when_no_model(self):
+        """モデル名なしでもデフォルト値が返る。"""
+        from def_kari.models.t2i_profiles import get_profile, DEFAULT_STEPS, DEFAULT_CFG_SCALE
+        p = get_profile(None)
+        assert p["steps"] == DEFAULT_STEPS
+        assert p["cfg_scale"] == DEFAULT_CFG_SCALE
+
+    def test_get_profile_returns_stored_values(self):
+        """プロファイルに保存した steps/cfg が取得できる。"""
+        import tempfile, json
+        from pathlib import Path
+        from unittest import mock
+
+        profiles = {"test_model.safetensors": {"steps": 30, "cfg_scale": 4.5, "quality_tags": "", "negative_prompt": ""}}
+        with tempfile.TemporaryDirectory() as td:
+            ppath = Path(td) / "t2i_model_profiles.json"
+            ppath.write_text(json.dumps(profiles), encoding="utf-8")
+            with mock.patch('def_kari.models.t2i_profiles.PROFILES_PATH', ppath), \
+                 mock.patch('def_kari.models.t2i_profiles.POC_PROFILES_PATH', Path(td) / "missing.json"):
+                from def_kari.models.t2i_profiles import get_profile
+                p = get_profile("test_model.safetensors")
+        assert p["steps"] == 30
+        assert p["cfg_scale"] == 4.5
+
+    def test_t2i_backend_loads_profile_when_steps_zero(self):
+        """steps=0, cfg_scale=0.0 のとき t2i/backend がプロファイル値を使う。"""
+        from unittest import mock
+        from def_kari.t2i import backend as t2i_backend
+
+        fake_profile = {"steps": 25, "cfg_scale": 4.5, "quality_tags": "", "negative_prompt": ""}
+        captured = {}
+
+        def fake_fn(**kwargs):
+            captured.update(kwargs)
+            return "/tmp/fake.png"
+
+        with mock.patch('def_kari.models.t2i_profiles.get_profile', return_value=fake_profile):
+            original_backends = t2i_backend.T2I_BACKENDS.copy()
+            t2i_backend.T2I_BACKENDS["test_backend"] = fake_fn
+            try:
+                t2i_backend.generate_image(
+                    prompt="test",
+                    backend="test_backend",
+                    model="test_model.safetensors",
+                    steps=0,
+                    cfg_scale=0.0,
+                )
+            finally:
+                t2i_backend.T2I_BACKENDS.clear()
+                t2i_backend.T2I_BACKENDS.update(original_backends)
+
+        assert captured.get("steps") == 25
+        assert captured.get("cfg_scale") == 4.5
+
+    def test_t2i_backend_explicit_steps_not_overridden_by_profile(self):
+        """明示的に steps/cfg を渡したらプロファイルで上書きされない。"""
+        from unittest import mock
+        from def_kari.t2i import backend as t2i_backend
+
+        fake_profile = {"steps": 25, "cfg_scale": 4.5, "quality_tags": "", "negative_prompt": ""}
+        captured = {}
+
+        def fake_fn(**kwargs):
+            captured.update(kwargs)
+            return "/tmp/fake.png"
+
+        with mock.patch('def_kari.models.t2i_profiles.get_profile', return_value=fake_profile):
+            original_backends = t2i_backend.T2I_BACKENDS.copy()
+            t2i_backend.T2I_BACKENDS["test_backend"] = fake_fn
+            try:
+                t2i_backend.generate_image(
+                    prompt="test",
+                    backend="test_backend",
+                    model="test_model.safetensors",
+                    steps=15,
+                    cfg_scale=9.0,
+                )
+            finally:
+                t2i_backend.T2I_BACKENDS.clear()
+                t2i_backend.T2I_BACKENDS.update(original_backends)
+
+        assert captured.get("steps") == 15
+        assert captured.get("cfg_scale") == 9.0
+
+
+# ---------------------------------------------------------------------------
+# 9. _apply_char_tags
+# ---------------------------------------------------------------------------
+class TestApplyCharTags:
+    """session._apply_char_tags のタグ結合ロジックを確認。"""
+
+    def _make_char(self, appearance="1girl, brown hair", name_tags="katarina_claes", lora=None):
+        return {
+            "appearance_tags": appearance,
+            "image_name_tags": name_tags,
+            "lora": lora or [],
+        }
+
+    def _get_fn(self):
+        from def_kari.api.routes.session import _apply_char_tags
+        return _apply_char_tags
+
+    def test_name_tags_prepended(self):
+        """image_name_tags がプロンプト先頭に来る。"""
+        fn = self._get_fn()
+        char = self._make_char(name_tags="katarina_claes", appearance="1girl, brown hair")
+        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+            result = fn("indoor scene", "test_char")
+        assert result.startswith("katarina_claes"), f"先頭にname_tagsがない: {result}"
+
+    def test_appearance_tags_added(self):
+        """appearance_tags がプロンプトに追加される。"""
+        fn = self._get_fn()
+        char = self._make_char(appearance="1girl, brown hair, blue eyes")
+        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+            result = fn("indoor scene", "test_char")
+        assert "brown hair" in result
+        assert "blue eyes" in result
+
+    def test_no_duplicate_tags(self):
+        """既にプロンプトにあるタグは重複追加されない。"""
+        fn = self._get_fn()
+        char = self._make_char(appearance="1girl, brown hair")
+        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+            result = fn("1girl, indoor scene", "test_char")
+        tags = [t.strip() for t in result.split(',')]
+        assert tags.count("1girl") == 1, f"1girl が重複: {result}"
+
+    def test_lora_appended(self):
+        """LoRA 構文が末尾に付加される。"""
+        fn = self._get_fn()
+        lora = [{"name": "TestLoRA", "weight": 0.8, "trigger_tags": "test_trigger"}]
+        char = self._make_char(lora=lora)
+        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+            result = fn("indoor scene", "test_char")
+        assert "<lora:TestLoRA:0.8>" in result
+        assert result.index("<lora:TestLoRA:0.8>") > result.index("indoor scene")
+
+    def test_no_char_id_returns_prompt_unchanged(self):
+        """char_id=None のときプロンプトは変更されない。"""
+        fn = self._get_fn()
+        result = fn("original prompt", None)
+        assert result == "original prompt"
+
+    def test_lora_trigger_tags_prepended(self):
+        """LoRA の trigger_tags も先頭側（name_tags の後）に入る。"""
+        fn = self._get_fn()
+        lora = [{"name": "KatarinaLoRA", "weight": 0.8, "trigger_tags": "KatarinaClaes"}]
+        char = self._make_char(name_tags="katarina_claes", lora=lora)
+        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+            result = fn("indoor scene", "test_char")
+        assert "KatarinaClaes" in result
+        # LoRA syntax は末尾
+        lora_idx = result.index("<lora:KatarinaLoRA:0.8>")
+        scene_idx = result.index("indoor scene")
+        assert lora_idx > scene_idx
+
+
+# ---------------------------------------------------------------------------
+# 10. _clean_history_for_retake
+# ---------------------------------------------------------------------------
+class TestCleanHistoryForRetake:
+    """session._clean_history_for_retake の履歴クリーニングロジックを確認。"""
+
+    def _get_fn(self):
+        from def_kari.api.routes.session import _clean_history_for_retake
+        return _clean_history_for_retake
+
+    def _asst(self, content="text", char_id="char1"):
+        return {"role": "assistant", "content": content, "character_id": char_id}
+
+    def _img(self):
+        return {"character_id": "_scene_image", "content": "", "image_url": "/img.png"}
+
+    def _user(self, content="user text"):
+        return {"role": "user", "content": content}
+
+    def test_removes_n_assistant_entries(self):
+        """末尾の assistant エントリを指定件数削除する。"""
+        fn = self._get_fn()
+        history = [self._asst("A"), self._asst("B"), self._asst("C")]
+        new_hist, removed = fn(history, 2)
+        assert removed == 2
+        assert len(new_hist) == 1
+        assert new_hist[0]["content"] == "A"
+
+    def test_scene_image_skipped_not_counted(self):
+        """_scene_image エントリは削除されるがカウントしない。"""
+        fn = self._get_fn()
+        history = [self._asst("A"), self._asst("B"), self._img()]
+        new_hist, removed = fn(history, 1)
+        assert removed == 1
+        # B と _scene_image が削除され A だけ残る
+        assert len(new_hist) == 1
+        assert new_hist[0]["content"] == "A"
+
+    def test_multiple_scene_images_all_skipped(self):
+        """複数の _scene_image が末尾に連なっても全部スキップ。"""
+        fn = self._get_fn()
+        history = [self._asst("A"), self._img(), self._img()]
+        new_hist, removed = fn(history, 1)
+        assert removed == 1
+        assert len(new_hist) == 0
+
+    def test_stops_at_user_entry(self):
+        """user エントリで停止し、それより前は削除しない。"""
+        fn = self._get_fn()
+        history = [self._user(), self._asst("A"), self._asst("B")]
+        new_hist, removed = fn(history, 3)
+        assert removed == 2
+        assert len(new_hist) == 1
+        assert new_hist[0]["role"] == "user"
+
+    def test_remove_zero_does_nothing(self):
+        """remove=0 のとき何も削除しない。"""
+        fn = self._get_fn()
+        history = [self._asst("A"), self._asst("B")]
+        new_hist, removed = fn(history, 0)
+        assert removed == 0
+        assert len(new_hist) == 2
+
+    def test_empty_history_safe(self):
+        """空履歴でもクラッシュしない。"""
+        fn = self._get_fn()
+        new_hist, removed = fn([], 2)
+        assert new_hist == []
+        assert removed == 0
+
+    def test_scene_image_between_assistant_entries(self):
+        """assistant → _scene_image → assistant の並びでも正しく2件削除。"""
+        fn = self._get_fn()
+        history = [self._asst("A"), self._asst("B"), self._img(), self._asst("C")]
+        new_hist, removed = fn(history, 2)
+        # C と _scene_image と B が削除される（_scene_image はカウント外）
+        assert removed == 2
+        assert len(new_hist) == 1
+        assert new_hist[0]["content"] == "A"

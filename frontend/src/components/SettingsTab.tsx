@@ -5,6 +5,7 @@ import ModelProfileDialog from './ModelProfileDialog'
 import T2IModelProfileDialog from './T2IModelProfileDialog'
 import CivitaiDialog from './CivitaiDialog'
 import HuggingFaceDialog from './HuggingFaceDialog'
+import CompatibleBackendDialog from './CompatibleBackendDialog'
 import Toggle from './Toggle'
 import { useT, useLanguage, toLang } from '../i18n'
 
@@ -80,6 +81,7 @@ export default function SettingsTab({
   const t = useT()
   const { setLang } = useLanguage()
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
+  const [ttsBackends, setTtsBackends] = useState<BackendInfo | null>(null)
   const [t2iBackends, setT2iBackends] = useState<BackendInfo | null>(null)
   const [llmModels, setLlmModels] = useState<string[]>([])
   const [t2iModels, setT2iModels] = useState<string[]>([])
@@ -88,6 +90,9 @@ export default function SettingsTab({
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false)
   const [showBackendDirDialog, setShowBackendDirDialog] = useState(false)
   const [showModelProfile, setShowModelProfile] = useState(false)
+  const [compatibleBackends, setCompatibleBackends] = useState<{name: string; label: string; base_url: string; model: string; extra_headers: Record<string,string>; capabilities: string[]; has_key: boolean}[]>([])
+  const [showCompatibleDialog, setShowCompatibleDialog] = useState(false)
+  const [editingBackend, setEditingBackend] = useState<typeof compatibleBackends[0] | null>(null)
   const [showT2iProfile, setShowT2iProfile] = useState(false)
   const [showCivitai, setShowCivitai] = useState(false)
   const [showHf, setShowHf] = useState(false)
@@ -109,12 +114,21 @@ export default function SettingsTab({
       .then(r => r.json())
       .then(data => {
         if (data.llm) setLlmBackends(data.llm)
+        if (data.tts) setTtsBackends(data.tts)
         if (data.t2i) setT2iBackends(data.t2i)
       })
     fetch('/api/settings/')
       .then(r => r.json())
       .then(data => setAppSettings(data.settings || {}))
+    fetchCompatibleBackends()
   }, [])
+
+  const fetchCompatibleBackends = () => {
+    fetch('/api/settings/compatible-backends')
+      .then(r => r.json())
+      .then(data => setCompatibleBackends(data.backends || []))
+      .catch(() => {})
+  }
 
   const t2iMKey = t2iModelKey(t2iBackend)
 
@@ -298,11 +312,18 @@ export default function SettingsTab({
           if (LOCAL_BACKENDS.tts.includes(b)) launchBackend(b, setTtsLaunchMsg)
           else setTtsLaunchMsg('')
         }}>
-          <option value="voicevox">{t('settings.tts.voicevox')}</option>
-          <option value="kokoro">{t('settings.tts.kokoro')}</option>
-          <option value="irodori">{t('settings.tts.irodori')}</option>
-          <option value="gemini_tts">Gemini TTS API</option>
-          <option value="openai_tts">OpenAI TTS API</option>
+          {ttsBackends
+            ? ttsBackends.backends.map(b => (
+                <option key={b} value={b}>{ttsBackends.labels[b] || b}</option>
+              ))
+            : <>
+                <option value="voicevox">{t('settings.tts.voicevox')}</option>
+                <option value="kokoro">{t('settings.tts.kokoro')}</option>
+                <option value="irodori">{t('settings.tts.irodori')}</option>
+                <option value="gemini_tts">Gemini TTS API</option>
+                <option value="openai_tts">OpenAI TTS API</option>
+              </>
+          }
         </select>
         {ttsLaunchMsg && <div className="tts-launch-msg">{ttsLaunchMsg}</div>}
         {ttsBackend === 'voicevox' && (
@@ -435,6 +456,47 @@ export default function SettingsTab({
 
       <div className="settings-divider" />
 
+      {/* ── OpenAI互換バックエンド ── */}
+      <div className="settings-section">
+        <h3>OpenAI互換バックエンド</h3>
+        {compatibleBackends.length > 0 && (
+          <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', opacity: 0.6 }}>
+                <th style={{ padding: '2px 6px' }}>名前</th>
+                <th style={{ padding: '2px 6px' }}>Base URL</th>
+                <th style={{ padding: '2px 6px' }}>用途</th>
+                <th style={{ padding: '2px 6px' }}>Key</th>
+                <th style={{ padding: '2px 6px' }} />
+              </tr>
+            </thead>
+            <tbody>
+              {compatibleBackends.map(b => (
+                <tr key={b.name}>
+                  <td style={{ padding: '2px 6px' }}>{b.label || b.name}</td>
+                  <td style={{ padding: '2px 6px', opacity: 0.7, fontSize: 11 }}>{b.base_url}</td>
+                  <td style={{ padding: '2px 6px' }}>{b.capabilities.join(', ')}</td>
+                  <td style={{ padding: '2px 6px' }}>{b.has_key ? '✓' : '—'}</td>
+                  <td style={{ padding: '2px 6px' }}>
+                    <button style={{ marginRight: 4 }} onClick={() => { setEditingBackend(b); setShowCompatibleDialog(true) }}>編集</button>
+                    <button onClick={async () => {
+                      await fetch(`/api/settings/compatible-backends/${b.name}`, { method: 'DELETE' })
+                      fetchCompatibleBackends()
+                    }}>削除</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+        <button className="api-key-open-btn" onClick={() => { setEditingBackend(null); setShowCompatibleDialog(true) }}>
+          ＋ バックエンドを追加
+        </button>
+      </div>
+
+      <div className="settings-divider" />
 
       {/* ── T2I Settings ── */}
       <div className="settings-section">
@@ -580,6 +642,17 @@ export default function SettingsTab({
           </div>
         </div>
         <div className="settings-row">
+          <label>{t('settings.label.episodeT2iPromptMode')}</label>
+          <select
+            value={get('episode_t2i_prompt_mode', 'current')}
+            onChange={e => set('episode_t2i_prompt_mode', e.target.value)}
+          >
+            {T2I_PROMPT_MODE_VALUES.map(v => (
+              <option key={v} value={v}>{t(`settings.episodeT2iPromptMode.${v}`)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="settings-row">
           <label>{t('settings.label.episodeIllustSize')}</label>
           <select
             value={sizeLabel(get('episode_t2i_width', 1216), get('episode_t2i_height', 832))}
@@ -625,6 +698,13 @@ export default function SettingsTab({
       </div>
 
       {showApiKeyDialog && <ApiKeyDialog onClose={() => setShowApiKeyDialog(false)} />}
+      {showCompatibleDialog && (
+        <CompatibleBackendDialog
+          editing={editingBackend}
+          onClose={() => setShowCompatibleDialog(false)}
+          onSaved={fetchCompatibleBackends}
+        />
+      )}
       {showBackendDirDialog && <BackendDirDialog onClose={() => setShowBackendDirDialog(false)} />}
       {showModelProfile && (
         <ModelProfileDialog

@@ -181,6 +181,8 @@ _TTS_SPEAKER_FIELDS = {
     "gemini_tts": "gemini_tts_voice",
     "kokoro": "kokoro_voice",
     "openai_tts": "openai_tts_voice",
+    "grok_tts": "grok_tts_voice",
+    "groq_tts": "groq_tts_voice",
 }
 
 _TTS_DEFAULT_SPEAKERS = {
@@ -189,6 +191,8 @@ _TTS_DEFAULT_SPEAKERS = {
     "gemini_tts": "Kore",
     "kokoro": "jf_alpha",
     "openai_tts": "alloy",
+    "grok_tts": "Carina",
+    "groq_tts": "diana",
 }
 
 

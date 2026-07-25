@@ -396,12 +396,14 @@ with tab_chat:
         else:
             _model_name = _get_ext_model(st.session_state.llm_backend)
         _greet_quirks = get_quirks(_model_name)
+        from def_kari.models.t2i_profiles import get_current_tag_format as _gcf
         _greet_result = generate_structured_reply(
             _greet_text,
             history=st.session_state.history,
             character=_greet_char,
             backend=st.session_state.llm_backend,
             quirks=_greet_quirks,
+            tag_format=_gcf(),
         )
         import uuid as _uuid
         _greet_id = str(_uuid.uuid4())
@@ -491,6 +493,7 @@ with tab_chat:
             _model_name = _get_ext_model(st.session_state.llm_backend)
         _quirks = get_quirks(_model_name)
         with st.spinner(_t("chat_thinking")):
+            from def_kari.models.t2i_profiles import get_current_tag_format as _gcf2
             result = generate_structured_reply(
                 user_text,
                 history=st.session_state.history,
@@ -498,6 +501,7 @@ with tab_chat:
                 character=_active_character,
                 backend=st.session_state.llm_backend,
                 quirks=_quirks,
+                tag_format=_gcf2(),
             )
 
         msg_id = str(uuid.uuid4())
@@ -978,6 +982,7 @@ with tab_session:
 
             with st.spinner(f"{_speaker_name} " + (f"thinking... ({_act_i + 1}/{_actions_per_turn})" if _ui_lang == "en" else f"が考えています... (アクション {_act_i + 1}/{_actions_per_turn})")):
                 try:
+                    from def_kari.models.t2i_profiles import get_current_tag_format as _gcf3
                     _reply = generate_structured_reply(
                         user_text=_user_text,
                         history=_ctx,
@@ -985,6 +990,7 @@ with tab_session:
                         backend=_s_backend,
                         model=_s_model,
                         quirks=_quirks,
+                        tag_format=_gcf3(),
                     )
                 except Exception as _session_err:
                     _reply = {"result": {"dialogue": f"[エラー: {_session_err}]"}}
