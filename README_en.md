@@ -120,6 +120,7 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 - **Character Persistence:** Dialogue history, emotions, and generated assets are persisted — resume from where you left off after restart
 - **Thought Visualization:** View and record the LLM's reasoning process for each response in the "Thought" tab
 - **Adapter Pattern:** Freely swap between 5 LLM, 5 TTS, and 5 T2I backends
+- **OpenAI-Compatible API Support:** Connect any OpenAI-compatible service for LLM, TTS, and T2I. Works with LM Studio, vLLM, llama.cpp server, Groq, OpenRouter, and more
 - **Zoning:** Clear separation of public and private data. Generated assets are excluded from Git
 
 -----
@@ -128,8 +129,8 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 
 | Layer | Local (GPU) | External API (no GPU) |
 |---|---|---|
-| **LLM (text)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
-| **TTS (voice)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
+| **LLM (text)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API / Groq / Grok / OpenRouter |
+| **TTS (voice)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API / Grok TTS |
 | **T2I (image)** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----

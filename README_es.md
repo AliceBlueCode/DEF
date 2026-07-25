@@ -120,6 +120,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 - **Persistencia de personajes:** El historial de diálogo, emociones y assets generados se persisten — retoma donde lo dejaste tras reiniciar
 - **Visualización del pensamiento:** Ve y registra el proceso de razonamiento del LLM para cada respuesta en la pestaña "Pensamiento"
 - **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 5 de TTS y 5 de T2I
+- **Soporte para API compatible con OpenAI:** Conecta cualquier servicio que ofrezca una API compatible con OpenAI para LLM, TTS y T2I. Compatible con LM Studio, vLLM, llama.cpp server, Groq, OpenRouter y más
 - **Zonificación:** Separación clara entre datos públicos y privados. Los assets generados quedan excluidos de Git
 
 -----
@@ -128,8 +129,8 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 
 | Capa | Local (GPU) | API externa (sin GPU) |
 |---|---|---|
-| **LLM (texto)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
-| **TTS (voz)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
+| **LLM (texto)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API / Groq / Grok / OpenRouter |
+| **TTS (voz)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API / Grok TTS |
 | **T2I (imagen)** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----

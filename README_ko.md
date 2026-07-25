@@ -120,6 +120,7 @@ DEF는 로컬 퍼스트이지만, 로컬 환경이 갖춰져 있지 않아도 �
 - **캐릭터 영속성:** 대화 이력・감정・생성 자산이 영속화되어, 재시작 후에도 "이어서" 재개 가능
 - **사고 가시화:** 각 발언의 LLM 사고 과정을 「사고」 탭에서 확인・기록할 수 있습니다
 - **어댑터 패턴(Adapter Pattern):** LLM×5・TTS×5・T2I×5의 백엔드를 자유롭게 교체 가능
+- **OpenAI 호환 API 지원:** LLM・TTS・T2I 각각에서 OpenAI 호환 API를 제공하는 모든 서비스를 연결 가능. LM Studio・vLLM・llama.cpp server・Groq・OpenRouter 등 지원
 - **조닝(Zoning):** 공개 데이터와 비공개 데이터의 명확한 분리. 생성 자산은 Git 관리 대상 외
 
 -----
@@ -128,8 +129,8 @@ DEF는 로컬 퍼스트이지만, 로컬 환경이 갖춰져 있지 않아도 �
 
 | 레이어 | 로컬(GPU) | 외부 API(GPU 불필요) |
 |---|---|---|
-| **LLM(텍스트)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
-| **TTS(음성)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
+| **LLM(텍스트)** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API / Groq / Grok / OpenRouter |
+| **TTS(음성)** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API / Grok TTS |
 | **T2I(이미지)** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----

@@ -120,6 +120,7 @@ DEF 是本地优先（Local-First）的平台，但即使你还没有准备好�
 - **角色永续性：** 对话记录、情感、生成资产皆会持久化保存，重启后仍可"接续"进行
 - **思考可视化：** 可在"思考"页签中查看・记录每次回应的 LLM 思考过程
 - **适配器模式（Adapter Pattern）：** 可自由切换 5 种 LLM・5 种 TTS・5 种 T2I 后端
+- **OpenAI 兼容 API 支持：** LLM・TTS・T2I 均可连接任何提供 OpenAI 兼容 API 的服务。支持 LM Studio・vLLM・llama.cpp server・Groq・OpenRouter 等
 - **数据分区（Zoning）：** 公开数据与私人数据明确分离。生成的资产不会被 Git 追踪
 
 -----
@@ -128,8 +129,8 @@ DEF 是本地优先（Local-First）的平台，但即使你还没有准备好�
 
 | 层级 | 本地（GPU） | 外部 API（无需 GPU） |
 |---|---|---|
-| **LLM（文字）** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
-| **TTS（语音）** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
+| **LLM（文字）** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API / Groq / Grok / OpenRouter |
+| **TTS（语音）** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API / Grok TTS |
 | **T2I（图像）** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----

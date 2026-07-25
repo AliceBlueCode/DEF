@@ -119,6 +119,7 @@ DEFはローカルファーストですが、ローカル環境が揃ってい�
 - **4つのモード:** チャット（1対1対話）・セッション（複数AI＋人間の卓）・TRPG（ルールブック・ダイス・GMエージェント）・ノベル（小説執筆＋AI候補生成）
 - **継続的存在感:** 対話履歴・感情・生成アセットが永続化され、再起動後も「続き」から再開できる
 - **アダプターパターン:** LLM×5・TTS×5・T2I×5のバックエンドを自由に差し替え可能
+- **OpenAI互換API対応:** LLM・TTS・T2Iそれぞれで、OpenAI互換APIを提供する任意のサービスを接続可能。LM Studio・vLLM・llama.cpp server・Groq・OpenRouter等に対応
 - **思考の可視化:** 各発言のLLM思考過程を「思考」タブで確認・記録できる
 - **ゾーニング:** 公開データとプライベートデータの明確な分離。生成アセットはGit管理対象外
 
@@ -128,8 +129,8 @@ DEFはローカルファーストですが、ローカル環境が揃ってい�
 
 | レイヤー | ローカル（GPU） | 外部API（GPUなし） |
 |---|---|---|
-| **LLM（テキスト）** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API |
-| **TTS（音声）** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API |
+| **LLM（テキスト）** | Text Generation WebUI / Ollama | Gemini API / OpenAI API / Anthropic Claude API / Groq / Grok / OpenRouter |
+| **TTS（音声）** | VOICEVOX / Kokoro TTS / Irodori-TTS | Gemini TTS API / OpenAI TTS API / Grok TTS |
 | **T2I（画像）** | Automatic1111 / ComfyUI | OpenAI DALL-E API / Civitai API / Hugging Face API |
 
 -----
