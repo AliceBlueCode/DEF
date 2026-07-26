@@ -118,6 +118,9 @@ _game_event_bus.subscribe(_FLAG_UPDATED, _handle_flag_updated)
 
 _ws_rate: dict[str, deque] = {}
 
+# 接続ごとの送信ロック: 同一WSへの並列 send_json を防ぐ
+_ws_send_locks: dict[str, asyncio.Lock] = {}
+
 
 def _check_ws_rate(token: str, limit: int = 60, window: int = 60) -> bool:
     """True=許可、False=制限超過（60メッセージ/分）"""
@@ -130,13 +133,19 @@ def _check_ws_rate(token: str, limit: int = 60, window: int = 60) -> bool:
 
 
 async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) -> None:
-    """送信失敗時に ws_connections から除去する。create_task 経由で呼ぶ。"""
-    try:
-        await ws.send_json(event)
-    except Exception:
-        sess = _sessions.get(session_id)
-        if sess:
-            sess["ws_connections"].pop(token, None)
+    """送信失敗時に ws_connections から除去する。create_task 経由で呼ぶ。
+
+    同一接続への並列 send_json を Lock でシリアライズする。
+    """
+    lock = _ws_send_locks.setdefault(token, asyncio.Lock())
+    async with lock:
+        try:
+            await ws.send_json(event)
+        except Exception:
+            sess = _sessions.get(session_id)
+            if sess:
+                sess["ws_connections"].pop(token, None)
+            _ws_send_locks.pop(token, None)
 
 
 def _ws_broadcast_handler(session_id: str, event: dict) -> None:
@@ -2814,12 +2823,18 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         if jwt_payload.get("session_id") != session_id:
             raise ValueError("session mismatch")
     except Exception:
-        await ws.close(code=4001)
+        try:
+            await ws.close(code=4001)
+        except Exception:
+            pass
         return
 
     sess = _sessions.get(session_id)
     if not sess:
-        await ws.close(code=4004)
+        try:
+            await ws.close(code=4004)
+        except Exception:
+            pass
         return
 
     sess.setdefault("ws_connections", {})[raw_token] = ws
@@ -2830,7 +2845,9 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         try:
             while True:
                 await asyncio.sleep(30)
-                await ws.send_json({"type": "ping"})
+                lock = _ws_send_locks.setdefault(raw_token, asyncio.Lock())
+                async with lock:
+                    await ws.send_json({"type": "ping"})
         except Exception:
             pass
 
@@ -2849,6 +2866,7 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         pass
     finally:
         keepalive_task.cancel()
+        _ws_send_locks.pop(raw_token, None)
         sess = _sessions.get(session_id)
         if sess:
             sess["ws_connections"].pop(raw_token, None)
