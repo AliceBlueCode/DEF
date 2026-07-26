@@ -19,6 +19,7 @@ DAMAGE_APPLIED    = "DAMAGE_APPLIED"      # HP/MP/SANダメージが適用され
 STATUS_CHANGED    = "STATUS_CHANGED"      # 状態異常が付与/解除された
 TOPIC_CHANGED     = "TOPIC_CHANGED"       # 投票によりお題が変更された
 SESSION_ENDED     = "SESSION_ENDED"       # セッション終了が可決された
+AI_TURN_COMPLETED = "AI_TURN_COMPLETED"   # サーバー自律AIターンが1回完了した
 
 
 class GameEventBus:

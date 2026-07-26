@@ -317,6 +317,69 @@ def _cancel_idle_shutdown(session_id: str) -> None:
         sess["idle_shutdown_task"] = None
 
 
+# ── サーバー自律AIターン ──────────────────────────────────────────
+
+def _get_current_speaker(session: dict) -> str | None:
+    """現在のターンのキャラIDを返す。ラウンド境界は % で吸収。"""
+    initiative = session.get("initiative", [])
+    if not initiative:
+        return None
+    turn = session.get("turn", 0)
+    return initiative[turn % len(initiative)]
+
+
+def _execute_ai_turn(session_id: str) -> dict:
+    """AIターンを1回同期実行する（run_in_executor 用）。"""
+    sess = _sessions.get(session_id)
+    backend = sess.get("backend", DEFAULT_LLM_BACKEND) if sess else DEFAULT_LLM_BACKEND
+    req = SessionNextRequest(session_id=session_id, backend=backend)
+    return next_turn(req)
+
+
+async def _run_ai_turns(session_id: str) -> None:
+    """人間ターン完了後に呼ばれる非同期タスク。人間ターンになるまでAIを自律実行。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return
+    try:
+        while True:
+            current = _get_current_speaker(session)
+            if not current or _is_human_char(session, current):
+                break
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, _execute_ai_turn, session_id
+            )
+            if result.get("error") or result.get("waiting_for_human"):
+                break
+            _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
+            await asyncio.sleep(0)  # event loop に yield
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        _log.error("[ai_turns] session=%s error=%s", session_id, e)
+
+
+async def _end_session(session_id: str) -> None:
+    """セッション終了: AIタスク停止・WS切断・JTIクリーンアップ。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return
+    tasks_to_cancel = []
+    for key in ("ai_task", "idle_shutdown_task"):
+        if (t := session.get(key)) and not t.done():
+            t.cancel()
+            tasks_to_cancel.append(t)
+    if tasks_to_cancel:
+        await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+    for ws in list(session.get("ws_connections", {}).values()):
+        try:
+            await ws.close(code=1000)
+        except Exception:
+            pass
+    session["ws_connections"].clear()
+    _cleanup_revoked_jtis(session_id)
+
+
 def _save_session_episodic(session_id: str, session: dict) -> None:
     """セッション終了時に各キャラクターの episodic memory を書き込む。"""
     try:
@@ -1793,7 +1856,7 @@ class HumanTurnRequest(BaseModel):
 
 
 @router.post("/{session_id}/human_turn")
-def human_turn_action(session_id: str, req: HumanTurnRequest):
+async def human_turn_action(session_id: str, req: HumanTurnRequest):
     """人間プレイヤーのターンアクション（send / extend / skip）。"""
     session = _sessions.get(session_id)
     if not session:
@@ -1848,6 +1911,9 @@ def human_turn_action(session_id: str, req: HumanTurnRequest):
         session["turn"] = turn + 1
         session["action_count"] = 0
         _autosave(session_id)
+        _ai_task = session.get("ai_task")
+        if not _ai_task or _ai_task.done():
+            session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
         return {
             "action": "skip",
             "character_id": current_char_id,
@@ -1883,6 +1949,10 @@ def human_turn_action(session_id: str, req: HumanTurnRequest):
         session["turn"] = turn + 1
         session["action_count"] = 0
         _autosave(session_id)
+        # AIタスク起動（二重起動防止）
+        _ai_task = session.get("ai_task")
+        if not _ai_task or _ai_task.done():
+            session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
         return {
             "action": "send",
             "turn_advanced": True,
@@ -2070,7 +2140,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
 
 
 @router.post("/{session_id}/vote/commit")
-def vote_commit(session_id: str, req: VoteCommitRequest):
+async def vote_commit(session_id: str, req: VoteCommitRequest):
     """キーパー票を受け取り、AI票と合算して集計・効果適用する。"""
     session = _sessions.get(session_id)
     if not session:
@@ -2238,6 +2308,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         _delete_autosave(session_id)
         from def_kari.gm.events import game_event_bus
         game_event_bus.clear_log(session_id)
+        asyncio.create_task(_end_session(session_id))
     else:
         _autosave(session_id)
     return {
