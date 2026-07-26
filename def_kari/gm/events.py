@@ -52,6 +52,11 @@ class GameEventBus:
                 handler(session_id, event)
             except Exception:
                 pass
+        for handler in self._handlers.get("*", []):
+            try:
+                handler(session_id, event)
+            except Exception:
+                pass
 
     def get_log(self, session_id: str) -> list[dict]:
         """セッションのイベントログを返す（コピー）。"""

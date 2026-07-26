@@ -1,5 +1,6 @@
 """Session API routes."""
 
+import asyncio
 import datetime
 import json
 import logging
@@ -7,7 +8,9 @@ import os
 import random
 import re
 import secrets
-from collections import OrderedDict
+import time
+import uuid as _uuid_mod
+from collections import OrderedDict, deque
 from pathlib import Path
 
 _log = logging.getLogger("def.session")
@@ -30,7 +33,7 @@ def _resolve_model(backend_id: str, req_model: str = "") -> str:
     from def_kari.llm.backend import LLM_BACKENDS
     return LLM_BACKENDS.get(backend_id, {}).get("default_model", "")
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from def_kari.characters import load_profiles, get_character
@@ -109,6 +112,66 @@ def _handle_flag_updated(session_id: str, event: dict) -> None:
 
 from def_kari.gm.events import game_event_bus as _game_event_bus, FLAG_UPDATED as _FLAG_UPDATED
 _game_event_bus.subscribe(_FLAG_UPDATED, _handle_flag_updated)
+
+
+# ── WebSocket / マルチプレイ ──────────────────────────────────────────
+
+_ws_rate: dict[str, deque] = {}
+
+
+def _check_ws_rate(token: str, limit: int = 60, window: int = 60) -> bool:
+    """True=許可、False=制限超過（60メッセージ/分）"""
+    now = time.monotonic()
+    q = _ws_rate.setdefault(token, deque())
+    q.append(now)
+    while q and q[0] < now - window:
+        q.popleft()
+    return len(q) <= limit
+
+
+async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) -> None:
+    """送信失敗時に ws_connections から除去する。create_task 経由で呼ぶ。"""
+    try:
+        await ws.send_json(event)
+    except Exception:
+        sess = _sessions.get(session_id)
+        if sess:
+            sess["ws_connections"].pop(token, None)
+
+
+def _ws_broadcast_handler(session_id: str, event: dict) -> None:
+    """game_event_bus の全イベントを接続中の全 WebSocket に配信する。"""
+    sess = _sessions.get(session_id)
+    if not sess:
+        return
+    for token, ws in list(sess.get("ws_connections", {}).items()):
+        asyncio.create_task(_safe_send(session_id, token, ws, event))
+
+
+_game_event_bus.subscribe("*", _ws_broadcast_handler)
+
+
+def _schedule_idle_shutdown(session_id: str, delay: int = 300) -> None:
+    """全員切断後 delay 秒で AI タスクを停止する。再接続時はキャンセルする。"""
+    async def _shutdown() -> None:
+        await asyncio.sleep(delay)
+        sess = _sessions.get(session_id)
+        if not sess:
+            return
+        if (task := sess.get("ai_task")) and not task.done():
+            task.cancel()
+
+    sess = _sessions.get(session_id)
+    if sess:
+        sess["idle_shutdown_task"] = asyncio.create_task(_shutdown())
+
+
+def _cancel_idle_shutdown(session_id: str) -> None:
+    """再接続時に idle 停止タイマーをキャンセルする。"""
+    sess = _sessions.get(session_id)
+    if sess and (task := sess.get("idle_shutdown_task")) and not task.done():
+        task.cancel()
+        sess["idle_shutdown_task"] = None
 
 
 def _save_session_episodic(session_id: str, session: dict) -> None:
@@ -2388,3 +2451,60 @@ def sync_stats(session_id: str, req: StatSyncRequest):
     runtime_stats = session.setdefault("runtime_stats", {})
     runtime_stats[req.character_id] = req.stats
     return {"status": "ok"}
+
+
+# ── WebSocket エンドポイント ──────────────────────────────────────────
+
+@router.websocket("/{session_id}/ws")
+async def ws_endpoint(ws: WebSocket, session_id: str):
+    """マルチプレイ用 WebSocket。first-message auth 方式。"""
+    await ws.accept()
+
+    # 認証: 接続後5秒以内に {"type":"auth","token":"..."} を受け取る
+    try:
+        auth_msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
+        raw_token = auth_msg.get("token", "")
+        # Phase 2 で JWT 検証を追加する。現時点はトークン存在チェックのみ
+        if not raw_token:
+            raise ValueError("no token")
+    except Exception:
+        await ws.close(code=4001)
+        return
+
+    sess = _sessions.get(session_id)
+    if not sess:
+        await ws.close(code=4004)
+        return
+
+    sess.setdefault("ws_connections", {})[raw_token] = ws
+    _cancel_idle_shutdown(session_id)
+
+    # keepalive: Cloudflare の 100 秒タイムアウト対策（固定 30 秒）
+    async def _keepalive() -> None:
+        try:
+            while True:
+                await asyncio.sleep(30)
+                await ws.send_json({"type": "ping"})
+        except Exception:
+            pass
+
+    keepalive_task = asyncio.create_task(_keepalive())
+    try:
+        async for msg in ws.iter_json():
+            if not _check_ws_rate(raw_token):
+                await ws.send_json({"type": "error", "code": "rate_limit"})
+                continue
+            if msg.get("type") == "pong":
+                continue
+            # Phase 2 以降でメッセージハンドラを追加する
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        keepalive_task.cancel()
+        sess = _sessions.get(session_id)
+        if sess:
+            sess["ws_connections"].pop(raw_token, None)
+            if not sess["ws_connections"]:
+                _schedule_idle_shutdown(session_id, delay=300)
