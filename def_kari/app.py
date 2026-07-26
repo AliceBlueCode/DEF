@@ -1522,7 +1522,7 @@ with tab_session:
                         st.rerun()
 
             # --- 人間プレイヤーの投票発議（発言力3以上） ---
-            with st.expander(f"🗳 " + (f"Call Vote [-3, current: {_human_counter}]" if _ui_lang == "en" else f"投票を発議する [発言力-3、現在: {_human_counter}]"), expanded=False):
+            with st.expander(f"🗳 " + (f"Call Vote [all, current: {_human_counter}]" if _ui_lang == "en" else f"投票を発議する [発言力全消費、現在: {_human_counter}]"), expanded=False):
                 _pv_types = {
                     "topic_change": ("Change Topic" if _ui_lang == "en" else "お題変更"),
                     "expel": ("Expel" if _ui_lang == "en" else "参加者退場"),
@@ -1539,7 +1539,7 @@ with tab_session:
 
                 if st.button("🗳 Start Vote" if _ui_lang == "en" else "🗳 投票開始", key="player_start_vote", disabled=_human_counter < 3):
                         _pv_counters = st.session_state.get("session_counters", {})
-                        _pv_counters[_cur_speaker_id] = _pv_counters.get(_cur_speaker_id, 0) - 3
+                        _pv_counters[_cur_speaker_id] = 0
                         st.session_state.session_counters = _pv_counters
                         _pv_data = {
                             "type": _pv_type,
@@ -1551,7 +1551,7 @@ with tab_session:
                             _pv_data["target_id"] = _pv_detail
                         st.session_state._session_vote = _pv_data
                         _pv_hist = list(st.session_state.get("session_history", []))
-                        _pv_hist.append({"speaker": "_keeper", "text": f"🗳 {_cur_speaker_name}が投票を発議 [発言力-3]: {_pv_types[_pv_type]}", "round": st.session_state.get("session_round", 1), "turn": st.session_state.get("session_turn", 0), "action": -1})
+                        _pv_hist.append({"speaker": "_keeper", "text": f"🗳 {_cur_speaker_name}が投票を発議 [発言力全消費]: {_pv_types[_pv_type]}", "round": st.session_state.get("session_round", 1), "turn": st.session_state.get("session_turn", 0), "action": -1})
                         st.session_state.session_history = _pv_hist
                         st.rerun()
 
