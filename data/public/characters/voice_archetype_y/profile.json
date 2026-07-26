@@ -1,0 +1,12 @@
+{
+  "voice_archetype_y": {
+    "base_profile": {
+      "name": "Voice Archetype Y",
+      "entity_type": "base_entity",
+      "player_type": "ai",
+      "identity_prompt": "",
+      "description": "表現参照のみの空基底。ブランチキャラクターが先に独立して存在し、後から表現参照として接続されたケースの検証用。",
+      "default_model_config": {}
+    }
+  }
+}

@@ -172,7 +172,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [, setTtsEnabled] = useState(false)
   const ttsEnabledRef = useRef(false)
   const ttsHumanEnabledRef = useRef(false)
-  const prefetchRef = useRef<any>(null)
+  const hostTokenRef = useRef('')
+  const wsRef = useRef<WebSocket | null>(null)
+  const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [standingFallback, setStandingFallback] = useState<Set<string>>(new Set())
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
   const [saveStatus, setSaveStatus] = useState('')
@@ -229,6 +231,164 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       .then(r => r.json())
       .then(d => setSavedSessions(d.sessions || []))
       .catch(() => {})
+  }
+
+  // ── WebSocket 接続（sessionId 確定後に接続・exponential backoff 再接続）──
+  useEffect(() => {
+    if (!sessionId) return
+    let retries = 0
+    const connect = () => {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${proto}//${window.location.host}/api/session/${sessionId}/ws`)
+      wsRef.current = ws
+      ws.onopen = () => {
+        retries = 0
+        ws.send(JSON.stringify({ type: 'auth', token: hostTokenRef.current }))
+      }
+      ws.onmessage = (e) => {
+        try { void handleSessionEvent(JSON.parse(e.data as string)) } catch {}
+      }
+      ws.onclose = () => {
+        wsRef.current = null
+        if (!sessionIdRef.current) return
+        const delay = Math.min(1000 * Math.pow(2, retries), 16000)
+        retries++
+        wsReconnectTimerRef.current = setTimeout(connect, delay)
+      }
+    }
+    connect()
+    return () => {
+      if (wsReconnectTimerRef.current !== null) {
+        clearTimeout(wsReconnectTimerRef.current)
+        wsReconnectTimerRef.current = null
+      }
+      wsRef.current?.close()
+      wsRef.current = null
+    }
+  }, [sessionId])
+
+  // ── WS イベントハンドラ ────────────────────────────────────────
+  const handleSessionEvent = async (event: { type: string; payload: any }) => {
+    if (event.type === 'ping') {
+      wsRef.current?.send(JSON.stringify({ type: 'pong' }))
+      return
+    }
+    if (event.type === 'AI_TURN_COMPLETED') {
+      await processAITurnData(event.payload, sessionIdRef.current)
+    }
+    if (event.type === 'WAITING_FOR_HUMAN') {
+      const p = event.payload
+      if (autoAdvanceRef.current) {
+        wasAutoAdvancingRef.current = true
+        setAutoAdvance(false)
+        autoAdvanceRef.current = false
+      }
+      if (typeof p.round === 'number') setRound(p.round)
+      setActiveTurnCharId(p.character_id ?? '')
+      setWaitingForHuman(true)
+      setHasDiscarded(false)
+      setHumanCharId(p.character_id ?? '')
+      setHumanCharName(p.character_name ?? '')
+      setLoading(false)
+    }
+    if (event.type === 'AI_ERROR') {
+      setLoading(false)
+      if (autoAdvanceRef.current) {
+        setAutoStopMsg('生成エラーで自動進行を停止しました')
+        setAutoAdvance(false)
+        autoAdvanceRef.current = false
+      }
+    }
+    if (event.type === 'SESSION_ENDED') {
+      sessionIdRef.current = ''
+      setSessionId('')
+    }
+  }
+
+  // ── WS 受信 AI ターンデータ処理（旧 nextTurn の本体）────────────
+  const processAITurnData = async (data: any, sid: string) => {
+    if (!data || data.error) {
+      if (autoAdvanceRef.current) setAutoStopMsg('生成エラーで自動進行を停止しました')
+      setAutoAdvance(false)
+      autoAdvanceRef.current = false
+      setLoading(false)
+      return
+    }
+
+    if (data.counters) setCounters(capCounters(data.counters))
+    if (data.character_id) setActiveTurnCharId(data.character_id)
+    setLoading(false)
+
+    if (data.skipped) {
+      setRound(data.round)
+      const ctrB: number | null = typeof data.counter_before === 'number' ? data.counter_before : null
+      const isForced = ctrB !== null && ctrB < 0
+      const skipText = isForced
+        ? `⏭ ${data.character_name} は発言力不足のためスキップ [${ctrB}→${(ctrB as number) + 1}]`
+        : ctrB !== null
+          ? `⏭ ${data.character_name} はスキップ（発言力 ${ctrB}→${ctrB + 1}）`
+          : t('session.msg.humanSkip', { name: data.character_name })
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: skipText, emotion: '', tags: [] }])
+      return
+    }
+
+    if (data.action === 'vote_proposal') {
+      if (data.counters) setCounters(capCounters(data.counters))
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `🗳 ${data.character_name} が投票を発議 [発言力-3]`, emotion: '', tags: [] }])
+      try {
+        const delibRes = await fetch(`/api/session/${sid}/vote/deliberate`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vote_type: data.vote_type || 'topic_change', detail: data.vote_detail || '', target_id: '', proposer_id: data.character_id, proposer_text: data.proposer_text || '' }),
+        })
+        const delibData = await delibRes.json()
+        if (delibData.counters) setCounters(capCounters(delibData.counters))
+        if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
+          for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
+            setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: [] }])
+          }
+        }
+        setMessages(prev => [...prev, { character_id: '_keeper', character_name: 'GM', text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`, emotion: '', tags: [], isKeeperVote: true }])
+        wasAutoAdvancingRef.current = autoAdvanceRef.current
+        setAutoAdvance(false)
+        autoAdvanceRef.current = false
+      } catch (e) { console.error(e) }
+      return
+    }
+
+    const isLastOfRound = trpgModeRef.current && initiativeRef.current.length > 0 &&
+      initiativeRef.current[initiativeRef.current.length - 1] === data.character_id
+
+    const char = charMap[data.character_id]
+    let newMsgIndex = -1
+    setMessages(prev => {
+      newMsgIndex = prev.length
+      return [...prev, { character_id: data.character_id, character_name: data.character_name, text: data.text, emotion: data.emotion, tags: data.tags || [], imageColor: char?.image_color ?? undefined }]
+    })
+    setRound(data.round)
+
+    if (data.penalty_message) {
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: data.penalty_message, emotion: '', tags: [] }])
+    }
+    if (data.ai_action === 'extend') {
+      const ctr = data.counters?.[data.character_id]
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `⚡ ${data.character_name} が力強く発言 [発言力-1${typeof ctr === 'number' ? ` → 残${ctr}` : ''}]`, emotion: '', tags: [] }])
+    }
+    if (data.ai_action === 'designate' && data.designated_name) {
+      const ctr = data.counters?.[data.character_id]
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `👉 ${data.character_name} が ${data.designated_name} を指名 [発言力-1${typeof ctr === 'number' ? ` → 残${ctr}` : ''}]`, emotion: '', tags: [] }])
+    }
+
+    if (data.image_prompt_en && t2iBackend && newMsgIndex >= 0) generateImage(data.image_prompt_en, newMsgIndex)
+
+    const ttsUrl = data.text ? await generateTTSUrl(data.text, data.character_id) : null
+    if (ttsUrl) {
+      setMessages(prev => { const last = prev.length - 1; return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m) })
+      if (autoAdvanceRef.current) await playAudio(ttsUrl)
+    }
+
+    if (isLastOfRound && keeperFiredRoundRef.current !== data.round) {
+      await fireKeeperTurn(sid, data.round)
+    }
   }
 
   useEffect(() => {
@@ -381,14 +541,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         )
         setCharSheetData(sheetData)
       }
+      hostTokenRef.current = data.host_token ?? ''
       const firstCharId = (data.initiative || [])[0]
       if (humanChar && firstCharId === humanChar.id) {
-        // 人間が先頭: nextTurn を呼ばず直接入力待ちに
         setWaitingForHuman(true)
         setHasDiscarded(false)
-      } else if (autoAdvanceRef.current) {
-        setTimeout(() => nextTurn(data.session_id, actionsPerTurnRef.current), 200)
       }
+      // サーバーがai_taskを自律起動。WS経由でAIターンが届く
     } catch (e) {
       console.error(e)
     } finally {
@@ -445,232 +604,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       audio.play().catch(() => resolve())
     })
 
-  const fetchNextData = (sid: string) =>
-    fetch('/api/session/next', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sid, backend }),
-    }).then(r => r.json()).catch(() => null)
-
-  const nextTurn = async (sessionIdOverride?: string, batchRemaining?: number) => {
-    if (!sessionIdRef.current) return
-    const sid = sessionIdOverride ?? sessionId
-    if (!sid) return
-    const rem = batchRemaining ?? actionsPerTurnRef.current
-    setLoading(true)
-    try {
-      // 先読みデータがあればそれを使い、なければ API 呼び出し
-      let data: any
-      if (prefetchRef.current) {
-        data = prefetchRef.current
-        prefetchRef.current = null
-      } else {
-        data = await fetchNextData(sid)
-      }
-      if (!data || data.error) { console.error(data?.error); return }
-
-      if (data.counters) setCounters(capCounters(data.counters))
-      if (data.character_id) setActiveTurnCharId(data.character_id)
-
-      // 人間プレイヤーのターン
-      if (data.waiting_for_human) {
-        if (autoAdvanceRef.current) {
-          wasAutoAdvancingRef.current = true
-          setAutoAdvance(false)
-          autoAdvanceRef.current = false
-        }
-        if (typeof data.round === 'number') setRound(data.round)
-        setWaitingForHuman(true)
-        setHasDiscarded(false)
-        setHumanCharId(data.character_id)
-        setHumanCharName(data.character_name)
-        return
-      }
-
-      // スキップ（自動 or 自発）
-      // counter_before < 0 なら強制スキップ、>= 0 なら自発スキップ
-      if (data.skipped) {
-        setRound(data.round)
-        const ctrB: number | null = typeof data.counter_before === 'number' ? data.counter_before : null
-        const isForced = ctrB !== null && ctrB < 0
-        const skipText = isForced
-          ? `⏭ ${data.character_name} は発言力不足のためスキップ [${ctrB}→${(ctrB as number) + 1}]`
-          : ctrB !== null
-            ? `⏭ ${data.character_name} はスキップ（発言力 ${ctrB}→${ctrB + 1}）`
-            : t('session.msg.humanSkip', { name: data.character_name })
-        setMessages(prev => [...prev, {
-          character_id: '_keeper',
-          character_name: '⚙ System',
-          text: skipText,
-          emotion: '', tags: [],
-        }])
-        if (rem > 0 || autoAdvanceRef.current) {
-          setTimeout(() => nextTurn(sid, rem), 200)
-        }
-        return
-      }
-
-      // AI による投票発議
-      if (data.action === 'vote_proposal') {
-        if (data.counters) setCounters(capCounters(data.counters))
-        setMessages(prev => [...prev, {
-          character_id: '_keeper',
-          character_name: '⚙ System',
-          text: `🗳 ${data.character_name} が投票を発議 [発言力-3]`,
-          emotion: '', tags: [],
-        }])
-        try {
-          const delibRes = await fetch(`/api/session/${sid}/vote/deliberate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              vote_type: data.vote_type || 'topic_change',
-              detail: data.vote_detail || '',
-              target_id: '',
-              proposer_id: data.character_id,
-              proposer_text: data.proposer_text || '',
-            }),
-          })
-          const delibData = await delibRes.json()
-          if (delibData.counters) setCounters(capCounters(delibData.counters))
-          if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
-            for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
-              setMessages(prev => [...prev, {
-                character_id: d.character_id,
-                character_name: d.character_name,
-                text: d.text,
-                emotion: d.emotion,
-                tags: [],
-              }])
-            }
-          }
-          setMessages(prev => [...prev, {
-            character_id: '_keeper',
-            character_name: 'GM',
-            text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`,
-            emotion: '', tags: [],
-            isKeeperVote: true,
-          }])
-          // キーパーが決断するまで自動進行を一時停止
-          wasAutoAdvancingRef.current = autoAdvanceRef.current
-          setAutoAdvance(false)
-          autoAdvanceRef.current = false
-        } catch (e) {
-          console.error(e)
-        }
-        return
-      }
-
-      // TRPGモード: ラウンド末尾キャラ判定（このキャラが喋り終えたらキーパーを発火）
-      const isLastOfRound = trpgModeRef.current && initiativeRef.current.length > 0 &&
-        initiativeRef.current[initiativeRef.current.length - 1] === data.character_id
-
-      const char = charMap[data.character_id]
-      let newMsgIndex = -1
-      setMessages(prev => {
-        newMsgIndex = prev.length
-        return [...prev, {
-          character_id: data.character_id,
-          character_name: data.character_name,
-          text: data.text,
-          emotion: data.emotion,
-          tags: data.tags || [],
-          imageColor: char?.image_color ?? undefined,
-        }]
-      })
-      setRound(data.round)
-
-      if (data.penalty_message) {
-        setMessages(prev => [...prev, {
-          character_id: '_keeper',
-          character_name: '⚙ System',
-          text: data.penalty_message,
-          emotion: '', tags: [],
-        }])
-      }
-
-      if (data.ai_action === 'extend') {
-        const ctr = data.counters?.[data.character_id]
-        const ctrStr = typeof ctr === 'number' ? ` → 残${ctr}` : ''
-        setMessages(prev => [...prev, {
-          character_id: '_keeper',
-          character_name: '⚙ System',
-          text: `⚡ ${data.character_name} が力強く発言 [発言力-1${ctrStr}]`,
-          emotion: '', tags: [],
-        }])
-      }
-
-      if (data.ai_action === 'designate' && data.designated_name) {
-        const ctr = data.counters?.[data.character_id]
-        const ctrStr = typeof ctr === 'number' ? ` → 残${ctr}` : ''
-        setMessages(prev => [...prev, {
-          character_id: '_keeper',
-          character_name: '⚙ System',
-          text: `👉 ${data.character_name} が ${data.designated_name} を指名 [発言力-1${ctrStr}]`,
-          emotion: '', tags: [],
-        }])
-      }
-
-      // T2I 生成（非同期・ノンブロッキング）
-      if (data.image_prompt_en && t2iBackend && newMsgIndex >= 0) {
-        generateImage(data.image_prompt_en, newMsgIndex)
-      }
-
-      const nextRem = rem - 1
-      const willContinue = nextRem > 0 || autoAdvanceRef.current
-
-      // TTS 生成
-      const ttsUrl = data.text ? await generateTTSUrl(data.text, data.character_id) : null
-      if (ttsUrl) {
-        setMessages(prev => {
-          const last = prev.length - 1
-          return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m)
-        })
-        // TRPGラウンド末尾では先読みしない（キーパー後に次ラウンド1番目を新規取得するため）
-        if (willContinue && !prefetchRef.current && !isLastOfRound) {
-          fetchNextData(sid).then(d => {
-            if (d && !d.error) prefetchRef.current = d
-          })
-        }
-        await playAudio(ttsUrl)
-      }
-
-      // TRPGモード自動進行: ラウンド末尾でキーパーを発火（次ラウンド全員が文脈を持てる）
-      // nextRem <= 0 でそのキャラの最後のアクション確定後にのみ発火（2アクション目がある場合は1回目をスキップ）
-      // keeperFiredRoundRef で同一ラウンド内の並行呼び出しによる二重発火を防ぐ
-      if (isLastOfRound && autoAdvanceRef.current && nextRem <= 0 && keeperFiredRoundRef.current !== data.round) {
-        await fireKeeperTurn(sid, data.round)
-        return
-      }
-
-      if (nextRem > 0) {
-        setTimeout(() => nextTurn(sid, nextRem), 200)
-      } else if (autoAdvanceRef.current) {
-        setTimeout(() => nextTurn(sid, actionsPerTurnRef.current), 300)
-      }
-    } catch (e) {
-      console.error(e)
-      if (autoAdvanceRef.current) setAutoStopMsg('生成エラーで自動進行を停止しました')
-      setAutoAdvance(false)
-      autoAdvanceRef.current = false
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const retakeTurn = async () => {
     if (!sessionId || loading) return
     setAutoAdvance(false)
     autoAdvanceRef.current = false
-    prefetchRef.current = null
     const res = await fetch(`/api/session/${sessionId}/retake`, { method: 'POST' })
     const data = await res.json()
     if (data.error) { console.error(data.error); return }
     const removed = data.removed ?? 0
-    if (removed > 0) {
-      setMessages(prev => prev.slice(0, -removed))
-    }
-    nextTurn(sessionId, actionsPerTurnRef.current)
+    if (removed > 0) setMessages(prev => prev.slice(0, -removed))
+    // サーバー側でai_task再起動済み（WS経由でAIターンが来る）
   }
 
   const toggleAutoAdvance = () => {
@@ -678,12 +621,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setAutoAdvance(next)
     autoAdvanceRef.current = next
     if (next) setAutoStopMsg(null)
-    if (next && !loading) {
-      if (waitingForHuman) {
-        submitHumanTurn('skip')
-      } else {
-        nextTurn(undefined, actionsPerTurnRef.current)
-      }
+    // autoAdvance=true で人間ターン待ちの場合はスキップを自動実行
+    if (next && !loading && waitingForHuman) {
+      void submitHumanTurn('skip')
     }
   }
 
@@ -848,9 +788,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         }
       }
     }
-    if (autoAdvanceRef.current) {
-      setTimeout(() => nextTurn(sid, actionsPerTurnRef.current), 300)
-    }
+    // WS経由でAI_TURN_COMPLETEDが届く。ai_resumeでai_taskを再起動
+    void fetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
   }
 
   const rollJudgmentAuto = async (sid: string, j: KeeperJudgment, isSkill = false) => {
@@ -983,7 +922,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       autoAdvanceRef.current = true
     }
     wasAutoAdvancingRef.current = false
-    setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
+    void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
   }
 
   const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
@@ -1243,6 +1182,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (sessionId && messages.length > 0) {
       await saveCurrentSession()
     }
+    // WS切断
+    if (wsReconnectTimerRef.current !== null) {
+      clearTimeout(wsReconnectTimerRef.current)
+      wsReconnectTimerRef.current = null
+    }
+    wsRef.current?.close()
+    wsRef.current = null
     sessionIdRef.current = ''
     setSessionId('')
     setMessages([])
@@ -1289,7 +1235,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setWaitingForKeeperTurn(false)
       setAutoAdvance(true)
       autoAdvanceRef.current = true
-      setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
+      void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     } else if (autoAdvanceRef.current) {
       setAutoAdvance(false)
       autoAdvanceRef.current = false
@@ -1426,9 +1372,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       keeperFiredRoundRef.current !== data.round
     if (humanIsLastOfRound && autoAdvanceRef.current) {
       await fireKeeperTurn(sessionId!, data.round)
-    } else if (autoAdvanceRef.current) {
-      setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
     }
+    // TRPGラウンド末尾でない場合はサーバーが自律でai_taskを再起動（WS経由でAI_TURN_COMPLETEDが届く）
   }
 
   const startDeliberation = async () => {
@@ -2152,7 +2097,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               <button onClick={addHumanAction} disabled={(!waitingForHuman && !interruptMode) || !humanInput.trim() || (actionsPerTurn > 0 && humanPending.length >= actionsPerTurn)} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
               <button onClick={() => submitHumanTurn(interruptMode ? 'interrupt' : 'send')} disabled={(!waitingForHuman && !interruptMode) || (humanPending.length === 0 && !humanInput.trim())} className="keeper-send-btn">{interruptMode ? t('session.ctrl.interruptDoneBtn') : t('session.ctrl.speakDoneBtn')}</button>
               <button onClick={() => { setHumanInput(''); setHumanPending([]); setHasDiscarded(true) }} disabled={humanPending.length === 0 || hasDiscarded} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
-              <button onClick={() => nextTurn(undefined, actionsPerTurn)} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+              <button onClick={() => void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
               <button onClick={() => submitHumanTurn('skip')} disabled={!waitingForHuman} className="keeper-add-btn" title={t('session.ctrl.skipBtn.title')}>{t('session.ctrl.skipBtn')}</button>
             </div>
             <div className="session-controls-row">
@@ -2232,7 +2177,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           <button onClick={addKeeperAction} disabled={!keeperInput.trim() || pendingActions.length >= actionsPerTurn} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
           <button onClick={commitKeeperActions} disabled={pendingActions.length === 0} className="keeper-send-btn">{t('session.ctrl.keeperSendBtn')}</button>
           <button onClick={() => setPendingActions([])} disabled={pendingActions.length === 0} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
-          <button onClick={() => nextTurn(undefined, actionsPerTurn)} disabled={loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+          <button onClick={() => void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
           {t2iBackend && (
             <button
               onClick={generateSceneImage}
@@ -2369,7 +2314,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                   autoAdvanceRef.current = true
                 }
                 wasAutoAdvancingRef.current = false
-                setTimeout(() => nextTurn(sessionId, actionsPerTurnRef.current), 300)
+                void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
               }}>{t('trpg.judgment.skip')}</button>
               <button className="novel-hdr-btn apply-btn" onClick={rollAllPendingJudgments}>{t('trpg.judgment.rollAll')}</button>
             </div>

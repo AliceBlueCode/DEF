@@ -89,6 +89,14 @@ _MAX_SESSIONS = int(os.environ.get("DEF_MAX_SESSIONS", "1000"))
 _sessions: OrderedDict[str, dict] = OrderedDict()
 _last_session_debug: dict = {}
 
+# シリアライズ不可能なフィールド（WebSocket/asyncio.Task/deque 等）
+_NON_SERIALIZABLE_KEYS = frozenset({"ws_connections", "ai_task", "idle_shutdown_task", "ws_rate"})
+
+
+def _session_for_json(session: dict) -> dict:
+    """autosave や GET レスポンス用: シリアライズ不可能なフィールドを除いたコピーを返す。"""
+    return {k: v for k, v in session.items() if k not in _NON_SERIALIZABLE_KEYS}
+
 
 def _handle_flag_updated(session_id: str, event: dict) -> None:
     """FLAG_UPDATED イベントを受けて player_knowledge を更新する。"""
@@ -116,16 +124,30 @@ _game_event_bus.subscribe(_FLAG_UPDATED, _handle_flag_updated)
 
 # ── WebSocket / マルチプレイ ──────────────────────────────────────────
 
-_ws_rate: dict[str, deque] = {}
-
 # 接続ごとの送信ロック: 同一WSへの並列 send_json を防ぐ
 _ws_send_locks: dict[str, asyncio.Lock] = {}
 
+# asyncio メインループ（スレッドプールから broadcast するために保存）
+_main_loop: asyncio.AbstractEventLoop | None = None
 
-def _check_ws_rate(token: str, limit: int = 60, window: int = 60) -> bool:
-    """True=許可、False=制限超過（60メッセージ/分）"""
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """lifespan 起動時に main.py から呼ぶ。スレッドセーフな broadcast に使用。"""
+    global _main_loop
+    _main_loop = loop
+
+
+def _check_ws_rate(session_id: str, token: str, limit: int = 60, window: int = 60) -> bool:
+    """True=許可、False=制限超過（60メッセージ/分）。
+
+    rateデータはセッションデータ内に保持する（セッション終了で自動消滅）。
+    """
+    sess = _sessions.get(session_id)
+    if not sess:
+        return True
+    ws_rate: dict[str, deque] = sess.setdefault("ws_rate", {})
     now = time.monotonic()
-    q = _ws_rate.setdefault(token, deque())
+    q = ws_rate.setdefault(token, deque())
     q.append(now)
     while q and q[0] < now - window:
         q.popleft()
@@ -149,12 +171,29 @@ async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) ->
 
 
 def _ws_broadcast_handler(session_id: str, event: dict) -> None:
-    """game_event_bus の全イベントを接続中の全 WebSocket に配信する。"""
+    """game_event_bus の全イベントを接続中の全 WebSocket に配信する。
+
+    asyncio コルーチン内から呼ばれた場合は loop.create_task、
+    FastAPI の同期ハンドラ（スレッドプール）から呼ばれた場合は
+    run_coroutine_threadsafe でメインループに転送する。
+    """
     sess = _sessions.get(session_id)
     if not sess:
         return
-    for token, ws in list(sess.get("ws_connections", {}).items()):
-        asyncio.create_task(_safe_send(session_id, token, ws, event))
+    connections = list(sess.get("ws_connections", {}).items())
+    if not connections:
+        return
+
+    async def _do_broadcast() -> None:
+        for token, ws in connections:
+            asyncio.create_task(_safe_send(session_id, token, ws, event))
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_do_broadcast())
+    except RuntimeError:
+        if _main_loop and _main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(_do_broadcast(), _main_loop)
 
 
 _game_event_bus.subscribe("*", _ws_broadcast_handler)
@@ -217,9 +256,12 @@ def revoke_token(token: str) -> None:
         pass
 
 
-def _cleanup_revoked_jtis(session_id: str) -> None:
-    """セッション終了時に当該セッションの jti をブラックリストから掃除する。"""
-    sess = _sessions.get(session_id)
+def _cleanup_revoked_jtis(session_id: str, session: dict | None = None) -> None:
+    """セッション終了時に当該セッションの jti をブラックリストから掃除する。
+
+    _end_session が _sessions.pop() した後に呼ぶ場合は session を直接渡す。
+    """
+    sess = session or _sessions.get(session_id)
     if not sess:
         return
     alive_jtis: set[str] = set()
@@ -229,7 +271,6 @@ def _cleanup_revoked_jtis(session_id: str) -> None:
             alive_jtis.add(p["jti"])
         except Exception:
             pass
-    # alive_jtis は既に終了したセッションのものなので全削除
     _revoked_jtis.difference_update(alive_jtis)
 
 
@@ -354,11 +395,26 @@ async def _run_ai_turns(session_id: str) -> None:
         while True:
             current = _get_current_speaker(session)
             if not current or _is_human_char(session, current):
+                # 人間ターン到達をフロントに通知
+                if current:
+                    _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
+                        "character_id": current,
+                        "character_name": session.get("name_map", {}).get(current, current),
+                        "round": session.get("round", 1),
+                    })
                 break
             result = await asyncio.get_event_loop().run_in_executor(
                 None, _execute_ai_turn, session_id
             )
-            if result.get("error") or result.get("waiting_for_human"):
+            if result.get("error"):
+                _game_event_bus.emit(session_id, "AI_ERROR", {"error": result["error"]})
+                break
+            if result.get("waiting_for_human"):
+                _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
+                    "character_id": result.get("character_id", ""),
+                    "character_name": result.get("character_name", ""),
+                    "round": result.get("round", 1),
+                })
                 break
             _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
             await asyncio.sleep(0)  # event loop に yield
@@ -369,8 +425,8 @@ async def _run_ai_turns(session_id: str) -> None:
 
 
 async def _end_session(session_id: str) -> None:
-    """セッション終了: AIタスク停止・WS切断・JTIクリーンアップ。"""
-    session = _sessions.get(session_id)
+    """セッション終了: AIタスク停止・WS切断・JTIクリーンアップ・メモリ解放。"""
+    session = _sessions.pop(session_id, None)
     if not session:
         return
     tasks_to_cancel = []
@@ -386,7 +442,12 @@ async def _end_session(session_id: str) -> None:
         except Exception:
             pass
     session["ws_connections"].clear()
-    _cleanup_revoked_jtis(session_id)
+    for token in list(session.get("players", {}).keys()):
+        _ws_send_locks.pop(token, None)
+    # 招待コードのグローバルレジストリからも削除
+    for code in list(session.get("invite_codes", {}).keys()):
+        _invite_registry.pop(code, None)
+    _cleanup_revoked_jtis(session_id, session=session)
 
 
 def _save_session_episodic(session_id: str, session: dict) -> None:
@@ -486,7 +547,7 @@ def _autosave(session_id: str) -> None:
     try:
         _AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
         (_AUTOSAVE_DIR / f"{session_id}.json").write_text(
-            json.dumps(session, ensure_ascii=False), encoding="utf-8"
+            json.dumps(_session_for_json(session), ensure_ascii=False), encoding="utf-8"
         )
     except Exception:
         pass
@@ -811,6 +872,10 @@ def start_session(req: SessionStartRequest):
 
     session_id = secrets.token_urlsafe(16)
     profiles = load_profiles()
+    for cid in req.character_ids:
+        char = get_character(cid, profiles)
+        if char and char.get("entity_type") == "base_entity":
+            raise HTTPException(400, f"base_entity '{cid}' はセッションに参加できません")
     all_name_map = {}
     for cid in req.character_ids:
         char = get_character(cid, profiles)
@@ -873,6 +938,8 @@ def start_session(req: SessionStartRequest):
         "ai_task": None,            # asyncio.Task | None
         "idle_shutdown_task": None, # asyncio.Task | None
         "invite_codes": {},         # invite_code → {"rating": str, "used": bool}
+        # ── Phase 2/3: マルチプレイ運用データ ──
+        "ws_rate": {},          # token → deque（WS rate limit。セッション終了で自動消滅）
         # ── Phase 3: 複数人間プレイヤー対応 ──
         "human_char_ids": [
             cid for cid in player_ids
@@ -1377,8 +1444,25 @@ def retake_turn(session_id: str):
 
     session["history"], removed = _clean_history_for_retake(history, remove)
 
+    # 巻き戻し後にai_taskを再起動（WS経由でフロントに通知される）
+    ai_task = session.get("ai_task")
+    if not ai_task or ai_task.done():
+        session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+
     _autosave(session_id)
     return {"removed": removed}
+
+
+@router.post("/{session_id}/ai_resume")
+async def ai_resume(session_id: str):
+    """ai_task が停止している時に再起動する（retake・keeper・判定後など）。"""
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    ai_task = sess.get("ai_task")
+    if not ai_task or ai_task.done():
+        sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    return {"status": "ok"}
 
 
 @router.post("/human")
@@ -1859,9 +1943,19 @@ class VoteCommitRequest(BaseModel):
 
 
 class HumanTurnRequest(BaseModel):
-    action: str  # "send" | "extend" | "skip" | "interrupt"
+    action: str  # "send" | "extend" | "skip" | "interrupt" | "generate_image"
     text: str = ""
     character_id: str = ""  # interrupt 時に発言者IDを指定
+
+    from pydantic import validator as _pv
+
+    @_pv("action")
+    @classmethod
+    def _validate_action(cls, v: str) -> str:
+        valid = {"send", "extend", "skip", "interrupt", "generate_image"}
+        if v not in valid:
+            raise ValueError(f"action must be one of {sorted(valid)}")
+        return v
 
 
 @router.post("/{session_id}/human_turn")
@@ -2486,6 +2580,15 @@ def load_session(req: SessionLoadRequest):
         "keeper_char_id": meta.get("keeper_char_id", ""),
         "keeper_char_name": meta.get("keeper_char_name", ""),
         "human_keeper": meta.get("human_keeper", False),
+        # ── Phase 2: マルチプレイフィールド（ロード時は空で初期化）──
+        "players": {},
+        "host_token": "",
+        "ws_connections": {},
+        "ai_task": None,
+        "idle_shutdown_task": None,
+        "invite_codes": {},
+        "ws_rate": {},
+        "human_char_ids": meta.get("human_char_ids", []),
     }
     if len(_sessions) >= _MAX_SESSIONS:
         _sessions.popitem(last=False)
@@ -2787,7 +2890,7 @@ def get_session(session_id: str):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
-    return {"session": session}
+    return {"session": _session_for_json(session)}
 
 
 class StatSyncRequest(BaseModel):
@@ -2854,8 +2957,8 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     keepalive_task = asyncio.create_task(_keepalive())
     try:
         async for msg in ws.iter_json():
-            if not _check_ws_rate(raw_token):
-                await ws.send_json({"type": "error", "code": "rate_limit"})
+            if not _check_ws_rate(session_id, raw_token):
+                await _safe_send(session_id, raw_token, ws, {"type": "error", "code": "rate_limit"})
                 continue
             if msg.get("type") == "pong":
                 continue

@@ -48,29 +48,41 @@ def test_event_bus_wildcard_handler_exception_ignored():
 
 def test_check_ws_rate_allows_within_limit():
     """制限内のメッセージは許可されること。"""
-    from def_kari.api.routes.session import _check_ws_rate, _ws_rate
-    _ws_rate.clear()
-    for _ in range(60):
-        assert _check_ws_rate("tok1", limit=60, window=60) is True
+    from def_kari.api.routes.session import _check_ws_rate, _sessions
+    sid = "_rate_test_allow"
+    _sessions[sid] = {"ws_rate": {}}
+    try:
+        for _ in range(60):
+            assert _check_ws_rate(sid, "tok1", limit=60, window=60) is True
+    finally:
+        _sessions.pop(sid, None)
 
 
 def test_check_ws_rate_blocks_over_limit():
     """61回目は制限超過になること。"""
-    from def_kari.api.routes.session import _check_ws_rate, _ws_rate
-    _ws_rate.clear()
-    for _ in range(60):
-        _check_ws_rate("tok2", limit=60, window=60)
-    assert _check_ws_rate("tok2", limit=60, window=60) is False
+    from def_kari.api.routes.session import _check_ws_rate, _sessions
+    sid = "_rate_test_block"
+    _sessions[sid] = {"ws_rate": {}}
+    try:
+        for _ in range(60):
+            _check_ws_rate(sid, "tok2", limit=60, window=60)
+        assert _check_ws_rate(sid, "tok2", limit=60, window=60) is False
+    finally:
+        _sessions.pop(sid, None)
 
 
 def test_check_ws_rate_different_tokens_independent():
     """トークンごとに独立してカウントされること。"""
-    from def_kari.api.routes.session import _check_ws_rate, _ws_rate
-    _ws_rate.clear()
-    for _ in range(60):
-        _check_ws_rate("tokA", limit=60, window=60)
-    # tokB はまだ0回なので許可される
-    assert _check_ws_rate("tokB", limit=60, window=60) is True
+    from def_kari.api.routes.session import _check_ws_rate, _sessions
+    sid = "_rate_test_indep"
+    _sessions[sid] = {"ws_rate": {}}
+    try:
+        for _ in range(60):
+            _check_ws_rate(sid, "tokA", limit=60, window=60)
+        # tokB はまだ0回なので許可される
+        assert _check_ws_rate(sid, "tokB", limit=60, window=60) is True
+    finally:
+        _sessions.pop(sid, None)
 
 
 # ── WebSocket エンドポイント ─────────────────────────────────────────

@@ -68,6 +68,9 @@ def _auto_start():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio as _asyncio
+    from def_kari.api.routes.session import set_main_loop as _set_session_loop
+    _set_session_loop(_asyncio.get_running_loop())
     threading.Thread(target=_auto_start, daemon=True).start()
     yield
 

@@ -156,7 +156,8 @@ async def test_end_session_cancels_ai_task():
     }
     await _end_session(sid)
     assert cancelled == [True]
-    del _sessions[sid]
+    # _end_session が pop するので既に削除済み
+    assert sid not in _sessions
 
 
 @pytest.mark.asyncio

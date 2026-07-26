@@ -1,0 +1,12 @@
+{
+  "voice_archetype_x": {
+    "base_profile": {
+      "name": "Voice Archetype X",
+      "entity_type": "base_entity",
+      "player_type": "ai",
+      "identity_prompt": "",
+      "description": "表現参照のみの空基底。特定の声域・発声スタイルを共通点として持つブランチキャラクターの構造的錨。アイデンティティを持たず、セッションに参加できない。",
+      "default_model_config": {}
+    }
+  }
+}

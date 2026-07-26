@@ -158,6 +158,8 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "name": bp.get("name", character_id or ""),
         "name_reading": bp.get("name_reading", {}),
         "player_type": bp.get("player_type", "ai"),
+        "entity_type": bp.get("entity_type", "character"),
+        "base_entity_id": bp.get("base_entity_id"),
         "image_color": bp.get("image_color"),
         "appearance_tags": appearance_tags,
         "image_name_tags": image_name_tags,
@@ -227,6 +229,21 @@ def get_tts_speaker_id(character: dict, tts_backend: str):
     return _TTS_DEFAULT_SPEAKERS.get(tts_backend)
 
 
+
+def resolve_tts_speaker_id(character_id: str, tts_backend: str, profiles: dict | None = None):
+    """TTS話者IDを解決する。ブランチ → base_entity → デフォルトの順でフォールバック。"""
+    profiles = profiles or load_profiles()
+    char = get_character(character_id, profiles)
+    field = _TTS_SPEAKER_FIELDS.get(tts_backend)
+    if field and char.get(field) is not None:
+        return char[field]
+    base_entity_id = char.get("base_entity_id")
+    if base_entity_id:
+        base = get_character(base_entity_id, profiles)
+        if field and base.get(field) is not None:
+            return base[field]
+    return _TTS_DEFAULT_SPEAKERS.get(tts_backend)
+
 def apply_name_reading(text: str, character: dict) -> str:
     """TTS合成前にキャラクター名をカナ読みに置換する(VOICEVOX誤読対策)。
     フルネーム→名→姓の順で置換。family_name_kana/given_name_kanaがあれば新形式、
@@ -266,6 +283,8 @@ def list_character_choices(profiles: dict | None = None) -> list[tuple[str, str]
     choices = []
     for cid, profile in profiles.items():
         bp = _get_bp(profile)
+        if bp.get("entity_type") == "base_entity":
+            continue
         name = bp.get("name", cid)
         choices.append((cid, name))
     return choices
