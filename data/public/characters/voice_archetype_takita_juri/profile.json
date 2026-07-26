@@ -1,0 +1,12 @@
+{
+  "voice_archetype_takita_juri": {
+    "base_profile": {
+      "name": "Voice Archetype: Takita Juri",
+      "entity_type": "base_entity",
+      "player_type": "ai",
+      "identity_prompt": "",
+      "description": "声優・滝田樹里氏の声域・発声スタイルを参照する空基底。温かみのある柔らかい声質。包容力があり、穏やかで優しい印象。吹奏楽（トランペット）の素養を持つ音楽的背景。",
+      "default_model_config": {}
+    }
+  }
+}

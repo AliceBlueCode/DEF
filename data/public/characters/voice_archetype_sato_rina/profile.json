@@ -1,0 +1,12 @@
+{
+  "voice_archetype_sato_rina": {
+    "base_profile": {
+      "name": "Voice Archetype: Sato Rina",
+      "entity_type": "base_entity",
+      "player_type": "ai",
+      "identity_prompt": "",
+      "description": "声優・佐藤利奈氏の声域・発声スタイルを参照する空基底。アルト寄りの落ち着いた声質。おっとりしているが内に快活さと芯を持つ。聞くと癒される、包容力のある低めの女声。",
+      "default_model_config": {}
+    }
+  }
+}
