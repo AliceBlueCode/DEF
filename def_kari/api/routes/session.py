@@ -224,6 +224,23 @@ def _cleanup_revoked_jtis(session_id: str) -> None:
     _revoked_jtis.difference_update(alive_jtis)
 
 
+def _is_human_char(session: dict, char_id: str, profiles: dict | None = None) -> bool:
+    """セッション内で人間扱いかどうかを返す。
+
+    human_char_ids（Phase 3以降）に含まれていれば人間。
+    未設定の場合は profiles の player_type にフォールバック。
+    """
+    if char_id in session.get("human_char_ids", []):
+        return True
+    # guest_chars（持ち込みキャラ）も人間扱い
+    if char_id in session.get("guest_chars", {}):
+        return True
+    if profiles is None:
+        profiles = load_profiles()
+    char = get_character(char_id, profiles)
+    return bool(char and char.get("player_type") == "human")
+
+
 def _generate_invite_code(rating: str) -> str:
     alpha = "".join(secrets.choice(_INVITE_CHARS_ALPHA) for _ in range(3))
     num   = "".join(secrets.choice(_INVITE_CHARS_NUM)   for _ in range(3))
@@ -784,6 +801,11 @@ def start_session(req: SessionStartRequest):
         "ai_task": None,            # asyncio.Task | None
         "idle_shutdown_task": None, # asyncio.Task | None
         "invite_codes": {},         # invite_code → {"rating": str, "used": bool}
+        # ── Phase 3: 複数人間プレイヤー対応 ──
+        "human_char_ids": [
+            cid for cid in player_ids
+            if (get_character(cid, profiles) or {}).get("player_type") == "human"
+        ],
     }
 
     # ホストトークンを発行して sessions に書き込む
@@ -867,6 +889,10 @@ def join_session(req: JoinRequest, request: Request):
 
     player_token = issue_player_jwt(session_id, "player", char_id)
     sess["players"][player_token] = char_id
+    if char_id:
+        sess.setdefault("human_char_ids", [])
+        if char_id not in sess["human_char_ids"]:
+            sess["human_char_ids"].append(char_id)
     invite_info["used"] = True
 
     # player_joined イベントをブロードキャスト
@@ -882,6 +908,27 @@ def join_session(req: JoinRequest, request: Request):
         "character_id": char_id,
         "session_rating": session_rating,
     }
+
+
+class AiTakeoverRequest(BaseModel):
+    character_id: str
+
+
+@router.post("/{session_id}/ai_takeover")
+def ai_takeover(session_id: str, req: AiTakeoverRequest, auth: dict = Depends(require_host)):
+    """退室したプレイヤーのキャラ枠を AI に引き継ぐ（ホストのみ）。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if req.character_id not in sess.get("initiative", []):
+        raise HTTPException(404, "Character not in session")
+    human_ids: list = sess.setdefault("human_char_ids", [])
+    if req.character_id not in human_ids:
+        raise HTTPException(409, "Character is already AI-controlled")
+    human_ids.remove(req.character_id)
+    return {"status": "ok", "character_id": req.character_id, "human_char_ids": human_ids}
 
 
 @router.post("/next")
@@ -933,7 +980,7 @@ def next_turn(req: SessionNextRequest):
     char = get_character(current_char_id, profiles)
 
     # 人間プレイヤーのターンは LLM を呼ばず入力待ちを返す
-    if char.get("player_type") == "human":
+    if _is_human_char(session, current_char_id, profiles):
         return {
             "waiting_for_human": True,
             "character_id": current_char_id,
@@ -1934,7 +1981,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
         char_name = name_map.get(char_id, char_id)
 
         # 人間プレイヤーは LLM 生成をスキップ
-        if char and char.get("player_type") == "human":
+        if _is_human_char(session, char_id, profiles):
             continue
 
         bid = char_backends.get(char_id) or default_backend
@@ -2058,7 +2105,7 @@ def vote_commit(session_id: str, req: VoteCommitRequest):
         char = get_character(char_id, profiles)
 
         # 人間プレイヤーは LLM 判定せず keeper_vote（ボタンクリック）を直接使う
-        if char and char.get("player_type") == "human":
+        if _is_human_char(session, char_id, profiles):
             results[char_id] = req.keeper_vote
             continue
 
