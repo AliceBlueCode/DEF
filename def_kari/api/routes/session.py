@@ -151,6 +151,132 @@ def _ws_broadcast_handler(session_id: str, event: dict) -> None:
 _game_event_bus.subscribe("*", _ws_broadcast_handler)
 
 
+# ── JWT 認証 ─────────────────────────────────────────────────────────
+
+from jose import jwt as _jwt, JWTError as _JWTError
+import datetime as _dt
+
+_revoked_jtis: set[str] = set()
+
+# 招待コード生成
+_INVITE_CHARS_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ"  # O・I除く
+_INVITE_CHARS_NUM   = "23456789"                   # 0・1除く
+_INVITE_RATINGS     = ["SFW", "R15", "R18", "UNL"]
+
+# invite_code → session_id マッピング
+_invite_registry: dict[str, str] = {}
+# invite失敗カウント (ip → [timestamp, ...])
+_invite_fail_rate: dict[str, deque] = {}
+_invite_locked_until: dict[str, float] = {}
+
+
+def _get_jwt_secret() -> str:
+    from def_kari.settings import get_jwt_secret
+    return get_jwt_secret()
+
+
+def issue_player_jwt(session_id: str, role: str, char_id: str = "") -> str:
+    jti = str(_uuid_mod.uuid4())
+    payload = {
+        "session_id": session_id,
+        "role": role,
+        "jti": jti,
+        "exp": _dt.datetime.utcnow() + _dt.timedelta(hours=24),
+    }
+    if char_id:
+        payload["char_id"] = char_id
+    return _jwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
+
+
+def verify_jwt(token: str) -> dict:
+    """JWTを検証して payloadを返す。失敗時は JWTError を raise する。"""
+    payload = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
+    if payload.get("jti") in _revoked_jtis:
+        raise _JWTError("Token revoked")
+    return payload
+
+
+def revoke_token(token: str) -> None:
+    """退室・強制切断時に jti をブラックリストに追加する。"""
+    try:
+        payload = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
+        _revoked_jtis.add(payload["jti"])
+        sess = _sessions.get(payload.get("session_id", ""))
+        if sess:
+            sess["ws_connections"].pop(token, None)
+    except Exception:
+        pass
+
+
+def _cleanup_revoked_jtis(session_id: str) -> None:
+    """セッション終了時に当該セッションの jti をブラックリストから掃除する。"""
+    sess = _sessions.get(session_id)
+    if not sess:
+        return
+    alive_jtis: set[str] = set()
+    for token in list(sess.get("players", {}).keys()):
+        try:
+            p = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
+            alive_jtis.add(p["jti"])
+        except Exception:
+            pass
+    # alive_jtis は既に終了したセッションのものなので全削除
+    _revoked_jtis.difference_update(alive_jtis)
+
+
+def _generate_invite_code(rating: str) -> str:
+    alpha = "".join(secrets.choice(_INVITE_CHARS_ALPHA) for _ in range(3))
+    num   = "".join(secrets.choice(_INVITE_CHARS_NUM)   for _ in range(3))
+    return f"{rating}-{alpha}-{num}"
+
+
+def _check_invite_rate(client_ip: str) -> bool:
+    """True=許可、False=ロック中 or 制限超過（10回/分、10回失敗で1時間ロック）"""
+    now = time.monotonic()
+    if _invite_locked_until.get(client_ip, 0) > now:
+        return False
+    q = _invite_fail_rate.setdefault(client_ip, deque())
+    recent = [t for t in q if t > now - 60]
+    _invite_fail_rate[client_ip] = deque(recent)
+    if len(recent) >= 10:
+        _invite_locked_until[client_ip] = now + 3600
+        return False
+    return True
+
+
+def _record_invite_fail(client_ip: str) -> None:
+    _invite_fail_rate.setdefault(client_ip, deque()).append(time.monotonic())
+
+
+# ── FastAPI Dependency ────────────────────────────────────────────────
+
+from fastapi import Header, HTTPException, Depends, Request
+
+
+def require_host(authorization: str = Header(...)) -> dict:
+    """role == host のみ通す Dependency。"""
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = verify_jwt(token)
+    except _JWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if payload.get("role") != "host":
+        raise HTTPException(403, "Host role required")
+    return payload
+
+
+def require_player(authorization: str = Header(...)) -> dict:
+    """role == host または player を通す Dependency（observer は 403）。"""
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = verify_jwt(token)
+    except _JWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if payload.get("role") not in ("host", "player"):
+        raise HTTPException(403, "Player role required")
+    return payload
+
+
 def _schedule_idle_shutdown(session_id: str, delay: int = 300) -> None:
     """全員切断後 delay 秒で AI タスクを停止する。再接続時はキャンセルする。"""
     async def _shutdown() -> None:
@@ -651,11 +777,111 @@ def start_session(req: SessionStartRequest):
         "keeper_char_id": keeper_char_id,
         "keeper_char_name": all_name_map.get(keeper_char_id, "") if keeper_char_id else "",
         "human_keeper": req.human_keeper,
+        # ── Phase 2: マルチプレイフィールド ──
+        "players": {},              # token → char_id（参加者マップ）
+        "host_token": "",           # ホストのJWT（発行後に上書き）
+        "ws_connections": {},       # token → WebSocket
+        "ai_task": None,            # asyncio.Task | None
+        "idle_shutdown_task": None, # asyncio.Task | None
+        "invite_codes": {},         # invite_code → {"rating": str, "used": bool}
     }
+
+    # ホストトークンを発行して sessions に書き込む
+    host_token = issue_player_jwt(session_id, "host")
+    _sessions[session_id]["host_token"] = host_token
+    _sessions[session_id]["players"][host_token] = ""  # ホストはキャラなし（既存仕組みを維持）
 
     order = [name_map.get(c, c) for c in initiative]
     _autosave(session_id)
-    return {"session_id": session_id, "initiative": initiative, "order": order, "human_keeper": req.human_keeper}
+    return {
+        "session_id": session_id,
+        "initiative": initiative,
+        "order": order,
+        "human_keeper": req.human_keeper,
+        "host_token": host_token,
+    }
+
+
+class InviteRequest(BaseModel):
+    rating: str = "SFW"
+
+
+@router.post("/{session_id}/invite")
+def create_invite(session_id: str, req: InviteRequest, auth: dict = Depends(require_host)):
+    """招待コードを発行する（ホストのみ）。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    rating = req.rating if req.rating in _INVITE_RATINGS else "SFW"
+    # 衝突を避けながら生成
+    for _ in range(10):
+        code = _generate_invite_code(rating)
+        if code not in _invite_registry:
+            break
+    _invite_registry[code] = session_id
+    sess["invite_codes"][code] = {"rating": rating, "used": False}
+    return {"invite_code": code, "rating": rating, "session_id": session_id}
+
+
+class JoinRequest(BaseModel):
+    invite_code: str
+    character_json: dict = {}
+
+
+@router.post("/join")
+def join_session(req: JoinRequest, request: Request):
+    """招待コードでセッションに参加し、player JWT を返す。"""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_invite_rate(client_ip):
+        raise HTTPException(429, "Too many failed attempts")
+
+    session_id = _invite_registry.get(req.invite_code)
+    if not session_id:
+        _record_invite_fail(client_ip)
+        raise HTTPException(404, "Invalid invite code")
+
+    sess = _sessions.get(session_id)
+    if not sess:
+        _record_invite_fail(client_ip)
+        raise HTTPException(404, "Session not found")
+
+    invite_info = sess["invite_codes"].get(req.invite_code, {})
+    if invite_info.get("used"):
+        raise HTTPException(409, "Invite code already used")
+
+    # セッションのレーティングと参加者キャラレーティングをチェック
+    session_rating = invite_info.get("rating", "SFW")
+
+    # 持ち込みキャラの処理
+    char_id = ""
+    if req.character_json:
+        # ゲスト用キャラIDをサーバーで生成（パストラバーサル対策）
+        char_id = f"guest_{_uuid_mod.uuid4().hex[:8]}"
+        char_data = dict(req.character_json)
+        char_data["id"] = char_id
+        char_data["player_type"] = "human"
+        # セッション内にゲストキャラを一時登録
+        sess.setdefault("guest_chars", {})[char_id] = char_data
+
+    player_token = issue_player_jwt(session_id, "player", char_id)
+    sess["players"][player_token] = char_id
+    invite_info["used"] = True
+
+    # player_joined イベントをブロードキャスト
+    display_name = req.character_json.get("name", "Guest") if req.character_json else "Guest"
+    _game_event_bus.emit(session_id, "PLAYER_JOINED", {
+        "character_id": char_id,
+        "display_name": display_name,
+    })
+
+    return {
+        "player_token": player_token,
+        "session_id": session_id,
+        "character_id": char_id,
+        "session_rating": session_rating,
+    }
 
 
 @router.post("/next")
@@ -2464,9 +2690,11 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     try:
         auth_msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
         raw_token = auth_msg.get("token", "")
-        # Phase 2 で JWT 検証を追加する。現時点はトークン存在チェックのみ
         if not raw_token:
             raise ValueError("no token")
+        jwt_payload = verify_jwt(raw_token)  # JWTError で 4001 に落ちる
+        if jwt_payload.get("session_id") != session_id:
+            raise ValueError("session mismatch")
     except Exception:
         await ws.close(code=4001)
         return

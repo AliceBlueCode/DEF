@@ -53,6 +53,7 @@ PERSISTED_KEYS = [
     "vote_force_approve",
     "keeper_judgment_mode",
     "tts_voicevox_cpu_mode",
+    "jwt_secret",
 ]
 
 
@@ -65,6 +66,29 @@ def load_settings() -> dict:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def get_jwt_secret() -> str:
+    """JWT秘密鍵を返す。未設定なら自動生成してsettings.jsonに保存する。"""
+    import secrets as _secrets
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    current: dict = {}
+    if SETTINGS_PATH.exists():
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as f:
+                current = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    if current.get("jwt_secret"):
+        return current["jwt_secret"]
+    new_secret = _secrets.token_hex(32)
+    current["jwt_secret"] = new_secret
+    tmp = str(SETTINGS_PATH) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    import os as _os
+    _os.replace(tmp, str(SETTINGS_PATH))
+    return new_secret
 
 
 def save_settings(session_state) -> None:
