@@ -230,6 +230,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const keeperFiredRoundRef = useRef(0)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [showJoinDialog, setShowJoinDialog] = useState(false)
+  const [myRole, setMyRole] = useState<'host' | 'player' | 'observer'>('host')
 
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
@@ -563,6 +564,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         setCharSheetData(sheetData)
       }
       hostTokenRef.current = data.host_token ?? ''
+      setMyRole('host')
       const firstCharId = (data.initiative || [])[0]
       if (humanChar && firstCharId === humanChar.id) {
         setWaitingForHuman(true)
@@ -1734,17 +1736,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           </button>
           {showJoinDialog && (
             <JoinDialog
-              onJoined={(sid, token, charId) => {
+              onJoined={(sid, token, charId, role) => {
                 hostTokenRef.current = token
                 sessionIdRef.current = sid
                 setSessionId(sid)
+                setMyRole(role)
                 setShowJoinDialog(false)
-                if (charId) {
-                  setParticipants(prev => [
-                    ...prev,
-                    { char_id: charId, display_name: t('session.join.you'), role: 'player', connected: true },
-                  ])
-                }
+                setParticipants(prev => [
+                  ...prev,
+                  { char_id: charId || `observer_${sid.slice(0, 6)}`, display_name: t('session.join.you'), role, connected: true },
+                ])
               }}
               onClose={() => setShowJoinDialog(false)}
             />
@@ -2122,7 +2123,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       )}
       </div>
 
-      <div className="session-controls">
+      <div className="session-controls" style={myRole === 'observer' ? { display: 'none' } : undefined}>
         {humanCharId && (
           <>
             <div className="session-controls-row">

@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useT } from '../i18n'
 
 type Props = {
-  onJoined: (sessionId: string, playerToken: string, charId: string) => void
+  onJoined: (sessionId: string, playerToken: string, charId: string, role: 'player' | 'observer') => void
   onClose: () => void
 }
 
@@ -76,7 +76,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
         setError(data.detail ?? t('session.join.errorFailed'))
         return
       }
-      onJoined(data.session_id, data.player_token, data.character_id)
+      onJoined(data.session_id, data.player_token, data.character_id, data.role ?? 'player')
     } catch {
       setError(t('session.join.errorFailed'))
     } finally {

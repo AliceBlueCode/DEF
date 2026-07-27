@@ -1015,9 +1015,11 @@ def join_session(req: JoinRequest, request: Request):
     # セッションのレーティングと参加者キャラレーティングをチェック
     session_rating = invite_info.get("rating", "SFW")
 
-    # 持ち込みキャラの処理
+    # 持ち込みキャラの処理（なければ observer として参加）
     char_id = ""
+    role = "observer"
     if req.character_json:
+        role = "player"
         # ゲスト用キャラIDをサーバーで生成（パストラバーサル対策）
         char_id = f"guest_{_uuid_mod.uuid4().hex[:8]}"
         char_data = dict(req.character_json)
@@ -1026,19 +1028,20 @@ def join_session(req: JoinRequest, request: Request):
         # セッション内にゲストキャラを一時登録
         sess.setdefault("guest_chars", {})[char_id] = char_data
 
-    player_token = issue_player_jwt(session_id, "player", char_id)
+    player_token = issue_player_jwt(session_id, role, char_id)
     sess["players"][player_token] = char_id
-    if char_id:
+    if role == "player" and char_id:
         sess.setdefault("human_char_ids", [])
         if char_id not in sess["human_char_ids"]:
             sess["human_char_ids"].append(char_id)
     invite_info["used"] = True
 
-    # player_joined イベントをブロードキャスト
-    display_name = req.character_json.get("name", "Guest") if req.character_json else "Guest"
+    # player_joined / observer_joined イベントをブロードキャスト
+    display_name = req.character_json.get("name", "Guest") if req.character_json else "Observer"
     _game_event_bus.emit(session_id, "PLAYER_JOINED", {
         "character_id": char_id,
         "display_name": display_name,
+        "role": role,
     })
 
     return {
@@ -1046,6 +1049,7 @@ def join_session(req: JoinRequest, request: Request):
         "session_id": session_id,
         "character_id": char_id,
         "session_rating": session_rating,
+        "role": role,
     }
 
 
@@ -1521,7 +1525,7 @@ def human_message(req: SessionHumanMessage):
 
 
 @router.post("/{session_id}/keeper")
-def inject_keeper_message(session_id: str, req: KeeperMessageRequest):
+def inject_keeper_message(session_id: str, req: KeeperMessageRequest, _auth: dict = Depends(require_player)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -1940,7 +1944,7 @@ class DesignateRequest(BaseModel):
 
 
 @router.post("/{session_id}/designate")
-def designate_next(session_id: str, req: DesignateRequest):
+def designate_next(session_id: str, req: DesignateRequest, _auth: dict = Depends(require_player)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -1999,7 +2003,7 @@ class HumanTurnRequest(BaseModel):
 
 
 @router.post("/{session_id}/human_turn")
-async def human_turn_action(session_id: str, req: HumanTurnRequest):
+async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict = Depends(require_player)):
     """人間プレイヤーのターンアクション（send / extend / skip）。"""
     session = _sessions.get(session_id)
     if not session:
@@ -2283,7 +2287,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
 
 
 @router.post("/{session_id}/vote/commit")
-async def vote_commit(session_id: str, req: VoteCommitRequest):
+async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Depends(require_player)):
     """キーパー票を受け取り、AI票と合算して集計・効果適用する。"""
     session = _sessions.get(session_id)
     if not session:
