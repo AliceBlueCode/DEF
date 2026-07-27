@@ -647,6 +647,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     // autoAdvance=true で人間ターン待ちの場合はスキップを自動実行
     if (next && !loading && waitingForHuman) {
       void submitHumanTurn('skip')
+    } else if (next && !loading && !waitingForHuman && sessionId) {
+      // AIタスクが未起動・停止中の場合に再起動
+      void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     }
   }
 
@@ -1243,7 +1246,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       : pendingActions.map((a, i) => `${i + 1}. ${a}`).join('\n')
     await fetch(`/api/session/${sessionId}/keeper`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ text }),
     })
     setMessages(prev => [...prev, {
@@ -1284,7 +1287,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (!sessionId || !designateTarget) return
     await fetch(`/api/session/${sessionId}/designate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ target_id: designateTarget }),
     })
     const nameMap = Object.fromEntries(characters.map(c => [c.id, c.name]))
@@ -1301,7 +1304,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (!sessionId || !t2iBackend) return
     const res = await fetch(`/api/session/${sessionId}/human_turn`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ action: 'generate_image', text: '', character_id: humanCharId }),
     })
     const data = await res.json()
@@ -1323,7 +1326,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     const text = lines.join('\n')
     const res = await fetch(`/api/session/${sessionId}/human_turn`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ action, text, character_id: humanCharId }),
     })
     const data = await res.json()
@@ -1469,7 +1472,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     try {
       const res = await fetch(`/api/session/${sessionId}/vote/commit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
         body: JSON.stringify({ keeper_vote: keeperVote }),
       })
       const data = await res.json()
@@ -1936,7 +1939,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               style={{ opacity: showSheetPanel ? 1 : 0.55 }}
             >📋</button>
           )}
-          {hostTokenRef.current && sessionId && (
+          {myRole === 'host' && sessionId && (
             <InvitePanel sessionId={sessionId} hostToken={hostTokenRef.current} />
           )}
           <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
