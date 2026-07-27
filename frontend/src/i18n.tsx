@@ -7,6 +7,9 @@ const LS_KEY_LANG = 'def_lang'
 // ── translation dictionaries ────────────────────────────────────────────────
 
 const ja: Record<string, string> = {
+  // Common
+  'common.cancel': 'キャンセル',
+
   // App tabs
   'tab.character': 'キャラクター',
   'tab.chat': 'チャット',
@@ -34,6 +37,28 @@ const ja: Record<string, string> = {
   'session.setup.savedUntitled': '(無題)',
   'session.setup.deleteBtn.title': '削除',
   'session.setup.deleteConfirm': '「{topic}」を削除しますか？',
+
+  // Session — join (player joining via invite code)
+  'session.join.openBtn': '招待コードで参加',
+  'session.join.title': 'セッションに参加',
+  'session.join.codeLabel': '招待コード',
+  'session.join.charLabel': 'キャラクター（任意）',
+  'session.join.fileBtn': 'JSONを読み込む',
+  'session.join.charLoaded': '読込済み',
+  'session.join.submit': '参加する',
+  'session.join.you': 'あなた',
+  'session.join.errorNoCode': '招待コードを入力してください',
+  'session.join.errorBadJson': 'JSONの形式が正しくありません',
+  'session.join.errorFailed': '参加に失敗しました',
+
+  // Session — invite (host issuing invite codes)
+  'session.invite.issue': '発行',
+  'session.invite.copy': 'コピー',
+  'session.invite.copied': 'コピー済み',
+
+  // Session — participants panel
+  'session.participants.title': '参加者',
+  'session.participants.disconnected': '切断中',
 
   // Session — rule dialog
   'session.ruleDialog.header': 'セッションルール設定',
@@ -508,6 +533,9 @@ const ja: Record<string, string> = {
 }
 
 const en: Record<string, string> = {
+  // Common
+  'common.cancel': 'Cancel',
+
   // App tabs
   'tab.character': 'Character',
   'tab.chat': 'Chat',
@@ -535,6 +563,28 @@ const en: Record<string, string> = {
   'session.setup.savedUntitled': '(Untitled)',
   'session.setup.deleteBtn.title': 'Delete',
   'session.setup.deleteConfirm': 'Delete "{topic}"?',
+
+  // Session — join
+  'session.join.openBtn': 'Join with Invite Code',
+  'session.join.title': 'Join Session',
+  'session.join.codeLabel': 'Invite Code',
+  'session.join.charLabel': 'Character (optional)',
+  'session.join.fileBtn': 'Load JSON',
+  'session.join.charLoaded': 'Loaded',
+  'session.join.submit': 'Join',
+  'session.join.you': 'You',
+  'session.join.errorNoCode': 'Please enter an invite code',
+  'session.join.errorBadJson': 'Invalid JSON format',
+  'session.join.errorFailed': 'Failed to join session',
+
+  // Session — invite
+  'session.invite.issue': 'Issue',
+  'session.invite.copy': 'Copy',
+  'session.invite.copied': 'Copied',
+
+  // Session — participants
+  'session.participants.title': 'Participants',
+  'session.participants.disconnected': 'Disconnected',
 
   // Session — rule dialog
   'session.ruleDialog.header': 'Session Rule Settings',

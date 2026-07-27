@@ -1,5 +1,8 @@
 ﻿import { useState, useEffect, useRef } from 'react'
 import { useT } from '../i18n'
+import InvitePanel from './InvitePanel'
+import JoinDialog from './JoinDialog'
+import ParticipantList, { type Participant } from './ParticipantList'
 
 type Character = { id: string; name: string; image_color?: string; player_type?: string }
 
@@ -225,6 +228,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [pendingJudgments, setPendingJudgments] = useState<KeeperJudgment[]>([])
   const wasAutoAdvancingRef = useRef(false)
   const keeperFiredRoundRef = useRef(0)
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [showJoinDialog, setShowJoinDialog] = useState(false)
 
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
@@ -302,6 +307,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (event.type === 'SESSION_ENDED') {
       sessionIdRef.current = ''
       setSessionId('')
+    }
+    if (event.type === 'PLAYER_JOINED') {
+      const p = event.payload
+      setParticipants(prev =>
+        prev.some(x => x.char_id === p.character_id)
+          ? prev
+          : [...prev, { char_id: p.character_id, display_name: p.display_name, role: 'player', connected: true }]
+      )
+    }
+    if (event.type === 'PLAYER_LEFT') {
+      setParticipants(prev => prev.filter(x => x.char_id !== event.payload.character_id))
+    }
+    if (event.type === 'PLAYER_DISCONNECTED') {
+      setParticipants(prev =>
+        prev.map(x => x.char_id === event.payload.character_id ? { ...x, connected: false } : x)
+      )
     }
   }
 
@@ -1705,6 +1726,29 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           >
             {t('session.setup.startBtn')}
           </button>
+          <button
+            style={{ padding: '10px 22px', borderRadius: 8, border: '1px solid #4a6cf7', background: 'transparent', color: '#4a6cf7', cursor: 'pointer', fontSize: '0.95em', fontWeight: 500, marginLeft: 16 }}
+            onClick={() => setShowJoinDialog(true)}
+          >
+            {t('session.join.openBtn')}
+          </button>
+          {showJoinDialog && (
+            <JoinDialog
+              onJoined={(sid, token, charId) => {
+                hostTokenRef.current = token
+                sessionIdRef.current = sid
+                setSessionId(sid)
+                setShowJoinDialog(false)
+                if (charId) {
+                  setParticipants(prev => [
+                    ...prev,
+                    { char_id: charId, display_name: t('session.join.you'), role: 'player', connected: true },
+                  ])
+                }
+              }}
+              onClose={() => setShowJoinDialog(false)}
+            />
+          )}
 
           {savedSessions.length > 0 && (
             <div className="session-field">
@@ -1891,6 +1935,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               style={{ opacity: showSheetPanel ? 1 : 0.55 }}
             >📋</button>
           )}
+          {hostTokenRef.current && sessionId && (
+            <InvitePanel sessionId={sessionId} hostToken={hostTokenRef.current} />
+          )}
           <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
           <button className="end-btn" onClick={endSession}>{t('session.header.endBtn')}</button>
         </div>
@@ -2033,6 +2080,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           <div ref={messagesEndRef} />
         </div>
       </div>
+      {participants.length > 0 && (
+        <div style={{ width: 160, overflowY: 'auto', borderLeft: '1px solid var(--border-color, #444)', flexShrink: 0 }}>
+          <ParticipantList participants={participants} />
+        </div>
+      )}
       {trpgMode && showSheetPanel && Object.keys(charSheetData).length > 0 && (
         <div style={{ width: 220, overflowY: 'auto', borderLeft: '1px solid var(--border-color, #444)', padding: '10px 8px', flexShrink: 0, fontSize: '0.8em' }}>
           {Object.entries(charSheetData).map(([charId, sheet]) => {
