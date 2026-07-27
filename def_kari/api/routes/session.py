@@ -1246,6 +1246,46 @@ def next_turn(req: SessionNextRequest):
         trpg_context=_trpg_ctx,
     )
 
+    # 同基底衝突処理: 同一 base_entity_id を持つキャラが複数参加している場合にアンカー文注入
+    _base_entity_groups: dict[str, list[tuple[str, str]]] = {}
+    for _cid in initiative:
+        _c = get_character(_cid, profiles)
+        if not _c:
+            continue
+        _beid = _c.get("base_entity_id")
+        if not _beid:
+            continue
+        _cname = name_map.get(_cid, _cid)
+        _core = (_c.get("character_constitution") or {}).get("core", "")
+        _base_entity_groups.setdefault(_beid, []).append((_cname, _core))
+    for _beid, _group in _base_entity_groups.items():
+        if len(_group) < 2:
+            continue
+        if _user_lang == "ja":
+            _anchor_lines = "\n".join(
+                f"- {_n}：{_k}" if _k else f"- {_n}"
+                for _n, _k in _group
+            )
+            session_ctx += (
+                f"\n\n【重要：共通表現参照キャラクター】"
+                f"以下のキャラクターは共通の表現参照（{_beid}）を持ちますが、"
+                "それぞれ完全に独立したアイデンティティを持ちます。"
+                "互いの人格・価値観・口調を混同・継承してはなりません。\n"
+                f"{_anchor_lines}"
+            )
+        else:
+            _anchor_lines = "\n".join(
+                f"- {_n}: {_k}" if _k else f"- {_n}"
+                for _n, _k in _group
+            )
+            session_ctx += (
+                f"\n\n[IMPORTANT: Shared Expression Reference] "
+                f"The following characters share a common expression reference ({_beid}), "
+                "but are completely independent identities. "
+                "They must NOT inherit or borrow personality, values, or speech patterns from each other.\n"
+                f"{_anchor_lines}"
+            )
+
     # 死者視点：runtime_statsでステータスが0になっているキャラは死者として発言させる
     _runtime_stats = session.get("runtime_stats", {}).get(current_char_id, {})
     _is_dead = bool(_runtime_stats) and any(v <= 0 for v in _runtime_stats.values())

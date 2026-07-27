@@ -174,6 +174,7 @@ def get_character(character_id: str | None, profiles: dict | None = None) -> dic
         "relationships": relationships,
         "goals": bp.get("goals", {}),
         "knowledge": bp.get("knowledge", []),
+        "character_constitution": bp.get("character_constitution", {}),
     }
 
 
