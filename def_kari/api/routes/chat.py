@@ -1,8 +1,11 @@
 """Chat API routes."""
 
+import asyncio
+import json
 import os
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 def _debug_guard():
@@ -231,3 +234,30 @@ def get_vram_lock_status():
     from def_kari.resources.vram_lock import get_vram_lock
     locked = get_vram_lock().locked()
     return {"locked": locked}
+
+
+@router.get("/status/stream")
+async def status_stream():
+    """vram_lock / force_rating の変化をSSEでpushする。ポーリング代替。"""
+    async def generate():
+        from def_kari.resources.vram_lock import get_vram_lock
+        last_locked: bool | None = None
+        last_force: dict | None = None
+        try:
+            while True:
+                locked = get_vram_lock().locked()
+                force = dict(_force_rating)
+                if locked != last_locked or force != last_force:
+                    last_locked = locked
+                    last_force = dict(force)
+                    payload = json.dumps({"vram_locked": locked, "force_rating": force})
+                    yield f"data: {payload}\n\n"
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

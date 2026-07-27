@@ -40,12 +40,6 @@ export default function Sidebar() {
     fetch('/api/settings/')
       .then(r => r.json())
       .then(data => setSettings(data.settings || {}))
-    fetch('/api/chat/force-rating')
-      .then(r => r.json())
-      .then(data => {
-        setForceEnabled(data.enabled ?? false)
-        setForceTag(data.tag ?? 'nsfw')
-      })
   }, [])
 
   // 設定変更イベントで settings を同期
@@ -58,23 +52,24 @@ export default function Sidebar() {
     return () => window.removeEventListener('def-settings-change', handler)
   }, [])
 
-  // ポーリング（status_poll_sec が変わると自動リセット）
-  const pollSec = Math.max(1, Number(settings.status_poll_sec) || 5) * 1000
+  // SSE でステータスをリアルタイム受信（vram_lock / force_rating）
   useEffect(() => {
-    const poll = () => {
-      fetch('/api/chat/vram-lock')
-        .then(r => r.json())
-        .then(data => setVramLocked(data.locked ?? false))
-        .catch(() => {})
-      fetch('/api/chat/force-rating')
-        .then(r => r.json())
-        .then(data => setForceEnabled(data.enabled ?? false))
-        .catch(() => {})
+    const es = new EventSource('/api/chat/status/stream')
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.vram_locked !== undefined) setVramLocked(data.vram_locked as boolean)
+        if (data.force_rating) {
+          setForceEnabled(data.force_rating.enabled ?? false)
+          setForceTag(data.force_rating.tag ?? 'nsfw')
+        }
+      } catch {}
     }
-    poll()
-    const timer = setInterval(poll, pollSec)
-    return () => clearInterval(timer)
-  }, [pollSec])
+    es.onerror = () => {
+      es.close()
+    }
+    return () => es.close()
+  }, [])
 
   const get = useCallback(<T,>(key: string, def: T): T =>
     (key in settings ? settings[key] : def) as T, [settings])
