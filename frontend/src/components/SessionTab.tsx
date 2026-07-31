@@ -158,6 +158,12 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [sessionStarting, setSessionStarting] = useState(false)
+  const [lobbyMode, setLobbyMode] = useState(false)
+  const [lobbyActive, setLobbyActive] = useState(false)  // 参加者側: ホスト開始待ち
+  const [lobbyMaxPlayers, setLobbyMaxPlayers] = useState(4)
+  const [hostRole, setHostRole] = useState<'keeper' | 'player'>('keeper')
+  const [hostCharForLobby, setHostCharForLobby] = useState('')
+  const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
   const [round, setRound] = useState(1)
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0)
   const [activeTurnCharId, setActiveTurnCharId] = useState('')
@@ -176,6 +182,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const ttsEnabledRef = useRef(false)
   const ttsHumanEnabledRef = useRef(false)
   const hostTokenRef = useRef('')
+  const myCharIdRef = useRef('')  // このタブが担当するキャラID（オンライン対戦用）
+  const myRoleRef = useRef<'host' | 'player' | 'observer' | 'gm'>('host')
   const wsRef = useRef<WebSocket | null>(null)
   const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [standingFallback, setStandingFallback] = useState<Set<string>>(new Set())
@@ -230,7 +238,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const keeperFiredRoundRef = useRef(0)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [showJoinDialog, setShowJoinDialog] = useState(false)
-  const [myRole, setMyRole] = useState<'host' | 'player' | 'observer'>('host')
+  const [myRole, setMyRole] = useState<'host' | 'player' | 'observer' | 'gm'>('host')
 
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
@@ -291,11 +299,32 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
       if (typeof p.round === 'number') setRound(p.round)
       setActiveTurnCharId(p.character_id ?? '')
-      setWaitingForHuman(true)
-      setHasDiscarded(false)
-      setHumanCharId(p.character_id ?? '')
-      setHumanCharName(p.character_name ?? '')
       setLoading(false)
+      // オンライン: 自分のキャラターンのときだけプレイヤーコントロールに切り替える
+      // myCharIdRef が空 = キーパー/オブザーバー → 変更しない
+      if (myCharIdRef.current && myCharIdRef.current === p.character_id) {
+        setWaitingForHuman(true)
+        setHasDiscarded(false)
+        setHumanCharId(p.character_id ?? '')
+        setHumanCharName(p.character_name ?? '')
+      }
+    }
+    if (event.type === 'HUMAN_ACTION') {
+      const p = event.payload
+      // 自分が送信したメッセージはローカルで既に追加済みなのでスキップ
+      // keeper メッセージ: sender_role が自分のロールと一致する場合のみスキップ
+      const isMine = p.action === 'keeper'
+        ? (p.sender_role === myRoleRef.current)
+        : p.character_id === myCharIdRef.current
+      if (p.character_id && !isMine) {
+        setMessages(prev => [...prev, {
+          character_id: p.character_id,
+          character_name: p.character_name ?? p.character_id,
+          text: p.text ?? '',
+          emotion: 'neutral',
+          tags: [],
+        }])
+      }
     }
     if (event.type === 'AI_ERROR') {
       setLoading(false)
@@ -306,16 +335,44 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
     }
     if (event.type === 'SESSION_ENDED') {
-      sessionIdRef.current = ''
-      setSessionId('')
+      // ホストは自分で endSession() を呼んでいるのでスキップ。
+      // オブザーバー/プレイヤーはここで受け取ってリセットする。
+      void endSession()
+    }
+    if (event.type === 'SESSION_STARTED') {
+      setLobbyActive(false)
+      if (event.payload?.initiative) {
+        initiativeRef.current = event.payload.initiative
+        setInitiative(event.payload.initiative)
+      }
+      if (event.payload?.participants) {
+        setParticipants(prev => {
+          const merged = [...prev]
+          for (const p of event.payload.participants) {
+            const pid = p.participant_id ?? p.character_id
+            if (!merged.some(x => x.participant_id === pid)) {
+              merged.push({ participant_id: pid, char_id: p.character_id, display_name: p.display_name, role: p.role ?? 'player', connected: true })
+            }
+          }
+          return merged
+        })
+      }
     }
     if (event.type === 'PLAYER_JOINED') {
       const p = event.payload
+      const pid = p.participant_id ?? p.character_id
       setParticipants(prev =>
-        prev.some(x => x.char_id === p.character_id)
+        prev.some(x => x.participant_id === pid)
           ? prev
-          : [...prev, { char_id: p.character_id, display_name: p.display_name, role: 'player', connected: true }]
+          : [...prev, { participant_id: pid, char_id: p.character_id, display_name: p.display_name, role: p.role ?? 'player', connected: true, claimed_char_id: p.claimed_char_id ?? '' }]
       )
+      // オンラインセッション: キャラJSON持ち込み参加者をイニシアティブに追加
+      if (p.role === 'player' && p.character_id) {
+        setInitiative(prev =>
+          prev.includes(p.character_id) ? prev : [...prev, p.character_id]
+        )
+        initiativeRef.current = [...new Set([...initiativeRef.current, p.character_id])]
+      }
     }
     if (event.type === 'PLAYER_LEFT') {
       setParticipants(prev => prev.filter(x => x.char_id !== event.payload.character_id))
@@ -369,7 +426,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: [] }])
           }
         }
-        setMessages(prev => [...prev, { character_id: '_keeper', character_name: 'GM', text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`, emotion: '', tags: [], isKeeperVote: true }])
+        setMessages(prev => [...prev, { character_id: '_keeper', character_name: 'キーパー', text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`, emotion: '', tags: [], isKeeperVote: true }])
         wasAutoAdvancingRef.current = autoAdvanceRef.current
         setAutoAdvance(false)
         autoAdvanceRef.current = false
@@ -521,7 +578,54 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
   const charMap = Object.fromEntries(characters.map(c => [c.id, c]))
 
-  const startSession = async () => {
+  const _initSession = async (data: any, chars: string[]) => {
+    setParticipants([])
+    setLobbyActive(false)
+    sessionIdRef.current = data.session_id
+    setSessionId(data.session_id)
+    trpgModeRef.current = trpgMode
+    initiativeRef.current = data.initiative || []
+    setInitiative(data.initiative || [])
+    setMessages([])
+    setRound(1)
+    setCurrentSceneIndex(0)
+    setActiveTurnCharId('')
+    setCounters({})
+    keeperFiredRoundRef.current = 0
+    isHumanKeeperRef.current = data.human_keeper || false
+    setWaitingForKeeperTurn(false)
+    setPendingJudgments([])
+    setStandingFallback(new Set())
+    setWaitingForHuman(false)
+    const humanChar = characters.find(c => chars.includes(c.id) && c.player_type === 'human')
+    myCharIdRef.current = humanChar?.id ?? ''
+    setHumanCharId(humanChar?.id ?? '')
+    setHumanCharName(humanChar?.name ?? '')
+    if (trpgMode && Object.keys(charGameSheets).length > 0) {
+      const sheetData: Record<string, any> = {}
+      await Promise.all(
+        Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
+          try {
+            const r = await fetch(`/api/characters/${charId}/game_sheets`)
+            const d = await r.json()
+            if (d.game_sheets?.[sheetId]) sheetData[charId] = normalizeSheetStats({ ...d.game_sheets[sheetId], _sheet_id: sheetId })
+          } catch {}
+        })
+      )
+      setCharSheetData(sheetData)
+    }
+    hostTokenRef.current = data.host_token ?? ''
+    myRoleRef.current = 'host'
+    setMyRole('host')
+    const firstCharId = (data.initiative || [])[0]
+    if (humanChar && firstCharId === humanChar.id) {
+      setWaitingForHuman(true)
+      setHasDiscarded(false)
+    }
+  }
+
+  // ローカルで開始: キャラ選択必須、ロビーなし、AI即開始
+  const startLocalSession = async () => {
     if (selectedChars.length < 1) return
     setSessionStarting(true)
     try {
@@ -531,46 +635,28 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {}, keeper_char_id: trpgMode ? keeperCharId : '', human_keeper: trpgMode ? humanKeeper : false }),
       })
       const data = await res.json()
-      sessionIdRef.current = data.session_id
-      setSessionId(data.session_id)
-      trpgModeRef.current = trpgMode
-      initiativeRef.current = data.initiative || []
-      setInitiative(data.initiative || [])
-      setMessages([])
-      setRound(1)
-      setCurrentSceneIndex(0)
-      setActiveTurnCharId('')
-      setCounters({})
-      keeperFiredRoundRef.current = 0
-      isHumanKeeperRef.current = data.human_keeper || false
-      setWaitingForKeeperTurn(false)
-      setPendingJudgments([])
-      setStandingFallback(new Set())
-      setWaitingForHuman(false)
-      const humanChar = characters.find(c => selectedChars.includes(c.id) && c.player_type === 'human')
-      setHumanCharId(humanChar?.id ?? '')
-      setHumanCharName(humanChar?.name ?? '')
-      if (trpgMode && Object.keys(charGameSheets).length > 0) {
-        const sheetData: Record<string, any> = {}
-        await Promise.all(
-          Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
-            try {
-              const r = await fetch(`/api/characters/${charId}/game_sheets`)
-              const d = await r.json()
-              if (d.game_sheets?.[sheetId]) sheetData[charId] = normalizeSheetStats({ ...d.game_sheets[sheetId], _sheet_id: sheetId })
-            } catch {}
-          })
-        )
-        setCharSheetData(sheetData)
-      }
-      hostTokenRef.current = data.host_token ?? ''
-      setMyRole('host')
-      const firstCharId = (data.initiative || [])[0]
-      if (humanChar && firstCharId === humanChar.id) {
-        setWaitingForHuman(true)
-        setHasDiscarded(false)
-      }
-      // サーバーがai_taskを自律起動。WS経由でAIターンが届く
+      await _initSession(data, selectedChars)
+      // ロビーを経由せず即開始
+      void fetch(`/api/session/${data.session_id}/ai_resume`, { method: 'POST' })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSessionStarting(false)
+    }
+  }
+
+  // オンラインセッション作成: キャラ不要、ロビーで参加者を待つ
+  const startOnlineSession = async () => {
+    setSessionStarting(true)
+    try {
+      const res = await fetch('/api/session/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_ids: [], topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: {}, keeper_char_id: '', human_keeper: false, online_mode: true }),
+      })
+      const data = await res.json()
+      await _initSession(data, [])
+      setLobbyMode(true)
     } catch (e) {
       console.error(e)
     } finally {
@@ -644,11 +730,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setAutoAdvance(next)
     autoAdvanceRef.current = next
     if (next) setAutoStopMsg(null)
-    // autoAdvance=true で人間ターン待ちの場合はスキップを自動実行
-    if (next && !loading && waitingForHuman) {
+    if (!next && sessionId) {
+      void fetch(`/api/session/${sessionId}/ai_pause`, { method: 'POST' })
+    } else if (next && !loading && waitingForHuman) {
       void submitHumanTurn('skip')
     } else if (next && !loading && !waitingForHuman && sessionId) {
-      // AIタスクが未起動・停止中の場合に再起動
       void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     }
   }
@@ -769,7 +855,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           }
         }
         setMessages(prev => [...prev, {
-          character_id: '_keeper', character_name: 'GM',
+          character_id: '_keeper', character_name: 'キーパー',
           text: 'Keeper のセッション終了提案: 全員の意見は？',
           emotion: '', tags: [], isKeeperVote: true,
         }])
@@ -1208,6 +1294,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (sessionId && messages.length > 0) {
       await saveCurrentSession()
     }
+    // ホストはバックエンドにセッション終了を通知（参加者全員に SESSION_ENDED が届く）
+    if (myRole === 'host' && sessionId) {
+      try {
+        await fetch(`/api/session/${sessionId}/end`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${hostTokenRef.current}` },
+        })
+      } catch {}
+    }
     // WS切断
     if (wsReconnectTimerRef.current !== null) {
       clearTimeout(wsReconnectTimerRef.current)
@@ -1227,9 +1322,58 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setWaitingForHuman(false)
     setWaitingForKeeperTurn(false)
     isHumanKeeperRef.current = false
+    myCharIdRef.current = ''
     setHumanCharId('')
     setHumanCharName('')
+    setLobbyMode(false)
+    setParticipants([])
+    setLobbyActive(false)
+    myRoleRef.current = 'host'
+    setMyRole('host')
+    setShowJoinDialog(false)
     fetchSavedSessions()
+  }
+
+  const beginSession = async () => {
+    if (!sessionId) return
+    // ロビー設定をバックエンドに送信（最大プレイヤー数・ホストキャラ）
+    const configRes = await fetch(`/api/session/${sessionId}/lobby_config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+      body: JSON.stringify({
+        max_players: lobbyMaxPlayers,
+        host_char_id: hostRole === 'player' ? hostCharForLobby : '',
+      }),
+    })
+    if (configRes.ok) {
+      const cfg = await configRes.json()
+      initiativeRef.current = cfg.initiative || []
+      setInitiative(cfg.initiative || [])
+    }
+    // ホストがプレイヤー参加の場合、humanCharIdをセットしてプレイヤーコントロールを表示
+    if (hostRole === 'player' && hostCharForLobby) {
+      const hc = characters.find(c => c.id === hostCharForLobby)
+      myCharIdRef.current = hostCharForLobby
+      setHumanCharId(hostCharForLobby)
+      setHumanCharName(hc?.name ?? hostCharForLobby)
+      isHumanKeeperRef.current = false
+    }
+    setLobbyMode(false)
+    if (!waitingForHuman) {
+      void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+    }
+  }
+
+  const aiTakeover = async (charId: string) => {
+    if (!sessionId) return
+    const res = await fetch(`/api/session/${sessionId}/ai_takeover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+      body: JSON.stringify({ character_id: charId }),
+    })
+    if (res.ok) {
+      setAiTakenOverChars(prev => new Set([...prev, charId]))
+    }
   }
 
   const addKeeperAction = () => {
@@ -1453,7 +1597,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
       setMessages(prev => [...prev, {
         character_id: '_keeper',
-        character_name: 'GM',
+        character_name: 'キーパー',
         text: humanCharId
           ? t('session.vote.castHuman', { name: humanCharName })
           : t('session.vote.castKeeper'),
@@ -1481,7 +1625,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         ...prev.filter(m => !m.isKeeperVote),
         {
           character_id: '_keeper',
-          character_name: 'GM',
+          character_name: 'キーパー',
           text: data.result_text,
           emotion: '', tags: [],
         },
@@ -1547,6 +1691,172 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setMessages(prev => prev.map(m => m._genId === genId ? { ...m, imageStatus: 'error', imageError: t('session.msg.imageFailed') } : m))
       setSceneImageStatus('error')
     }
+  }
+
+  // ── ロビー画面（参加者待機）──────────────────────────────
+  if (sessionId && lobbyMode) {
+    // ローカルキャラ + 参加者のゲストキャラの名前マップを合成
+    const nameMap: Record<string, string> = {
+      ...Object.fromEntries(characters.map(c => [c.id, c.name])),
+      ...Object.fromEntries(participants.filter(p => p.char_id).map(p => [p.char_id, p.display_name])),
+    }
+    const isOnlineLobby = initiative.length === 0 || participants.some(p => p.role === 'player' && !characters.find(c => c.id === p.char_id))
+    const joinedPlayers = participants.filter(p => p.role === 'player')
+    const observerCount = participants.filter(p => p.role === 'observer').length
+
+    return (
+      <div className="tab-content session-tab">
+        <div className="session-setup-scroll">
+          <div className="session-setup" style={{ maxWidth: 540 }}>
+
+            {/* ヘッダー */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#4a6cf7', boxShadow: '0 0 6px #4a6cf7', display: 'inline-block', animation: 'pulse 1.5s ease-in-out infinite' }} />
+              <h2 style={{ margin: 0 }}>{t('session.lobby.title')}</h2>
+            </div>
+            <p style={{ margin: '0 0 20px', opacity: 0.55, fontSize: '0.88em' }}>{t('session.lobby.desc')}</p>
+
+            {/* ロビー設定（ホスト専用・招待コード発行前に決める） */}
+            {myRole === 'host' && (
+              <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border-color, #ddd)', background: 'var(--input-bg, rgba(128,128,128,0.06))', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* プレイヤー人数 */}
+                <div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>参加人数（ホスト含む・観戦者除く）</div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+                      <button
+                        key={n}
+                        onClick={() => setLobbyMaxPlayers(n)}
+                        style={{ width: 34, height: 34, borderRadius: 6, border: `1px solid ${lobbyMaxPlayers === n ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: lobbyMaxPlayers === n ? '#4a6cf7' : 'transparent', color: lobbyMaxPlayers === n ? '#fff' : 'inherit', cursor: 'pointer', fontWeight: lobbyMaxPlayers === n ? 700 : 400, fontSize: '0.9em' }}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ホストの役割 */}
+                <div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>ホストの役割</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {(['keeper', 'player'] as const).map(role => (
+                      <button
+                        key={role}
+                        onClick={() => {
+                          setHostRole(role)
+                          void fetch(`/api/session/${sessionId}/host_role?is_keeper=${role === 'keeper'}`, {
+                            method: 'PATCH',
+                            headers: { 'Authorization': `Bearer ${hostTokenRef.current}` },
+                          })
+                        }}
+                        style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${hostRole === role ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: hostRole === role ? '#4a6cf7' : 'transparent', color: hostRole === role ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: hostRole === role ? 600 : 400 }}
+                      >
+                        {role === 'keeper' ? 'キーパー（専任）' : 'プレイヤー参加'}
+                      </button>
+                    ))}
+                  </div>
+                  {hostRole === 'player' && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 6 }}>使用キャラクター</div>
+                      <select
+                        value={hostCharForLobby}
+                        onChange={e => setHostCharForLobby(e.target.value)}
+                        style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
+                      >
+                        <option value="">キャラクターを選択...</option>
+                        {characters.filter(c => c.player_type === 'human' || !c.player_type).map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* 招待コード発行 */}
+                <div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>招待コードを発行して共有してください</div>
+                  <InvitePanel sessionId={sessionId} hostToken={hostTokenRef.current} />
+                </div>
+
+              </div>
+            )}
+
+            {/* キャラクター / イニシアティブ */}
+            {initiative.length > 0 ? (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
+                  {isOnlineLobby ? `参加キャラクター (${initiative.length}人)` : t('session.lobby.initiative')}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {initiative.map((cid) => {
+                    const char = characters.find(c => c.id === cid)
+                    const isHuman = char?.player_type === 'human' || cid.startsWith('guest_')
+                    const takenOverByAI = aiTakenOverChars.has(cid)
+                    const claimer = participants.find(p => p.claimed_char_id === cid || p.char_id === cid)
+                    const isClaimed = !!claimer
+                    return (
+                      <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <img src={`/api/characters/${cid}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <span style={{ fontWeight: isHuman && !takenOverByAI ? 600 : 400, flex: 1, fontSize: '0.95em' }}>
+                          {nameMap[cid] ?? cid}
+                        </span>
+                        {!isHuman || takenOverByAI ? (
+                          <span style={{ fontSize: '0.75em', opacity: 0.45, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color, #ccc)' }}>AI</span>
+                        ) : isClaimed ? (
+                          <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 {claimer.display_name}</span>
+                        ) : (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: '0.78em', opacity: 0.5 }}>{t('session.lobby.slotWaiting')}</span>
+                            {myRole === 'host' && (
+                              <button
+                                onClick={() => void aiTakeover(cid)}
+                                style={{ fontSize: '0.75em', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border-color, #888)', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.7 }}
+                              >
+                                {t('session.lobby.toAIBtn')}
+                              </button>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              /* オンラインモード: まだ誰も参加していない */
+              <div style={{ marginBottom: 20, padding: '20px', borderRadius: 10, border: '1px dashed var(--border-color, #ccc)', textAlign: 'center', opacity: 0.5, fontSize: '0.88em' }}>
+                参加者がキャラクターを持ち込むとここに表示されます
+              </div>
+            )}
+
+            {/* 接続中の参加者サマリー */}
+            {participants.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
+                  接続中 — {joinedPlayers.length + 1}
+                  {myRole === 'host' ? ` / ${lobbyMaxPlayers}人` : '人'}
+                  {observerCount > 0 && ` • 観戦者 ${observerCount}人`}
+                </div>
+                <ParticipantList participants={participants} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => void endSession()}
+                style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--border-color, #aaa)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}
+              >
+                {t('common.cancel')}
+              </button>
+              <button className="session-start-btn" onClick={beginSession} style={{ minWidth: 140 }}>
+                {t('session.lobby.beginBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // ── セットアップ画面 ──────────────────────────────────────
@@ -1724,31 +2034,54 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </div>
           )}
 
-          <button
-            className="start-btn"
-            onClick={startSession}
-            disabled={selectedChars.length < 1 || sessionStarting}
-          >
-            {t('session.setup.startBtn')}
-          </button>
-          <button
-            style={{ padding: '10px 22px', borderRadius: 8, border: '1px solid #4a6cf7', background: 'transparent', color: '#4a6cf7', cursor: 'pointer', fontSize: '0.95em', fontWeight: 500, marginLeft: 16 }}
-            onClick={() => setShowJoinDialog(true)}
-          >
-            {t('session.join.openBtn')}
-          </button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+            <button
+              className="start-btn"
+              onClick={startLocalSession}
+              disabled={selectedChars.length < 1 || sessionStarting}
+            >
+              {t('session.setup.startLocalBtn')}
+            </button>
+            <button
+              className="start-btn"
+              onClick={startOnlineSession}
+              disabled={sessionStarting}
+              style={{ background: '#4a6cf7' }}
+            >
+              {t('session.setup.startOnlineBtn')}
+            </button>
+            <button
+              style={{ padding: '10px 22px', borderRadius: 8, border: '1px solid #4a6cf7', background: 'transparent', color: '#4a6cf7', cursor: 'pointer', fontSize: '0.95em', fontWeight: 500 }}
+              onClick={() => setShowJoinDialog(true)}
+            >
+              {t('session.join.openBtn')}
+            </button>
+          </div>
           {showJoinDialog && (
             <JoinDialog
-              onJoined={(sid, token, charId, role) => {
+              onJoined={(sid, token, charId, role: 'player' | 'observer' | 'gm', isLobbyActive: boolean, displayName: string) => {
                 hostTokenRef.current = token
                 sessionIdRef.current = sid
                 setSessionId(sid)
+                myRoleRef.current = role
                 setMyRole(role)
+                console.log('[SessionTab] onJoined: isLobbyActive=', isLobbyActive, 'role=', role, 'charId=', charId)
+                setLobbyActive(isLobbyActive)
+                // プレイヤーとして参加した場合は自分のキャラIDをセット（コントロール表示を切り替える）
+                if (role === 'player' && charId) {
+                  myCharIdRef.current = charId
+                  setHumanCharId(charId)
+                  setHumanCharName(displayName || charId)
+                }
                 setShowJoinDialog(false)
-                setParticipants(prev => [
-                  ...prev,
-                  { char_id: charId || `observer_${sid.slice(0, 6)}`, display_name: t('session.join.you'), role, connected: true },
-                ])
+                // playerのみ自己追加（observer/gmはSESSION_STARTEDの参加者リストで届く）
+                if (role === 'player' && charId) {
+                  setParticipants(prev =>
+                    prev.some(x => x.char_id === charId)
+                      ? prev
+                      : [...prev, { participant_id: charId, char_id: charId, display_name: t('session.join.you'), role, connected: true }]
+                  )
+                }
               }}
               onClose={() => setShowJoinDialog(false)}
             />
@@ -1908,7 +2241,21 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   }
 
   // ── セッション中 ──────────────────────────────────────────
-  const nameMap = Object.fromEntries(characters.map(c => [c.id, c.name]))
+  const nameMap: Record<string, string> = {
+    ...Object.fromEntries(characters.map(c => [c.id, c.name])),
+    ...Object.fromEntries(participants.filter(p => p.char_id && p.display_name).map(p => [p.char_id, p.display_name])),
+  }
+
+  console.log('[SessionTab] render: sessionId=', sessionId, 'lobbyActive=', lobbyActive)
+  if (sessionId && lobbyActive) {
+    return (
+      <div className="tab-content session-tab" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, minHeight: 300 }}>
+        <div style={{ fontSize: '2em' }}>⏳</div>
+        <div style={{ fontWeight: 700, fontSize: '1.1em' }}>ホストがセッションを開始するまでお待ちください</div>
+        <div style={{ opacity: 0.6, fontSize: '0.9em' }}>開始されると自動的に画面が切り替わります</div>
+      </div>
+    )
+  }
 
   return (
     <div className="tab-content session-tab">
@@ -1942,8 +2289,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           {myRole === 'host' && sessionId && (
             <InvitePanel sessionId={sessionId} hostToken={hostTokenRef.current} />
           )}
-          <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
-          <button className="end-btn" onClick={endSession}>{t('session.header.endBtn')}</button>
+          {myRole === 'host' && (
+            <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
+          )}
+          {myRole !== 'host' && (
+            <span style={{ fontSize: '0.78em', padding: '3px 10px', borderRadius: 4, border: '1px solid var(--border-color, rgba(128,128,128,0.3))', opacity: 0.75, whiteSpace: 'nowrap' }}>
+              {myRole === 'gm' ? '🎩 キーパー' : myRole === 'player' ? '🎭 プレイヤー' : '👁 観戦者'}
+            </span>
+          )}
+          {myRole === 'host'
+            ? <button className="end-btn" onClick={endSession}>{t('session.header.endBtn')}</button>
+            : <button className="end-btn" style={{ background: '#888' }} onClick={endSession}>退出</button>
+          }
         </div>
       </div>
 
@@ -2206,12 +2563,12 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             )}
           </>
         )}
-        {!humanCharId && waitingForKeeperTurn && (
+        {!humanCharId && myRole !== 'observer' && waitingForKeeperTurn && (
           <div className="session-controls-row" style={{ background: 'rgba(74,108,247,0.12)', border: '1px solid #4a6cf7', borderRadius: 8, padding: '6px 10px' }}>
             <span style={{ fontWeight: 600, color: '#4a6cf7' }}>{t('trpg.keeper.turnBanner')}</span>
           </div>
         )}
-        {!humanCharId && <div className="session-controls-row">
+        {!humanCharId && myRole !== 'observer' && <div className="session-controls-row">
           <button
             className={`auto-advance-btn ${autoAdvance ? 'active' : ''}`}
             onClick={toggleAutoAdvance}
@@ -2245,7 +2602,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </button>
           )}
         </div>}
-        {!humanCharId && <div className="session-controls-row">
+        {!humanCharId && myRole !== 'observer' && <div className="session-controls-row">
           <button onClick={retakeTurn} disabled={loading || autoAdvance} className="retake-btn" title={t('session.ctrl.retakeBtn.title')}>{t('session.ctrl.retakeBtn')}</button>
           <button onClick={skipCurrentTurn} disabled={loading} className="keeper-add-btn" title={t('session.ctrl.skipBtnKeeper.title')}>{t('session.ctrl.skipBtnKeeper')}</button>
           {initiative.length > 1 && (

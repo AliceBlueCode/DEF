@@ -1,19 +1,20 @@
 import { useState, useRef } from 'react'
 import { useT } from '../i18n'
 
+type Slot = { char_id: string; char_name: string; available: boolean }
+type SlotData = { human_slots: Slot[]; online_mode: boolean; gm_taken: boolean }
+
 type Props = {
-  onJoined: (sessionId: string, playerToken: string, charId: string, role: 'player' | 'observer') => void
+  onJoined: (sessionId: string, playerToken: string, charId: string, role: 'player' | 'observer' | 'gm', lobbyActive: boolean, displayName: string) => void
   onClose: () => void
 }
 
 const S = {
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 } as React.CSSProperties,
-  box: { background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '28px 32px', minWidth: 340, maxWidth: 460, width: '90vw', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 14 } as React.CSSProperties,
+  box: { background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '28px 32px', minWidth: 340, maxWidth: 460, width: '90vw', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 16 } as React.CSSProperties,
   title: { margin: 0, fontSize: '1.1em', fontWeight: 700 } as React.CSSProperties,
   label: { fontSize: '0.82em', opacity: 0.55, marginBottom: 4 } as React.CSSProperties,
   input: { width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.95em' } as React.CSSProperties,
-  fileBtn: { padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '0.88em' } as React.CSSProperties,
-  textarea: { width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.78em', fontFamily: 'monospace', resize: 'vertical' } as React.CSSProperties,
   error: { color: 'var(--danger-color, #d32)', fontSize: '0.85em' } as React.CSSProperties,
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 } as React.CSSProperties,
   cancelBtn: { padding: '7px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' } as React.CSSProperties,
@@ -23,16 +24,64 @@ const S = {
 export default function JoinDialog({ onJoined, onClose }: Props) {
   const t = useT()
   const [inviteCode, setInviteCode] = useState('')
-  const [charJson, setCharJson] = useState('')
+  const [slots, setSlots] = useState<Slot[]>([])
+  const [selectedSlot, setSelectedSlot] = useState<string>('__observer__')
+  const [slotsLoaded, setSlotsLoaded] = useState(false)
+  const [onlineMode, setOnlineMode] = useState(false)
+  const [gmTaken, setGmTaken] = useState(false)
+  const [charJson, setCharJson] = useState<Record<string, unknown> | null>(null)
+  const [charJsonName, setCharJsonName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const lastFetchedCode = useRef('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const fetchSlots = async (code: string, resetSelection = true): Promise<SlotData | null> => {
+    const normalized = code.trim().toUpperCase()
+    if (!normalized || normalized === lastFetchedCode.current) return null
+    lastFetchedCode.current = normalized
+    try {
+      const res = await fetch('/api/session/available-slots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invite_code: normalized }),
+      })
+      if (!res.ok) {
+        setSlots([])
+        setSlotsLoaded(false)
+        return null
+      }
+      const data: SlotData = await res.json()
+      setSlots(data.human_slots ?? [])
+      setOnlineMode(data.online_mode ?? false)
+      setGmTaken(data.gm_taken ?? false)
+      setSlotsLoaded(true)
+      if (resetSelection) setSelectedSlot('__observer__')
+      setError('')
+      return data
+    } catch {
+      setSlots([])
+      setSlotsLoaded(false)
+      return null
+    }
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = ev => setCharJson(ev.target?.result as string ?? '')
+    reader.onload = ev => {
+      try {
+        const json = JSON.parse(ev.target?.result as string)
+        setCharJson(json)
+        setCharJsonName(json.name ?? file.name)
+        setError('')
+      } catch {
+        setError('JSONの解析に失敗しました')
+        setCharJson(null)
+        setCharJsonName('')
+      }
+    }
     reader.readAsText(file)
   }
 
@@ -41,42 +90,53 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
     const code = inviteCode.trim().toUpperCase()
     if (!code) { setError(t('session.join.errorNoCode')); return }
 
-    let characterJson: Record<string, unknown> = {}
-    if (charJson.trim()) {
-      try {
-        const parsed = JSON.parse(charJson)
-        const keys = Object.keys(parsed)
-        if (keys.length === 1 && parsed[keys[0]]?.base_profile) {
-          const bp = parsed[keys[0]].base_profile
-          characterJson = {
-            name: bp.name ?? keys[0],
-            identity_prompt: bp.identity_prompt ?? '',
-            identity_detail: bp.identity_detail ?? '',
-            persona_attributes: bp.persona_attributes ?? {},
-            content_policy: bp.content_policy ?? {},
-          }
-        } else {
-          characterJson = parsed
-        }
-      } catch {
-        setError(t('session.join.errorBadJson'))
+    // 参加ボタン押下時は最新スロット状態を取得（ホストの役割変更を反映するため）
+    lastFetchedCode.current = ''
+    const fresh = await fetchSlots(code, false)  // 選択をリセットしない
+    if (!fresh) {
+      // 初回取得失敗 or 同コード再実行はスロット未ロードとして扱う
+      if (!slotsLoaded) return
+      // すでにスロットが表示済みなら古いデータでそのまま進む
+    } else {
+      // 新データで keeper 埋まり判定
+      if (selectedSlot === '__gm__' && fresh.gm_taken) {
+        setError('キーパー枠は現在埋まっています')
         return
       }
+      // スロット一覧が変わっていたら選択を促すためreturn
+      const freshIds = (fresh.human_slots ?? []).map((s: Slot) => s.char_id)
+      const currentIds = slots.map(s => s.char_id)
+      if (JSON.stringify(freshIds) !== JSON.stringify(currentIds)) return
+    }
+
+    // オンラインモードでプレイヤーとして参加する場合はJSONが必要
+    if ((fresh?.online_mode ?? onlineMode) && selectedSlot === '__player__' && !charJson) {
+      setError('キャラクターJSONを選択してください')
+      return
     }
 
     setLoading(true)
     try {
+      const isOnlinePlayer = onlineMode && selectedSlot === '__player__'
+      const isGm = selectedSlot === '__gm__'
+      const claimCharId = (!onlineMode && selectedSlot !== '__observer__') ? selectedSlot : ''
       const res = await fetch('/api/session/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invite_code: code, character_json: characterJson }),
+        body: JSON.stringify({
+          invite_code: code,
+          claim_char_id: claimCharId,
+          character_json: isOnlinePlayer ? charJson : {},
+          join_as_gm: isGm,
+        }),
       })
       const data = await res.json()
       if (!res.ok) {
         setError(data.detail ?? t('session.join.errorFailed'))
         return
       }
-      onJoined(data.session_id, data.player_token, data.character_id, data.role ?? 'player')
+      console.log('[JoinDialog] join response:', { session_id: data.session_id, role: data.role, lobby_active: data.lobby_active, display_name: data.display_name })
+      onJoined(data.session_id, data.player_token, data.character_id, data.role ?? 'observer', data.lobby_active ?? false, data.display_name ?? '')
     } catch {
       setError(t('session.join.errorFailed'))
     } finally {
@@ -95,36 +155,90 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
             style={S.input}
             placeholder="SFW-ABK-492"
             value={inviteCode}
-            onChange={e => setInviteCode(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void join() }}
+            onChange={e => {
+              setInviteCode(e.target.value)
+              setSlotsLoaded(false)
+              lastFetchedCode.current = ''
+            }}
+            onBlur={() => void fetchSlots(inviteCode)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void fetchSlots(inviteCode)
+            }}
             autoFocus
           />
         </div>
 
-        <div>
-          <div style={S.label}>{t('session.join.charLabel')}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button style={S.fileBtn} onClick={() => fileRef.current?.click()}>
-              {t('session.join.fileBtn')}
-            </button>
-            <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleFile} />
-            {charJson && <span style={{ fontSize: '0.82em', opacity: 0.7 }}>✓ {t('session.join.charLoaded')}</span>}
+        {slotsLoaded && (
+          <div>
+            <div style={S.label}>{t('session.join.slotLabel')}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__observer__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
+                <input type="radio" name="slot" value="__observer__" checked={selectedSlot === '__observer__'} onChange={() => setSelectedSlot('__observer__')} />
+                <span style={{ fontSize: '0.9em' }}>👁 {t('session.join.observerSlot')}</span>
+              </label>
+
+              {onlineMode ? (
+                <>
+                  {/* キーパーとして参加 */}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: gmTaken ? 'not-allowed' : 'pointer', opacity: gmTaken ? 0.4 : 1, padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__gm__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
+                    <input type="radio" name="slot" value="__gm__" disabled={gmTaken} checked={selectedSlot === '__gm__'} onChange={() => !gmTaken && setSelectedSlot('__gm__')} />
+                    <span style={{ fontSize: '0.9em' }}>🧙 キーパーとして参加</span>
+                    {gmTaken && <span style={{ fontSize: '0.75em', opacity: 0.6 }}>埋まっています</span>}
+                  </label>
+                  {/* プレイヤーとして参加（キャラJSON持ち込み） */}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__player__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
+                    <input type="radio" name="slot" value="__player__" checked={selectedSlot === '__player__'} onChange={() => setSelectedSlot('__player__')} />
+                    <span style={{ fontSize: '0.9em' }}>🎭 プレイヤーとして参加</span>
+                  </label>
+                </>
+              ) : (
+                slots.map(slot => (
+                  <label
+                    key={slot.char_id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: slot.available ? 'pointer' : 'not-allowed', opacity: slot.available ? 1 : 0.4, padding: '6px 8px', borderRadius: 6, background: selectedSlot === slot.char_id ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}
+                  >
+                    <input
+                      type="radio"
+                      name="slot"
+                      value={slot.char_id}
+                      disabled={!slot.available}
+                      checked={selectedSlot === slot.char_id}
+                      onChange={() => slot.available && setSelectedSlot(slot.char_id)}
+                    />
+                    <span style={{ fontSize: '0.9em' }}>🎭 {slot.char_name}</span>
+                    {!slot.available && <span style={{ fontSize: '0.75em', opacity: 0.6 }}>{t('session.join.slotTaken')}</span>}
+                  </label>
+                ))
+              )}
+            </div>
+
+            {onlineMode && selectedSlot === '__player__' && (
+              <div style={{ marginTop: 10 }}>
+                <div style={S.label}>キャラクターJSON</div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  style={{ display: 'none' }}
+                  onChange={handleFileSelect}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ padding: '7px 16px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '0.9em' }}
+                >
+                  {charJsonName ? `✓ ${charJsonName}` : 'JSONファイルを選択...'}
+                </button>
+              </div>
+            )}
           </div>
-          {charJson && (
-            <textarea
-              style={{ ...S.textarea, marginTop: 8 }}
-              rows={4}
-              value={charJson}
-              onChange={e => setCharJson(e.target.value)}
-            />
-          )}
-        </div>
+        )}
 
         {error && <div style={S.error}>{error}</div>}
 
         <div style={S.actions}>
           <button style={S.cancelBtn} onClick={onClose}>{t('common.cancel')}</button>
-          <button style={{ ...S.submitBtn, opacity: loading ? 0.6 : 1 }} onClick={join} disabled={loading}>
+          <button style={{ ...S.submitBtn, opacity: loading ? 0.6 : 1 }} onClick={join} disabled={loading || !inviteCode.trim()}>
             {loading ? '...' : t('session.join.submit')}
           </button>
         </div>

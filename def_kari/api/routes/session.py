@@ -333,13 +333,13 @@ def require_host(authorization: str = Header(...)) -> dict:
 
 
 def require_player(authorization: str = Header(...)) -> dict:
-    """role == host または player を通す Dependency（observer は 403）。"""
+    """role == host / player / gm を通す Dependency（observer は 403）。"""
     token = authorization.removeprefix("Bearer ").strip()
     try:
         payload = verify_jwt(token)
     except _JWTError:
         raise HTTPException(401, "Invalid or expired token")
-    if payload.get("role") not in ("host", "player"):
+    if payload.get("role") not in ("host", "player", "gm"):
         raise HTTPException(403, "Player role required")
     return payload
 
@@ -393,6 +393,8 @@ async def _run_ai_turns(session_id: str) -> None:
         return
     try:
         while True:
+            if session.get("ai_paused"):
+                break
             current = _get_current_speaker(session)
             if not current or _is_human_char(session, current):
                 # 人間ターン到達をフロントに通知
@@ -846,6 +848,7 @@ class SessionStartRequest(BaseModel):
     char_game_sheets: dict[str, str] = {}
     keeper_char_id: str = ""
     human_keeper: bool = False
+    online_mode: bool = False  # オンラインセッション: キャラなしで開始し参加者が持ち込む
 
 
 class SessionNextRequest(BaseModel):
@@ -872,17 +875,18 @@ def start_session(req: SessionStartRequest):
 
     session_id = secrets.token_urlsafe(16)
     profiles = load_profiles()
-    for cid in req.character_ids:
-        char = get_character(cid, profiles)
-        if char and char.get("entity_type") == "base_entity":
-            raise HTTPException(400, f"base_entity '{cid}' はセッションに参加できません")
+    if not req.online_mode:
+        for cid in req.character_ids:
+            char = get_character(cid, profiles)
+            if char and char.get("entity_type") == "base_entity":
+                raise HTTPException(400, f"base_entity '{cid}' はセッションに参加できません")
     all_name_map = {}
     for cid in req.character_ids:
         char = get_character(cid, profiles)
         all_name_map[cid] = char.get("name", cid) if char else cid
     keeper_char_id = req.keeper_char_id if req.keeper_char_id in req.character_ids else ""
     player_ids = [c for c in req.character_ids if c != keeper_char_id]
-    initiative = random.sample(player_ids, len(player_ids))
+    initiative = [] if req.online_mode else random.sample(player_ids, len(player_ids))
     name_map = {cid: all_name_map[cid] for cid in player_ids}
 
     if len(_sessions) >= _MAX_SESSIONS:
@@ -945,6 +949,11 @@ def start_session(req: SessionStartRequest):
             cid for cid in player_ids
             if (get_character(cid, profiles) or {}).get("player_type") == "human"
         ],
+        "online_mode": req.online_mode,
+        "lobby_active": req.online_mode,  # Trueの間はターン進行をブロック
+        "host_keeper_mode": False,  # ホストがキーパー専任かどうか（ロビーPATCHで設定）
+        "max_players": 0,      # ロビー設定で上書き
+        "invited_gm_token": "", # 招待GMのtoken（1人まで）
     }
 
     # ホストトークンを発行して sessions に書き込む
@@ -986,9 +995,51 @@ def create_invite(session_id: str, req: InviteRequest, auth: dict = Depends(requ
     return {"invite_code": code, "rating": rating, "session_id": session_id}
 
 
+class AvailableSlotsRequest(BaseModel):
+    invite_code: str
+
+
+@router.post("/available-slots")
+def get_available_slots(req: AvailableSlotsRequest):
+    """招待コードで入れるセッションの人間スロット一覧を返す（参加前プレビュー）。"""
+    code = req.invite_code.strip().upper()
+    session_id = _invite_registry.get(code)
+    if not session_id:
+        raise HTTPException(404, "Invalid invite code")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    invite_info = sess["invite_codes"].get(code, {})
+    if invite_info.get("used") and not sess.get("online_mode"):
+        raise HTTPException(409, "Invite code already used")
+
+    human_ids = set(sess.get("human_char_ids", []))
+    claimed = {v for v in sess.get("players", {}).values() if v}
+    name_map = sess.get("name_map", {})
+    initiative = sess.get("initiative", [])
+
+    slots = [
+        {
+            "char_id": cid,
+            "char_name": name_map.get(cid, cid),
+            "available": cid not in claimed,
+        }
+        for cid in initiative
+        if cid in human_ids
+    ]
+    return {
+        "session_id": session_id,
+        "human_slots": slots,
+        "online_mode": sess.get("online_mode", False),
+        "gm_taken": bool(sess.get("invited_gm_token")) or sess.get("host_keeper_mode", False),
+    }
+
+
 class JoinRequest(BaseModel):
     invite_code: str
-    character_json: dict = {}
+    claim_char_id: str = ""   # 既存人間スロットを引き継ぐ
+    character_json: dict = {} # オンラインセッション: キャラJSON持ち込み
+    join_as_gm: bool = False  # オンラインセッション: GM/キーパーとして参加
 
 
 @router.post("/join")
@@ -998,7 +1049,8 @@ def join_session(req: JoinRequest, request: Request):
     if not _check_invite_rate(client_ip):
         raise HTTPException(429, "Too many failed attempts")
 
-    session_id = _invite_registry.get(req.invite_code)
+    code = req.invite_code.strip().upper()
+    session_id = _invite_registry.get(code)
     if not session_id:
         _record_invite_fail(client_ip)
         raise HTTPException(404, "Invalid invite code")
@@ -1008,48 +1060,94 @@ def join_session(req: JoinRequest, request: Request):
         _record_invite_fail(client_ip)
         raise HTTPException(404, "Session not found")
 
-    invite_info = sess["invite_codes"].get(req.invite_code, {})
-    if invite_info.get("used"):
+    invite_info = sess["invite_codes"].get(code, {})
+    # オンラインセッションでは同じコードを複数人が使えるようにする
+    if invite_info.get("used") and not sess.get("online_mode"):
         raise HTTPException(409, "Invite code already used")
 
-    # セッションのレーティングと参加者キャラレーティングをチェック
     session_rating = invite_info.get("rating", "SFW")
 
-    # 持ち込みキャラの処理（なければ observer として参加）
     char_id = ""
     role = "observer"
-    if req.character_json:
+    display_name = "Observer"
+
+    # 参加人数チェック（オブザーバー除く・ホスト込みでカウント）
+    if req.character_json or req.claim_char_id:
+        max_p = sess.get("max_players", 0)
+        if max_p > 0:
+            host_token = sess.get("host_token", "")
+            # ホスト(1) + キャラ持ち参加者 = 実際の参加人数
+            current_p = sum(
+                1 for tok, cid in sess.get("players", {}).items()
+                if tok == host_token or cid
+            )
+            if current_p >= max_p:
+                raise HTTPException(409, f"Session is full ({current_p}/{max_p})")
+
+    if req.join_as_gm:
+        # GM/キーパーとして参加（1人まで）
+        if sess.get("invited_gm_token"):
+            raise HTTPException(409, "GM slot is already taken")
+        role = "gm"
+        char_id = ""
+        display_name = "キーパー"
+    elif req.claim_char_id:
+        # 既存人間スロットを引き継ぐ
+        human_ids = set(sess.get("human_char_ids", []))
+        claimed = {v for v in sess.get("players", {}).values() if v}
+        if req.claim_char_id not in sess.get("initiative", []):
+            raise HTTPException(400, "Character not in initiative")
+        if req.claim_char_id not in human_ids:
+            raise HTTPException(400, "Character is not a human slot")
+        if req.claim_char_id in claimed:
+            raise HTTPException(409, "Slot already taken")
         role = "player"
-        # ゲスト用キャラIDをサーバーで生成（パストラバーサル対策）
+        char_id = req.claim_char_id
+        display_name = sess.get("name_map", {}).get(char_id, char_id)
+    elif req.character_json:
+        # オンラインセッション: 参加者がキャラJSONを持ち込む
+        role = "player"
         char_id = f"guest_{_uuid_mod.uuid4().hex[:8]}"
         char_data = dict(req.character_json)
         char_data["id"] = char_id
         char_data["player_type"] = "human"
-        # セッション内にゲストキャラを一時登録
         sess.setdefault("guest_chars", {})[char_id] = char_data
+        display_name = req.character_json.get("name", "Guest")
+        # イニシアティブと名前マップに追加（オンラインセッションで参加者が埋めていく）
+        if char_id not in sess["initiative"]:
+            sess["initiative"].append(char_id)
+        sess["name_map"][char_id] = display_name
 
     player_token = issue_player_jwt(session_id, role, char_id)
     sess["players"][player_token] = char_id
-    if role == "player" and char_id:
-        sess.setdefault("human_char_ids", [])
-        if char_id not in sess["human_char_ids"]:
-            sess["human_char_ids"].append(char_id)
-    invite_info["used"] = True
+    if role == "player" and char_id and char_id not in sess.get("human_char_ids", []):
+        sess.setdefault("human_char_ids", []).append(char_id)
+    if role == "gm":
+        sess["invited_gm_token"] = player_token
+    # オンラインセッションは使い回しを許可（複数参加者が同じコードを使う）
+    if not sess.get("online_mode"):
+        invite_info["used"] = True
 
-    # player_joined / observer_joined イベントをブロードキャスト
-    display_name = req.character_json.get("name", "Guest") if req.character_json else "Observer"
-    _game_event_bus.emit(session_id, "PLAYER_JOINED", {
+    import uuid as _uuid_join
+    participant_id = char_id if char_id else f"_{role}_{_uuid_join.uuid4().hex[:8]}"
+    pinfo = {
         "character_id": char_id,
+        "participant_id": participant_id,
         "display_name": display_name,
         "role": role,
-    })
+        "claimed_char_id": char_id if req.claim_char_id else "",
+    }
+    sess.setdefault("joined_participants", []).append(pinfo)
+    _game_event_bus.emit(session_id, "PLAYER_JOINED", pinfo)
 
     return {
         "player_token": player_token,
         "session_id": session_id,
         "character_id": char_id,
+        "display_name": display_name,
         "session_rating": session_rating,
         "role": role,
+        "lobby_active": sess.get("lobby_active", False),
     }
 
 
@@ -1503,10 +1601,93 @@ async def ai_resume(session_id: str):
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
+    if sess.get("lobby_active"):
+        return {"status": "lobby"}
+    sess["ai_paused"] = False
     ai_task = sess.get("ai_task")
     if not ai_task or ai_task.done():
         sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
     return {"status": "ok"}
+
+
+@router.post("/{session_id}/ai_pause")
+async def ai_pause(session_id: str):
+    """自動進行を一時停止する（現在生成中のターンが完了してから止まる）。"""
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    sess["ai_paused"] = True
+    return {"status": "ok"}
+
+
+@router.post("/{session_id}/end")
+async def end_session_by_host(session_id: str, auth: dict = Depends(require_host)):
+    """ホストがセッションを明示的に終了する。参加者全員に SESSION_ENDED を通知してから後片付けする。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    from def_kari.gm.events import game_event_bus, SESSION_ENDED
+    game_event_bus.emit(session_id, SESSION_ENDED, {})
+    _save_session_episodic(session_id, sess)
+    _delete_autosave(session_id)
+    game_event_bus.clear_log(session_id)
+    # ブロードキャストタスクが WS 送信を完了してから接続を閉じる
+    await asyncio.sleep(0.3)
+    asyncio.create_task(_end_session(session_id))
+    return {"status": "ok"}
+
+
+class LobbyConfigRequest(BaseModel):
+    max_players: int = 0       # 0 = 無制限
+    host_char_id: str = ""     # ホストがプレイヤー参加する場合のキャラID
+
+
+@router.patch("/{session_id}/host_role")
+def update_host_role(session_id: str, is_keeper: bool, auth: dict = Depends(require_host)):
+    """ロビー中にホストの役割（キーパー専任 or プレイヤー）をリアルタイム更新する。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    sess["host_keeper_mode"] = is_keeper
+    return {"ok": True, "host_keeper_mode": is_keeper}
+
+
+@router.post("/{session_id}/lobby_config")
+def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depends(require_host)):
+    """ロビー設定を更新する（最大プレイヤー数・ホストキャラ）。セッション開始前にホストが呼ぶ。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    sess["max_players"] = req.max_players
+    sess["host_keeper_mode"] = (req.host_char_id == "")  # キャラなし=キーパー専任
+    # ホストキャラをイニシアティブに追加（プレイヤー参加時）
+    if req.host_char_id and req.host_char_id not in sess["initiative"]:
+        profiles = load_profiles()
+        char = get_character(req.host_char_id, profiles)
+        if char:
+            sess["initiative"].append(req.host_char_id)
+            sess["name_map"][req.host_char_id] = char.get("name", req.host_char_id)
+            if char.get("player_type") == "human":
+                sess.setdefault("human_char_ids", []).append(req.host_char_id)
+    # ロビー解除 → 参加者全員に通知
+    sess["lobby_active"] = False
+    from def_kari.gm.events import game_event_bus, SESSION_STARTED
+    game_event_bus.emit(session_id, SESSION_STARTED, {
+        "initiative": sess["initiative"],
+        "name_map": sess.get("name_map", {}),
+        "participants": sess.get("joined_participants", []),
+    })
+    return {
+        "status": "ok",
+        "max_players": sess["max_players"],
+        "initiative": sess["initiative"],
+    }
 
 
 @router.post("/human")
@@ -1514,11 +1695,20 @@ def human_message(req: SessionHumanMessage):
     session = _sessions.get(req.session_id)
     if not session:
         return {"error": "Session not found"}
+    current = _get_current_speaker(session)
+    char_name = session.get("name_map", {}).get(current, current) if current else "Player"
     session["history"].append({
         "role": "user",
         "content": req.message,
-        "character_id": "human",
+        "character_id": current or "human",
         "emotion": "",
+    })
+    _game_event_bus.emit(req.session_id, "HUMAN_TURN_COMPLETED", {
+        "character_id": current or "human",
+        "character_name": char_name,
+        "text": req.message,
+        "emotion": "",
+        "tags": [],
     })
     _autosave(req.session_id)
     return {"status": "ok"}
@@ -1536,6 +1726,13 @@ def inject_keeper_message(session_id: str, req: KeeperMessageRequest, _auth: dic
         "character_id": "_keeper",
     })
     _autosave(session_id)
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "character_id": "_keeper",
+        "character_name": "🎩 Keeper",
+        "text": req.text,
+        "action": "keeper",
+        "sender_role": _auth.get("role", "host"),
+    })
     return {"status": "ok"}
 
 
@@ -2008,6 +2205,8 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+    if session.get("lobby_active"):
+        raise HTTPException(409, "Session has not started yet")
 
     initiative = session["initiative"]
     turn = session["turn"]
@@ -2034,6 +2233,12 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "tags": [],
         })
         _autosave(session_id)
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "character_id": interrupter_id,
+            "character_name": interrupter_name,
+            "text": req.text,
+            "action": "interrupt",
+        })
         return {
             "action": "interrupt",
             "character_id": interrupter_id,
@@ -2083,6 +2288,12 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
     if req.action == "extend":
         counters[current_char_id] = counters.get(current_char_id, 0) - 1
         _autosave(session_id)
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "character_id": current_char_id,
+            "character_name": char_name,
+            "text": req.text,
+            "action": "extend",
+        })
         return {
             "action": "extend",
             "character_id": current_char_id,
@@ -2096,6 +2307,12 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         session["turn"] = turn + 1
         session["action_count"] = 0
         _autosave(session_id)
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "character_id": current_char_id,
+            "character_name": char_name,
+            "text": req.text,
+            "action": "send",
+        })
         # AIタスク起動（二重起動防止）
         _ai_task = session.get("ai_task")
         if not _ai_task or _ai_task.done():
@@ -2166,7 +2383,7 @@ def vote_deliberate(session_id: str, req: VoteRequest):
     })
     deliberations.append({
         "character_id": "_keeper",
-        "character_name": "GM",
+        "character_name": "キーパー",
         "text": vote_announce,
         "emotion": "neutral",
     })

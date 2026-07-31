@@ -1,10 +1,12 @@
 import { useT } from '../i18n'
 
 export type Participant = {
+  participant_id: string   // 一意ID（char_idが空のobs/gmはサーバー生成値）
   char_id: string
   display_name: string
-  role: 'host' | 'player' | 'observer'
+  role: 'host' | 'player' | 'observer' | 'gm'
   connected: boolean
+  claimed_char_id?: string
 }
 
 type Props = {
@@ -15,6 +17,7 @@ const ROLE_BADGE: Record<Participant['role'], string> = {
   host: '👑',
   player: '🎭',
   observer: '👁',
+  gm: '🎩',
 }
 
 export default function ParticipantList({ participants }: Props) {
@@ -25,7 +28,7 @@ export default function ParticipantList({ participants }: Props) {
     <div className="participant-list">
       <div className="participant-list-title">{t('session.participants.title')}</div>
       {participants.map(p => (
-        <div key={p.char_id} className={`participant-row${p.connected ? '' : ' disconnected'}`}>
+        <div key={p.participant_id || p.char_id} className={`participant-row${p.connected ? '' : ' disconnected'}`}>
           <span className="participant-role">{ROLE_BADGE[p.role]}</span>
           <span className="participant-name">{p.display_name}</span>
           {!p.connected && (

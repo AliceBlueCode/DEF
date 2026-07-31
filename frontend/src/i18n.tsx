@@ -19,6 +19,14 @@ const ja: Record<string, string> = {
   'tab.settings': '設定',
   'tab.debug': 'デバッグ',
 
+  // Session — lobby
+  'session.lobby.title': '参加者を待っています',
+  'session.lobby.desc': '招待コードを発行して参加者を待ちましょう。準備が整ったらセッションを開始してください。',
+  'session.lobby.initiative': 'イニシアティブ順',
+  'session.lobby.beginBtn': 'セッション開始',
+  'session.lobby.slotWaiting': '待機中...',
+  'session.lobby.toAIBtn': 'AIに変更',
+
   // Session — setup
   'session.setup.heading': 'セッションモード',
   'session.setup.charSelect.label': '参加キャラクター（1人以上選択）',
@@ -33,6 +41,8 @@ const ja: Record<string, string> = {
   'session.setup.topicLabel': 'セッションのお題',
   'session.setup.topicPlaceholder': '例: わたしの恋愛 / 統治と信頼 / 星降る夜の物語',
   'session.setup.startBtn': 'セッション開始',
+  'session.setup.startLocalBtn': 'ローカルで開始',
+  'session.setup.startOnlineBtn': 'オンラインセッション作成',
   'session.setup.savedLabel': '保存済みセッション',
   'session.setup.savedUntitled': '(無題)',
   'session.setup.deleteBtn.title': '削除',
@@ -45,6 +55,9 @@ const ja: Record<string, string> = {
   'session.join.charLabel': 'キャラクター（任意）',
   'session.join.fileBtn': 'JSONを読み込む',
   'session.join.charLoaded': '読込済み',
+  'session.join.slotLabel': '担当キャラクターを選択',
+  'session.join.observerSlot': '観戦者として参加',
+  'session.join.slotTaken': '(担当中)',
   'session.join.submit': '参加する',
   'session.join.you': 'あなた',
   'session.join.errorNoCode': '招待コードを入力してください',
@@ -545,6 +558,14 @@ const en: Record<string, string> = {
   'tab.settings': 'Settings',
   'tab.debug': 'Debug',
 
+  // Session — lobby
+  'session.lobby.title': 'Waiting for Participants',
+  'session.lobby.desc': 'Issue invite codes and wait for participants to join. Start the session when everyone is ready.',
+  'session.lobby.initiative': 'Initiative Order',
+  'session.lobby.beginBtn': 'Begin Session',
+  'session.lobby.slotWaiting': 'Waiting...',
+  'session.lobby.toAIBtn': 'Set to AI',
+
   // Session — setup
   'session.setup.heading': 'Session Mode',
   'session.setup.charSelect.label': 'Participating Characters (select 1+)',
@@ -559,6 +580,8 @@ const en: Record<string, string> = {
   'session.setup.topicLabel': 'Session Topic',
   'session.setup.topicPlaceholder': 'e.g. My Love Life / Governance & Trust / A Starry Night Story',
   'session.setup.startBtn': 'Start Session',
+  'session.setup.startLocalBtn': 'Start (Local)',
+  'session.setup.startOnlineBtn': 'Create Online Session',
   'session.setup.savedLabel': 'Saved Sessions',
   'session.setup.savedUntitled': '(Untitled)',
   'session.setup.deleteBtn.title': 'Delete',
@@ -571,6 +594,9 @@ const en: Record<string, string> = {
   'session.join.charLabel': 'Character (optional)',
   'session.join.fileBtn': 'Load JSON',
   'session.join.charLoaded': 'Loaded',
+  'session.join.slotLabel': 'Select your character',
+  'session.join.observerSlot': 'Join as observer',
+  'session.join.slotTaken': '(taken)',
   'session.join.submit': 'Join',
   'session.join.you': 'You',
   'session.join.errorNoCode': 'Please enter an invite code',
