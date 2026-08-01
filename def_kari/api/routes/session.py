@@ -426,9 +426,13 @@ async def _run_ai_turns(session_id: str) -> None:
                         "counters": dict(session.get("counters", {})),
                     })
                 break
+            _skip_gen_snap = session.get("_skip_gen", 0)
             result = await asyncio.get_event_loop().run_in_executor(
                 None, _execute_ai_turn, session_id
             )
+            # executor 実行中に keeper_skip が入った場合は結果を捨てて再評価
+            if session.get("_skip_gen", 0) != _skip_gen_snap:
+                continue
             if result.get("error"):
                 _game_event_bus.emit(session_id, "AI_ERROR", {"error": result["error"]})
                 break
@@ -1217,6 +1221,7 @@ def next_turn(req: SessionNextRequest):
 
     initiative = session["initiative"]
     turn = session["turn"]
+    _skip_gen_before = session.get("_skip_gen", 0)  # keeper_skip 競合検出用
     if turn >= len(initiative):
         session["round"] += 1
         session["turn"] = 0
@@ -1569,7 +1574,9 @@ def next_turn(req: SessionNextRequest):
             next_t = return_turn % len(initiative) if initiative else 0
         else:
             next_t = turn + 1
-        session["turn"] = next_t
+        # LLM 実行中に keeper_skip が入った場合は turn を上書きしない
+        if session.get("_skip_gen", 0) == _skip_gen_before:
+            session["turn"] = next_t
         session["action_count"] = 0
     else:
         session["action_count"] = action_count
@@ -1934,6 +1941,8 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     char_name = session["name_map"].get(char_id, char_id)
     counters = session.setdefault("counters", {})
     counters[char_id] = counters.get(char_id, 0) + 1
+    # _skip_gen を先にインクリメント → next_turn の turn 書き戻しを防止
+    session["_skip_gen"] = session.get("_skip_gen", 0) + 1
     session["turn"] = turn + 1
     session["action_count"] = 0
     if session["turn"] >= len(initiative):
@@ -1948,9 +1957,11 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
         "sender_role": _auth.get("role", "host"),
         "counters": dict(counters),
     })
+    # 実行中の ai_task をキャンセルしてスキップ位置から再起動
     _ai_task = session.get("ai_task")
-    if not _ai_task or _ai_task.done():
-        session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    if _ai_task and not _ai_task.done():
+        _ai_task.cancel()
+    session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
     return {
         "character_id": char_id,
         "character_name": char_name,
