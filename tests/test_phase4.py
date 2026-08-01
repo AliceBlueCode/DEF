@@ -639,6 +639,125 @@ def test_join_rejects_over_capacity():
     _sessions.pop(sid, None)
 
 
+# ── POST /lobby/set_keeper_char（ロビー中にAIキーパーへキャラを割付け）──
+
+def test_lobby_set_keeper_char_assigns_and_clears():
+    """ロビー中にAIキーパーへキャラを割り付け・解除できること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+    assert _sessions[sid]["keeper_char_id"] == ""
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": "character_luna_001"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["keeper_char_id"] == "character_luna_001"
+    assert body["keeper_char_name"]
+    assert _sessions[sid]["keeper_char_id"] == "character_luna_001"
+    assert _sessions[sid]["keeper_char_name"] == body["keeper_char_name"]
+
+    # 解除: 空文字列を送ると無名AIキーパーに戻る
+    resp2 = client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": ""},
+        headers=headers,
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["keeper_char_id"] == ""
+    assert _sessions[sid]["keeper_char_id"] == ""
+    assert _sessions[sid]["keeper_char_name"] == ""
+    _sessions.pop(sid, None)
+
+
+def test_lobby_set_keeper_char_rejects_human_character():
+    """player_type=human のキャラはAIキーパーとして割り付けられないこと。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    from def_kari.characters import load_profiles, get_character
+    client = TestClient(app)
+
+    profiles = load_profiles()
+    human_char_id = next(
+        (cid for cid, p in profiles.items() if get_character(cid, profiles).get("player_type") == "human"),
+        None,
+    )
+    if human_char_id is None:
+        pytest.skip("no human-type character available in fixture data")
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": human_char_id},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 400
+    assert _sessions[sid]["keeper_char_id"] == ""
+    _sessions.pop(sid, None)
+
+
+def test_lobby_set_keeper_char_rejects_already_in_initiative():
+    """既にプレイヤー/AIスロット(initiative)にいるキャラはキーパーに割り付けられないこと。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    add_resp = client.post(
+        f"/api/session/{sid}/lobby/add_ai",
+        json={"character_id": "character_luna_001"},
+        headers=headers,
+    )
+    assert add_resp.status_code == 200
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": "character_luna_001"},
+        headers=headers,
+    )
+    assert resp.status_code == 409
+    _sessions.pop(sid, None)
+
+
+def test_lobby_set_keeper_char_after_start_returns_409():
+    """セッション開始後は /lobby/set_keeper_char が409を返すこと。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    _sessions[sid]["lobby_active"] = False
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": "character_luna_001"},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 409
+    _sessions.pop(sid, None)
+
+
 # ── POST /leave（非ホスト参加者の明示的退室）───────────────────────
 
 def test_leave_removes_participant_and_emits_player_left():

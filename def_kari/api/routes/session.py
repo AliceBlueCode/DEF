@@ -1987,6 +1987,51 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(requ
     return {"status": "ok", "initiative": sess["initiative"], "name_map": dict(sess["name_map"])}
 
 
+class LobbyKeeperCharRequest(BaseModel):
+    character_id: str  # 空文字列 = 解除（無名AIキーパーに戻す）
+
+
+@router.post("/{session_id}/lobby/set_keeper_char")
+def lobby_set_keeper_char(session_id: str, req: LobbyKeeperCharRequest, auth: dict = Depends(require_host)):
+    """ロビー中にAIキーパー役のキャラクターを割り付ける/解除する（ホストのみ）。
+
+    character_id が空文字列なら解除。解除しても無名AIキーパー（汎用「🎩 Keeper」表示）として
+    自動進行は継続する（TRPGモードの ai_keeper_narrate 参照）。
+    """
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if not sess.get("lobby_active"):
+        raise HTTPException(409, "Session already started")
+    char_id = req.character_id
+    if not char_id:
+        sess["keeper_char_id"] = ""
+        sess["keeper_char_name"] = ""
+        _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
+            "keeper_char_id": "",
+            "keeper_char_name": "",
+        })
+        return {"status": "ok", "keeper_char_id": "", "keeper_char_name": ""}
+    if char_id in sess["initiative"]:
+        raise HTTPException(409, "Character already assigned to a player slot")
+    profiles = load_profiles()
+    char = get_character(char_id, profiles)
+    if not char:
+        raise HTTPException(404, "Character not found")
+    if char.get("player_type") == "human":
+        raise HTTPException(400, "Cannot assign human character as AI keeper")
+    sess["keeper_char_id"] = char_id
+    sess["keeper_char_name"] = char.get("name", char_id)
+    _autosave(session_id)
+    _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
+        "keeper_char_id": char_id,
+        "keeper_char_name": sess["keeper_char_name"],
+    })
+    return {"status": "ok", "keeper_char_id": char_id, "keeper_char_name": sess["keeper_char_name"]}
+
+
 @router.post("/{session_id}/lobby/remove_ai")
 def lobby_remove_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(require_host)):
     """ロビーから AI キャラクターを削除する（ホストのみ）。"""

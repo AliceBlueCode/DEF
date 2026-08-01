@@ -170,6 +170,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [hostCharForLobby, setHostCharForLobby] = useState('')
   const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
   const [showAiAssignDialog, setShowAiAssignDialog] = useState(false)
+  const [lobbyKeeperCharId, setLobbyKeeperCharId] = useState('')
+  const [lobbyKeeperCharName, setLobbyKeeperCharName] = useState('')
+  const [showKeeperAiAssignDialog, setShowKeeperAiAssignDialog] = useState(false)
   const [round, setRound] = useState(1)
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0)
   const [activeTurnCharId, setActiveTurnCharId] = useState('')
@@ -485,6 +488,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
       if (event.payload?.name_map) {
         setExtraNameMap(prev => ({ ...prev, ...event.payload.name_map }))
+      }
+      if ('keeper_char_id' in (event.payload ?? {})) {
+        setLobbyKeeperCharId(event.payload.keeper_char_id ?? '')
+        setLobbyKeeperCharName(event.payload.keeper_char_name ?? '')
       }
     }
   }
@@ -1480,6 +1487,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setLobbyMode(false)
     setParticipants([])
     setLobbyActive(false)
+    setLobbyKeeperCharId('')
+    setLobbyKeeperCharName('')
     myRoleRef.current = 'host'
     setMyRole('host')
     setShowJoinDialog(false)
@@ -1559,6 +1568,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       initiativeRef.current = d.initiative
       setInitiative(d.initiative)
     }
+  }
+
+  // charId="" で解除（無名AIキーパーに戻る。割り付けなくてもAI自動進行自体は維持される）
+  const lobbySetKeeperChar = async (charId: string) => {
+    if (!sessionId) return
+    const res = await authFetch(`/api/session/${sessionId}/lobby/set_keeper_char`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character_id: charId }),
+    })
+    if (res.ok) {
+      const d = await res.json()
+      setLobbyKeeperCharId(d.keeper_char_id ?? '')
+      setLobbyKeeperCharName(d.keeper_char_name ?? '')
+    }
+    setShowKeeperAiAssignDialog(false)
   }
 
   const addKeeperAction = () => {
@@ -2137,10 +2162,26 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
                         <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.5 }}>参加者を待っています…</span>
                       </div>
+                    ) : lobbyKeeperCharId ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <img src={`/api/characters/${lobbyKeeperCharId}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{lobbyKeeperCharName || lobbyKeeperCharId}</span>
+                        <span style={{ fontSize: '0.75em', opacity: 0.45, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color, #ccc)' }}>AI</span>
+                        <button
+                          onClick={() => void lobbySetKeeperChar('')}
+                          style={{ fontSize: '0.75em', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border-color, #888)', background: 'transparent', color: 'var(--danger-color, #d32)', cursor: 'pointer' }}
+                        >解除</button>
+                      </div>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.05))', border: '1px solid var(--border-color, rgba(128,128,128,0.2))' }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(100,180,100,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🤖</div>
                         <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.7 }}>AI（自動進行）</span>
+                        {lobbyTrpgMode && assignableChars.length > 0 && (
+                          <button
+                            onClick={() => setShowKeeperAiAssignDialog(true)}
+                            style={{ fontSize: '0.75em', padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-color, #4a6cf7)', color: 'var(--accent-color, #4a6cf7)', background: 'transparent', cursor: 'pointer' }}
+                          >AI割付け</button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2220,6 +2261,33 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         </div>
                         <div style={{ marginTop: 16, textAlign: 'right' }}>
                           <button onClick={() => setShowAiAssignDialog(false)}
+                            style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>キャンセル</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* キーパー用AI割付けダイアログ */}
+                  {showKeeperAiAssignDialog && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+                      onClick={() => setShowKeeperAiAssignDialog(false)}>
+                      <div style={{ background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '24px 28px', minWidth: 300, maxWidth: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}
+                        onClick={e => e.stopPropagation()}>
+                        <div style={{ fontWeight: 700, marginBottom: 14, fontSize: '1em' }}>{keeperLabel}役のAIキャラクターを割付ける</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {assignableChars.map(c => (
+                            <button key={c.id} onClick={() => void lobbySetKeeperChar(c.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
+                              <img src={`/api/characters/${c.id}/icon`} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                              <span style={{ fontSize: '0.95em' }}>{c.name}</span>
+                            </button>
+                          ))}
+                          {assignableChars.length === 0 && (
+                            <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>割付け可能な AI キャラクターがいません</div>
+                          )}
+                        </div>
+                        <div style={{ marginTop: 16, textAlign: 'right' }}>
+                          <button onClick={() => setShowKeeperAiAssignDialog(false)}
                             style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>キャンセル</button>
                         </div>
                       </div>
