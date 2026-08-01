@@ -2281,6 +2281,17 @@ def designate_next(session_id: str, req: DesignateRequest, _auth: dict = Depends
     session["designated_next"] = req.target_id
     session["designated_return_turn"] = (current_turn + 1) % len(initiative) if initiative else 0
     _autosave(session_id)
+    name_map = session.get("name_map", {})
+    _current = _get_current_speaker(session)
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "character_id": _current or "",
+        "character_name": name_map.get(_current, _current) if _current else "",
+        "text": "",
+        "action": "designate",
+        "designated_id": req.target_id,
+        "designated_name": name_map.get(req.target_id, req.target_id),
+        "counters": dict(session.get("counters", {})),
+    })
     return {"status": "ok"}
 
 
@@ -2296,6 +2307,13 @@ def adjust_counter(session_id: str, char_id: str, req: CounterAdjustRequest, _au
     counters = session.setdefault("counters", {})
     counters[char_id] = counters.get(char_id, 0) + req.delta
     _autosave(session_id)
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "character_id": char_id,
+        "character_name": session.get("name_map", {}).get(char_id, char_id),
+        "text": "",
+        "action": "counter_adjust",
+        "counters": dict(counters),
+    })
     return {"counters": dict(counters)}
 
 
@@ -2381,6 +2399,13 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         char_id = req.character_id if req.character_id else current_char_id
         counters[char_id] = counters.get(char_id, 0) - 1
         _autosave(session_id)
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "character_id": char_id,
+            "character_name": name_map.get(char_id, char_id),
+            "text": "",
+            "action": "generate_image",
+            "counters": dict(counters),
+        })
         return {
             "action": "generate_image",
             "counters": dict(counters),
@@ -2803,6 +2828,15 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
     })
 
     session.pop("_pending_vote", None)
+
+    # 投票結果を全タブへ配信
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "character_id": "_keeper",
+        "character_name": "🗳 Vote",
+        "text": result_text,
+        "action": "vote_result",
+        "counters": dict(session.get("counters", {})),
+    })
 
     ended = passed and vote_type == "end_session"
     if ended:

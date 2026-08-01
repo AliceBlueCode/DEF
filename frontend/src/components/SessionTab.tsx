@@ -332,7 +332,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const isMine = (p.action === 'keeper' || p.action === 'keeper_skip')
         ? (p.sender_role === myRoleRef.current)
         : p.character_id === myCharIdRef.current
-      if (p.character_id && !isMine) {
+      // カウンター更新のみで表示不要なアクション
+      const _counterOnlyActions = new Set(['generate_image', 'counter_adjust'])
+      if (p.character_id && !isMine && !_counterOnlyActions.has(p.action)) {
         if (p.action === 'skip') {
           setMessages(prev => [...prev, {
             character_id: '_keeper',
@@ -345,6 +347,20 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             character_id: '_keeper',
             character_name: '🎩 Keeper',
             text: t('session.msg.skipTurn', { name: p.character_name ?? p.character_id }),
+            emotion: '', tags: [],
+          }])
+        } else if (p.action === 'designate') {
+          setMessages(prev => [...prev, {
+            character_id: '_keeper',
+            character_name: '🎩 Keeper',
+            text: t('session.msg.designate', { name: p.designated_name ?? p.designated_id ?? '' }),
+            emotion: '', tags: [],
+          }])
+        } else if (p.action === 'vote_result') {
+          setMessages(prev => [...prev, {
+            character_id: '_keeper',
+            character_name: '🗳 Vote',
+            text: p.text ?? '',
             emotion: '', tags: [],
           }])
         } else {
