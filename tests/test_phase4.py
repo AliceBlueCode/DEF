@@ -553,6 +553,38 @@ async def test_run_ai_turns_error_clears_auto_advance():
     del _sessions[sid]
 
 
+# ── POST /end の冪等性（episodic memory 多重書き込み防止）──────────
+
+def test_end_session_idempotent_episodic_write():
+    """/end を連打しても _save_session_episodic が1回しか実行されないこと。
+
+    SESSION_ENDED ブロードキャスト受信でクライアントが /end を再POSTするループにより、
+    キャラの episodic memory が同一セッション分だけ多重書き込みされるバグの回帰テスト。
+    """
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": []})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    calls = []
+    with patch("def_kari.api.routes.session._save_session_episodic", side_effect=lambda s, sess: calls.append(s)):
+        r1 = client.post(f"/api/session/{sid}/end", headers=headers)
+        assert r1.status_code == 200
+        # _end_session の猶予期間中の再POSTをシミュレート（セッションはまだ残っている想定）
+        if sid in _sessions:
+            r2 = client.post(f"/api/session/{sid}/end", headers=headers)
+            assert r2.status_code == 200
+            assert r2.json().get("status") == "ending"
+
+    assert calls == [sid], f"episodic write should happen exactly once, got: {calls}"
+    _sessions.pop(sid, None)
+
+
 def test_available_slots_includes_waiting_for_gm():
     """available-slots レスポンスに waiting_for_gm と trpg_mode が含まれること。"""
     from fastapi.testclient import TestClient

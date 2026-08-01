@@ -1729,6 +1729,12 @@ async def end_session_by_host(session_id: str, auth: dict = Depends(require_host
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
+    # 冪等化: _end_session の猶予期間中に /end が再度呼ばれても後片付けを繰り返さない
+    # （SESSION_ENDED ブロードキャストを受けたクライアントが /end を再POSTするループで
+    # episodic memory が同一セッション分だけ多重書き込みされるのを防ぐ）
+    if sess.get("_ending"):
+        return {"status": "ending"}
+    sess["_ending"] = True
     from def_kari.gm.events import game_event_bus, SESSION_ENDED
     game_event_bus.emit(session_id, SESSION_ENDED, {})
     _save_session_episodic(session_id, sess)
@@ -2932,7 +2938,8 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
     })
 
     ended = passed and vote_type == "end_session"
-    if ended:
+    if ended and not session.get("_ending"):
+        session["_ending"] = True
         _save_session_episodic(session_id, session)
         _delete_autosave(session_id)
         from def_kari.gm.events import game_event_bus

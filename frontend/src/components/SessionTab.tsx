@@ -189,6 +189,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const ttsHumanEnabledRef = useRef(false)
   const hostTokenRef = useRef('')
   const myCharIdRef = useRef('')  // このタブが担当するキャラID（オンライン対戦用）
+  const endingRef = useRef(false)  // endSession 再入ガード（SESSION_ENDED 受信での再実行防止）
   const myRoleRef = useRef<'host' | 'player' | 'observer' | 'gm'>('host')
   const wsRef = useRef<WebSocket | null>(null)
   const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1406,6 +1407,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   }
 
   const endSession = async () => {
+    // 再入ガード: ホスト自身の /end が発火させる SESSION_ENDED ブロードキャストを
+    // 自タブが受信して endSession() を再実行するループを防ぐ
+    if (endingRef.current) return
+    endingRef.current = true
     if (sessionId && messages.length > 0) {
       await saveCurrentSession()
     }
@@ -1448,6 +1453,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setMyRole('host')
     setShowJoinDialog(false)
     fetchSavedSessions()
+    endingRef.current = false
   }
 
   const beginSession = async () => {
