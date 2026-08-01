@@ -1729,6 +1729,15 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
         "name_map": sess.get("name_map", {}),
         "participants": sess.get("joined_participants", []),
     })
+    # 最初のターンが人間なら WAITING_FOR_HUMAN を即時通知（_run_ai_turns を経由しないため）
+    _first = _get_current_speaker(sess)
+    if _first and _is_human_char(sess, _first):
+        _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
+            "character_id": _first,
+            "character_name": sess.get("name_map", {}).get(_first, _first),
+            "round": sess.get("round", 1),
+            "counters": dict(sess.get("counters", {})),
+        })
     return {
         "status": "ok",
         "max_players": sess["max_players"],
