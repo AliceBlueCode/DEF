@@ -399,6 +399,29 @@ def _execute_ai_turn(session_id: str) -> dict:
     return next_turn(req)
 
 
+def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
+    """現在のターンが人間なら WAITING_FOR_HUMAN を emit して True を返す。
+
+    _get_current_speaker は turn % len で折り返すが round/turn は更新しないため、
+    ラウンド境界を越えていた場合はここで正規化する。
+    """
+    current = _get_current_speaker(session)
+    if not current or not _is_human_char(session, current):
+        return False
+    _initiative = session.get("initiative", [])
+    _raw_turn = session.get("turn", 0)
+    if _initiative and _raw_turn >= len(_initiative):
+        session["round"] = session.get("round", 1) + 1
+        session["turn"] = _raw_turn % len(_initiative)
+    _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
+        "character_id": current,
+        "character_name": session.get("name_map", {}).get(current, current),
+        "round": session.get("round", 1),
+        "counters": dict(session.get("counters", {})),
+    })
+    return True
+
+
 async def _run_ai_turns(session_id: str) -> None:
     """ai_resume で呼ばれる非同期タスク。現在のターンを1回だけ実行して停止する。
     連続進行（自動モード）はフロントエンドが AI_TURN_COMPLETED を受け取った後に
@@ -410,22 +433,9 @@ async def _run_ai_turns(session_id: str) -> None:
         if session.get("ai_paused"):
             return
         current = _get_current_speaker(session)
-        if not current or _is_human_char(session, current):
-            # 人間ターン到達をフロントに通知
-            if current:
-                # _get_current_speaker は turn % len で折り返すが round/turn は更新しない。
-                # ラウンド境界を越えていた場合はここで正規化する。
-                _initiative = session.get("initiative", [])
-                _raw_turn = session.get("turn", 0)
-                if _initiative and _raw_turn >= len(_initiative):
-                    session["round"] = session.get("round", 1) + 1
-                    session["turn"] = _raw_turn % len(_initiative)
-                _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
-                    "character_id": current,
-                    "character_name": session.get("name_map", {}).get(current, current),
-                    "round": session.get("round", 1),
-                    "counters": dict(session.get("counters", {})),
-                })
+        if not current:
+            return
+        if _emit_waiting_for_human(session_id, session):
             return
         _skip_gen_snap = session.get("_skip_gen", 0)
         result = await asyncio.get_event_loop().run_in_executor(
@@ -436,6 +446,10 @@ async def _run_ai_turns(session_id: str) -> None:
         if session.get("_skip_gen", 0) != _skip_gen_snap:
             return
         if result.get("error"):
+            # 生成エラー時は自動進行を止め、全タブに状態を同期する
+            if session.get("auto_advance"):
+                session["auto_advance"] = False
+                _game_event_bus.emit(session_id, "AUTO_ADVANCE_CHANGED", {"enabled": False})
             _game_event_bus.emit(session_id, "AI_ERROR", {"error": result["error"]})
             return
         if result.get("waiting_for_human"):
@@ -447,6 +461,10 @@ async def _run_ai_turns(session_id: str) -> None:
             })
             return
         _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
+        # 次のターンが人間なら ai_resume の往復を待たずに即通知する。
+        # ai_resume は require_keeper のためプレイヤータブは連鎖を駆動できず、
+        # ここで通知しないと人間ターン直前で進行が止まる。
+        _emit_waiting_for_human(session_id, session)
         await asyncio.sleep(0)  # event loop に yield
     except asyncio.CancelledError:
         raise
@@ -1069,6 +1087,8 @@ def get_available_slots(req: AvailableSlotsRequest):
         "human_slots": slots,
         "online_mode": sess.get("online_mode", False),
         "gm_taken": bool(sess.get("invited_gm_token")) or sess.get("host_keeper_mode", False),
+        "waiting_for_gm": sess.get("waiting_for_gm", False),
+        "trpg_mode": sess.get("trpg_mode", False),
     }
 
 
@@ -1666,6 +1686,41 @@ async def ai_pause(session_id: str, _auth: dict = Depends(require_keeper)):
     return {"status": "ok"}
 
 
+class AutoAdvanceRequest(BaseModel):
+    enabled: bool
+
+
+@router.patch("/{session_id}/auto_advance")
+async def set_auto_advance(session_id: str, req: AutoAdvanceRequest, _auth: dict = Depends(require_keeper)):
+    """自動進行モードをセッション状態として切り替え、AUTO_ADVANCE_CHANGED を全参加者に配信する。
+
+    進行権限は常に一人: 人間キーパー（gm）参加中はgmのみ、AIキーパー構成では
+    ホストのみ（プレイヤー参加・観戦中でもJWTロールは host のまま通る）。
+    プレイヤー/観戦者タブは受信して表示を同期するだけで進行の駆動には関与しない。
+    """
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    # 人間キーパー（gm）参加中は進行権限をgmに一本化し、ホストの切替は拒否する
+    if _auth.get("role") == "host" and sess.get("invited_gm_token"):
+        raise HTTPException(403, "Auto advance is controlled by the joined keeper")
+    sess["auto_advance"] = req.enabled
+    _game_event_bus.emit(session_id, "AUTO_ADVANCE_CHANGED", {"enabled": req.enabled})
+    if req.enabled:
+        sess["ai_paused"] = False
+        if not sess.get("lobby_active"):
+            # 現在が人間ターンの場合はタスクを起動しない（WAITING_FOR_HUMAN の
+            # 再emitで入力欄が再オープンされ、スキップ送信と競合するのを防ぐ）
+            current = _get_current_speaker(sess)
+            if current and not _is_human_char(sess, current):
+                ai_task = sess.get("ai_task")
+                if not ai_task or ai_task.done():
+                    sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    else:
+        sess["ai_paused"] = True
+    return {"auto_advance": req.enabled}
+
+
 @router.post("/{session_id}/end")
 async def end_session_by_host(session_id: str, auth: dict = Depends(require_host)):
     """ホストがセッションを明示的に終了する。参加者全員に SESSION_ENDED を通知してから後片付けする。"""
@@ -1745,6 +1800,42 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
         "max_players": sess["max_players"],
         "initiative": sess["initiative"],
     }
+
+
+class LobbyModeRequest(BaseModel):
+    trpg_mode: bool
+
+
+@router.patch("/{session_id}/lobby/mode")
+def set_lobby_trpg_mode(session_id: str, req: LobbyModeRequest, auth: dict = Depends(require_host)):
+    """ロビー中にセッションモード（通常/TRPG）を切り替える。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if not sess.get("lobby_active"):
+        raise HTTPException(409, "Session already started")
+    sess["trpg_mode"] = req.trpg_mode
+    return {"trpg_mode": req.trpg_mode}
+
+
+class LobbyKeeperSourceRequest(BaseModel):
+    waiting_for_gm: bool
+
+
+@router.patch("/{session_id}/lobby/keeper_source")
+def set_lobby_keeper_source(session_id: str, req: LobbyKeeperSourceRequest, auth: dict = Depends(require_host)):
+    """ロビー中にキーパー担当をAI自動進行か人間参加待ちかに切り替える。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if not sess.get("lobby_active"):
+        raise HTTPException(409, "Session already started")
+    sess["waiting_for_gm"] = req.waiting_for_gm
+    return {"waiting_for_gm": req.waiting_for_gm}
 
 
 class LobbyAIRequest(BaseModel):

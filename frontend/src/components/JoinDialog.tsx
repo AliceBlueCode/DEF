@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useT } from '../i18n'
 
 type Slot = { char_id: string; char_name: string; available: boolean }
-type SlotData = { human_slots: Slot[]; online_mode: boolean; gm_taken: boolean }
+type SlotData = { human_slots: Slot[]; online_mode: boolean; gm_taken: boolean; waiting_for_gm: boolean }
 
 type Props = {
   onJoined: (sessionId: string, playerToken: string, charId: string, role: 'player' | 'observer' | 'gm', lobbyActive: boolean, displayName: string) => void
@@ -29,6 +29,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
   const [slotsLoaded, setSlotsLoaded] = useState(false)
   const [onlineMode, setOnlineMode] = useState(false)
   const [gmTaken, setGmTaken] = useState(false)
+  const [waitingForGm, setWaitingForGm] = useState(false)
   const [charJson, setCharJson] = useState<Record<string, unknown> | null>(null)
   const [charJsonName, setCharJsonName] = useState('')
   const [error, setError] = useState('')
@@ -55,6 +56,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
       setSlots(data.human_slots ?? [])
       setOnlineMode(data.online_mode ?? false)
       setGmTaken(data.gm_taken ?? false)
+      setWaitingForGm(data.waiting_for_gm ?? false)
       setSlotsLoaded(true)
       if (resetSelection) setSelectedSlot('__observer__')
       setError('')
@@ -182,12 +184,14 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
 
               {onlineMode ? (
                 <>
-                  {/* キーパーとして参加 */}
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: gmTaken ? 'not-allowed' : 'pointer', opacity: gmTaken ? 0.4 : 1, padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__gm__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
-                    <input type="radio" name="slot" value="__gm__" disabled={gmTaken} checked={selectedSlot === '__gm__'} onChange={() => !gmTaken && setSelectedSlot('__gm__')} />
-                    <span style={{ fontSize: '0.9em' }}>🧙 キーパーとして参加</span>
-                    {gmTaken && <span style={{ fontSize: '0.75em', opacity: 0.6 }}>埋まっています</span>}
-                  </label>
+                  {/* キーパーとして参加（ホストが「参加者を待つ」を選んだ時のみ表示） */}
+                  {waitingForGm && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: gmTaken ? 'not-allowed' : 'pointer', opacity: gmTaken ? 0.4 : 1, padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__gm__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
+                      <input type="radio" name="slot" value="__gm__" disabled={gmTaken} checked={selectedSlot === '__gm__'} onChange={() => !gmTaken && setSelectedSlot('__gm__')} />
+                      <span style={{ fontSize: '0.9em' }}>🧙 キーパーとして参加</span>
+                      {gmTaken && <span style={{ fontSize: '0.75em', opacity: 0.6 }}>埋まっています</span>}
+                    </label>
+                  )}
                   {/* プレイヤーとして参加（キャラJSON持ち込み） */}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__player__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
                     <input type="radio" name="slot" value="__player__" checked={selectedSlot === '__player__'} onChange={() => setSelectedSlot('__player__')} />

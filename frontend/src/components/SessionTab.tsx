@@ -164,6 +164,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [lobbyMode, setLobbyMode] = useState(false)
   const [lobbyActive, setLobbyActive] = useState(false)  // 参加者側: ホスト開始待ち
   const [lobbyMaxPlayers, setLobbyMaxPlayers] = useState(4)
+  const [lobbyTrpgMode, setLobbyTrpgMode] = useState(true)
+  const [keeperSource, setKeeperSource] = useState<'ai' | 'participant'>('ai')
   const [hostRole, setHostRole] = useState<'keeper' | 'player' | 'observer'>('keeper')
   const [hostCharForLobby, setHostCharForLobby] = useState('')
   const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
@@ -306,11 +308,6 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
     if (event.type === 'WAITING_FOR_HUMAN') {
       const p = event.payload
-      if (autoAdvanceRef.current) {
-        wasAutoAdvancingRef.current = true
-        setAutoAdvance(false)
-        autoAdvanceRef.current = false
-      }
       if (typeof p.round === 'number') setRound(p.round)
       setActiveTurnCharId(p.character_id ?? '')
       if (p.counters) setCounters(capCounters(p.counters))
@@ -318,11 +315,27 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       // オンライン: 自分のキャラターンのときだけプレイヤーコントロールに切り替える
       // myCharIdRef が空 = キーパー/オブザーバー → 変更しない
       if (myCharIdRef.current && myCharIdRef.current === p.character_id) {
+        // 自分のターン中だけローカルの自動進行を一時停止する（送信後 wasAutoAdvancingRef で復帰）。
+        // 他人のターンでは止めない: セッションの自動進行モードは人間ターンを跨いで継続し、
+        // キーパータブの連鎖が止まると次のAIターンが再開できなくなる
+        if (autoAdvanceRef.current) {
+          wasAutoAdvancingRef.current = true
+          setAutoAdvance(false)
+          autoAdvanceRef.current = false
+        }
         setWaitingForHuman(true)
         setHasDiscarded(false)
         setHumanCharId(p.character_id ?? '')
         setHumanCharName(p.character_name ?? '')
       }
+    }
+    if (event.type === 'AUTO_ADVANCE_CHANGED') {
+      // 自動進行はセッション状態。キーパー権限のタブが切り替え、全タブがここで同期する
+      const enabled = !!event.payload?.enabled
+      setAutoAdvance(enabled)
+      autoAdvanceRef.current = enabled
+      if (enabled) setAutoStopMsg(null)
+      else wasAutoAdvancingRef.current = false
     }
     if (event.type === 'HUMAN_ACTION') {
       const p = event.payload
@@ -508,9 +521,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           }
         }
         setMessages(prev => [...prev, { character_id: '_keeper', character_name: 'キーパー', text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`, emotion: '', tags: [], isKeeperVote: true }])
-        wasAutoAdvancingRef.current = autoAdvanceRef.current
-        setAutoAdvance(false)
-        autoAdvanceRef.current = false
+        // 投票中の自動停止・復帰はキーパー権限タブのローカル駆動状態のみ操作する
+        // （player タブの表示はセッション状態 AUTO_ADVANCE_CHANGED にのみ従う）
+        if (myRoleRef.current === 'host' || myRoleRef.current === 'gm') {
+          wasAutoAdvancingRef.current = autoAdvanceRef.current
+          setAutoAdvance(false)
+          autoAdvanceRef.current = false
+        }
       } catch (e) { console.error(e) }
       return
     }
@@ -552,7 +569,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
 
     // _run_ai_turns は1ターン1実行で停止する。自動モードなら次のターンを ai_resume で継続する。
-    if (autoAdvanceRef.current) {
+    // ai_resume は require_keeper（host/gm）のため、player タブから呼んでも403になる。
+    // 人間ターン到達はサーバーが AI_TURN_COMPLETED 直後に WAITING_FOR_HUMAN を emit して通知する。
+    if (autoAdvanceRef.current && (myRoleRef.current === 'host' || myRoleRef.current === 'gm')) {
       void authFetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
     }
   }
@@ -744,6 +763,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       })
       const data = await res.json()
       await _initSession(data, [])
+      setLobbyTrpgMode(trpgMode)
+      setKeeperSource('ai')
       setLobbyMode(true)
     } catch (e) {
       console.error(e)
@@ -818,12 +839,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setAutoAdvance(next)
     autoAdvanceRef.current = next
     if (next) setAutoStopMsg(null)
-    if (!next && sessionId) {
-      void authFetch(`/api/session/${sessionId}/ai_pause`, { method: 'POST' })
-    } else if (next && !loading && waitingForHuman) {
+    if (!sessionId) return
+    // 自動進行はセッション状態。キーパー権限（host/gm、人間キーパー参加中はgmのみ）が
+    // PATCH で切り替え、AUTO_ADVANCE_CHANGED として全タブに配信される。
+    // resume/pause 相当の副作用はサーバー側で処理する
+    void authFetch(`/api/session/${sessionId}/auto_advance`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    })
+    if (next && !loading && waitingForHuman) {
+      // 自分の人間ターン中にONへ切り替えた場合は自ターンをスキップして進行再開
       void submitHumanTurn('skip')
-    } else if (next && !loading && !waitingForHuman && sessionId) {
-      void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     }
   }
 
@@ -1447,11 +1474,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setHumanCharName(hc?.name ?? hostCharForLobby)
       isHumanKeeperRef.current = false
     }
-    // 観戦者モードはコントロールを非表示にするため observer ロールに切り替え
-    if (hostRole === 'observer') {
-      myRoleRef.current = 'observer'
-      setMyRole('observer')
-    }
+    // 観戦者モードでも myRole は 'host' のまま維持する。JWTロールが host であり
+    // 進行制御（自動切替・次の発言）の権限を持つため、observer に切り替えると
+    // AIキーパー構成で誰も自動進行を操作できなくなる。
+    // キャラを持たない（humanCharId 空）ことで参加系コントロールは自然に非表示になる
     setLobbyMode(false)
     // ai_resume はここでは呼ばない。オフライン同様、キーパーが自動/次の発言で開始する。
   }
@@ -1848,6 +1874,30 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             {myRole === 'host' && (
               <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border-color, #ddd)', background: 'var(--input-bg, rgba(128,128,128,0.06))', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
+                {/* セッションモード */}
+                <div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>セッションモード</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {([false, true] as const).map(isTrpg => (
+                      <button
+                        key={String(isTrpg)}
+                        onClick={() => {
+                          setLobbyTrpgMode(isTrpg)
+                          // キーパー専任 → 通常モードでも同じ役割なのでラベルのみ変更
+                          void fetch(`/api/session/${sessionId}/lobby/mode`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+                            body: JSON.stringify({ trpg_mode: isTrpg }),
+                          })
+                        }}
+                        style={{ padding: '6px 18px', borderRadius: 8, border: `1px solid ${lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'transparent', color: lobbyTrpgMode === isTrpg ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: lobbyTrpgMode === isTrpg ? 600 : 400 }}
+                      >
+                        {isTrpg ? 'TRPGモード' : '通常セッション'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* プレイヤー人数 */}
                 <div>
                   <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>参加人数（観戦者除く）</div>
@@ -1880,7 +1930,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         }}
                         style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${hostRole === role ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: hostRole === role ? '#4a6cf7' : 'transparent', color: hostRole === role ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: hostRole === role ? 600 : 400 }}
                       >
-                        {role === 'keeper' ? 'キーパー（専任）' : role === 'player' ? 'プレイヤー参加' : '観戦者'}
+                        {role === 'keeper' ? (lobbyTrpgMode ? 'キーパー（専任）' : '進行管理') : role === 'player' ? 'プレイヤー参加' : '観戦者'}
                       </button>
                     ))}
                   </div>
@@ -1901,6 +1951,33 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                   )}
                 </div>
 
+                {/* キーパー/進行管理担当（ホストがキーパーでない場合のみ） */}
+                {hostRole !== 'keeper' && (
+                  <div>
+                    <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
+                      {lobbyTrpgMode ? 'キーパー担当' : '進行管理担当'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {(['ai', 'participant'] as const).map(src => (
+                        <button
+                          key={src}
+                          onClick={() => {
+                            setKeeperSource(src)
+                            void fetch(`/api/session/${sessionId}/lobby/keeper_source`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+                              body: JSON.stringify({ waiting_for_gm: src === 'participant' }),
+                            })
+                          }}
+                          style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${keeperSource === src ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: keeperSource === src ? '#4a6cf7' : 'transparent', color: keeperSource === src ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: keeperSource === src ? 600 : 400 }}
+                        >
+                          {src === 'ai' ? '🤖 AI自動進行' : '👤 参加者を待つ'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* 招待コード表示 */}
                 <div>
                   <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>招待コードを参加者に共有してください</div>
@@ -1915,19 +1992,51 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               const aiSlots = initiative.filter(cid =>
                 !participants.some(p => p.char_id === cid) && !cid.startsWith('guest_')
               )
-              const humanSlots = participants.filter(p => p.role === 'player' || p.role === 'gm')
+              const gmParticipant = participants.find(p => p.role === 'gm')
+              const playerSlots = participants.filter(p => p.role === 'player')
               const hostChar = hostRole === 'player' && hostCharForLobby
                 ? characters.find(c => c.id === hostCharForLobby) ?? null
                 : null
-              const hostSlotCount = hostRole === 'keeper' ? 1 : (hostChar ? 1 : 0)
-              const emptyCount = Math.max(0, lobbyMaxPlayers - aiSlots.length - humanSlots.length - hostSlotCount)
+              const hostSlotCount = hostChar ? 1 : 0
+              const emptyCount = Math.max(0, lobbyMaxPlayers - aiSlots.length - playerSlots.length - hostSlotCount)
               const assignableChars = characters.filter(c =>
                 c.player_type !== 'human' && !initiative.includes(c.id)
               )
+              const keeperLabel = lobbyTrpgMode ? 'キーパー' : '進行管理'
               return (
                 <div style={{ marginBottom: 20 }}>
+
+                  {/* キーパー枠（スロット外） */}
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 6 }}>{keeperLabel}</div>
+                  <div style={{ marginBottom: 12 }}>
+                    {hostRole === 'keeper' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent-color, #4a6cf7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🎩</div>
+                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{keeperLabel}</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>ホスト</span>
+                      </div>
+                    ) : gmParticipant ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.2))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
+                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{gmParticipant.display_name}</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>参加者</span>
+                      </div>
+                    ) : keeperSource === 'participant' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.4))' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
+                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.5 }}>参加者を待っています…</span>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.05))', border: '1px solid var(--border-color, rgba(128,128,128,0.2))' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(100,180,100,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🤖</div>
+                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.7 }}>AI（自動進行）</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 参加スロット */}
                   <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
-                    参加スロット ({aiSlots.length + humanSlots.length} / {lobbyMaxPlayers})
+                    参加スロット ({aiSlots.length + playerSlots.length + hostSlotCount} / {lobbyMaxPlayers})
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {/* AI割付け済みスロット */}
@@ -1942,14 +2051,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         >解除</button>
                       </div>
                     ))}
-                    {/* ホストスロット（キーパー or プレイヤー） */}
-                    {hostRole === 'keeper' ? (
-                      <div key="host-keeper" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent-color, #4a6cf7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🎩</div>
-                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>キーパー</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>ホスト</span>
-                      </div>
-                    ) : hostRole === 'observer' ? (
+                    {/* ホストスロット（プレイヤー参加時） */}
+                    {hostRole === 'observer' ? (
                       <div key="host-observer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.3))', opacity: 0.7 }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>👁</div>
                         <span style={{ flex: 1, fontSize: '0.88em' }}>観戦者</span>
@@ -1962,16 +2065,12 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🏠 ホスト</span>
                       </div>
                     ) : null}
-                    {/* 参加済み人間スロット（プレイヤー + キーパー） */}
-                    {humanSlots.map(p => (
+                    {/* 参加済みプレイヤースロット */}
+                    {playerSlots.map(p => (
                       <div key={p.participant_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        {p.role === 'gm' ? (
-                          <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.2))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
-                        ) : (
-                          <img src={`/api/characters/${p.char_id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                        )}
+                        <img src={`/api/characters/${p.char_id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{p.display_name}</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>{p.role === 'gm' ? '🎩 キーパー' : '🎭 参加済み'}</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 参加済み</span>
                       </div>
                     ))}
                     {/* 空きスロット */}
@@ -2441,6 +2540,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     )
   }
 
+  // 進行権限は常に一人: 人間キーパー（gm）参加中はgmのみ、AIキーパー構成ではホストのみ。
+  // ホストはプレイヤー参加・観戦中でもJWTロールが host のまま進行権限を持つ
+  const humanGmJoined = participants.some(p => p.role === 'gm')
+  const canControlAuto = myRole === 'gm' || (myRole === 'host' && !humanGmJoined)
+  const isKeeperUi = myRole === 'host' || myRole === 'gm'
+  // イニシアティブに出るプレイヤーはヘッダーの🎭マークで表現できるため、
+  // 参加者パネルはイニシアティブに乗らない参加者（gm・observer）のみ表示する
+  const offInitiativeParticipants = participants.filter(p => !p.char_id || !initiative.includes(p.char_id))
+
   return (
     <div className="tab-content session-tab">
       <div className="session-header">
@@ -2452,10 +2560,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             const cStr = c > 0 ? `[+${c}]` : `[${c}]`
             const isActive = id === activeTurnCharId
             const atMax = c >= maxCounter
+            // 人間担当キャラは🎭マーク・切断中は⚡付きで減光（参加者パネルの代替表示）
+            const humanP = participants.find(p => p.char_id === id)
+            const isHumanChar = !!humanP || id === myCharIdRef.current
+            const disconnected = humanP ? !humanP.connected : false
+            const label = `${isHumanChar ? '🎭' : ''}${disconnected ? '⚡' : ''}${name}${cStr}`
             return (
-              <span key={id} style={atMax ? { color: '#e05' } : undefined}>
+              <span
+                key={id}
+                style={{
+                  ...(atMax ? { color: '#e05' } : undefined),
+                  ...(disconnected ? { opacity: 0.45 } : undefined),
+                }}
+                title={disconnected ? t('session.participants.disconnected') : undefined}
+              >
                 {idx > 0 && ' → '}
-                {isActive ? <strong>{name}{cStr}</strong> : `${name}${cStr}`}
+                {isActive ? <strong>{label}</strong> : label}
               </span>
             )
           })}
@@ -2625,9 +2745,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           <div ref={messagesEndRef} />
         </div>
       </div>
-      {participants.length > 0 && (
+      {offInitiativeParticipants.length > 0 && (
         <div style={{ width: 160, overflowY: 'auto', borderLeft: '1px solid var(--border-color, #444)', flexShrink: 0 }}>
-          <ParticipantList participants={participants} />
+          <ParticipantList participants={offInitiativeParticipants} />
         </div>
       )}
       {trpgMode && showSheetPanel && Object.keys(charSheetData).length > 0 && (
@@ -2671,14 +2791,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         {humanCharId && (
           <>
             <div className="session-controls-row">
-              <button
-                className={`auto-advance-btn ${autoAdvance ? 'active' : ''}`}
-                onClick={toggleAutoAdvance}
-                disabled={waitingForHuman}
-                title={autoAdvance ? t('session.ctrl.autoAdvance.stopTitle') : t('session.ctrl.autoAdvance.startTitle')}
-              >
-                {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
-              </button>
+              {canControlAuto ? (
+                <button
+                  className={`auto-advance-btn ${autoAdvance ? 'active' : ''}`}
+                  onClick={toggleAutoAdvance}
+                  disabled={waitingForHuman}
+                  title={autoAdvance ? t('session.ctrl.autoAdvance.stopTitle') : t('session.ctrl.autoAdvance.startTitle')}
+                >
+                  {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
+                </button>
+              ) : autoAdvance ? (
+                <span className="auto-advance-btn active" style={{ cursor: 'default', opacity: 0.7 }} title="キーパーが自動進行中">▶▶ 自動進行中</span>
+              ) : null}
               {autoStopMsg && !autoAdvance && (
                 <span style={{ fontSize: 11, color: 'var(--error-color, #e74c3c)', opacity: 0.85 }}>⚠ {autoStopMsg}</span>
               )}
@@ -2694,7 +2818,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               <button onClick={addHumanAction} disabled={(!waitingForHuman && !interruptMode) || !humanInput.trim() || (actionsPerTurn > 0 && humanPending.length >= actionsPerTurn)} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
               <button onClick={() => submitHumanTurn(interruptMode ? 'interrupt' : 'send')} disabled={(!waitingForHuman && !interruptMode) || (humanPending.length === 0 && !humanInput.trim())} className="keeper-send-btn">{interruptMode ? t('session.ctrl.interruptDoneBtn') : t('session.ctrl.speakDoneBtn')}</button>
               <button onClick={() => { setHumanInput(''); setHumanPending([]); setHasDiscarded(true) }} disabled={humanPending.length === 0 || hasDiscarded} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
-              <button onClick={() => void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+              {isKeeperUi && (
+                <button onClick={() => void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+              )}
               <button onClick={() => submitHumanTurn('skip')} disabled={!waitingForHuman} className="keeper-add-btn" title={t('session.ctrl.skipBtn.title')}>{t('session.ctrl.skipBtn')}</button>
             </div>
             <div className="session-controls-row">
@@ -2747,19 +2873,23 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             )}
           </>
         )}
-        {!humanCharId && myRole !== 'observer' && waitingForKeeperTurn && (
+        {!humanCharId && isKeeperUi && waitingForKeeperTurn && (
           <div className="session-controls-row" style={{ background: 'rgba(74,108,247,0.12)', border: '1px solid #4a6cf7', borderRadius: 8, padding: '6px 10px' }}>
             <span style={{ fontWeight: 600, color: '#4a6cf7' }}>{t('trpg.keeper.turnBanner')}</span>
           </div>
         )}
-        {!humanCharId && myRole !== 'observer' && <div className="session-controls-row">
-          <button
-            className={`auto-advance-btn ${autoAdvance ? 'active' : ''}`}
-            onClick={toggleAutoAdvance}
-            title={autoAdvance ? t('session.ctrl.autoAdvance.stopTitle') : t('session.ctrl.autoAdvance.startTitle')}
-          >
-            {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
-          </button>
+        {!humanCharId && isKeeperUi && <div className="session-controls-row">
+          {canControlAuto ? (
+            <button
+              className={`auto-advance-btn ${autoAdvance ? 'active' : ''}`}
+              onClick={toggleAutoAdvance}
+              title={autoAdvance ? t('session.ctrl.autoAdvance.stopTitle') : t('session.ctrl.autoAdvance.startTitle')}
+            >
+              {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
+            </button>
+          ) : autoAdvance ? (
+            <span className="auto-advance-btn active" style={{ cursor: 'default', opacity: 0.7 }} title="キーパーが自動進行中">▶▶ 自動進行中</span>
+          ) : null}
           {autoStopMsg && !autoAdvance && (
             <span style={{ fontSize: 11, color: 'var(--error-color, #e74c3c)', opacity: 0.85 }}>⚠ {autoStopMsg}</span>
           )}
@@ -2786,7 +2916,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </button>
           )}
         </div>}
-        {!humanCharId && myRole !== 'observer' && <div className="session-controls-row">
+        {!humanCharId && isKeeperUi && <div className="session-controls-row">
           <button onClick={retakeTurn} disabled={loading || autoAdvance} className="retake-btn" title={t('session.ctrl.retakeBtn.title')}>{t('session.ctrl.retakeBtn')}</button>
           <button onClick={skipCurrentTurn} disabled={loading} className="keeper-add-btn" title={t('session.ctrl.skipBtnKeeper.title')}>{t('session.ctrl.skipBtnKeeper')}</button>
           {initiative.length > 1 && (

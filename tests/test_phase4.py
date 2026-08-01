@@ -296,3 +296,285 @@ def test_lobby_config_preserves_observer_host_keeper_mode():
     assert resp.status_code == 200
     # host_keeper_mode は False のまま（上書きされていない）
     assert _sessions[sid]["host_keeper_mode"] is False
+
+
+# ── PATCH /lobby/mode & /lobby/keeper_source ─────────────────────────
+
+def test_lobby_set_trpg_mode():
+    """PATCH /lobby/mode でセッションの trpg_mode が更新されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    assert _sessions[sid].get("lobby_active") is True
+
+    resp = client.patch(
+        f"/api/session/{sid}/lobby/mode",
+        json={"trpg_mode": False},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["trpg_mode"] is False
+    assert _sessions[sid]["trpg_mode"] is False
+
+    resp2 = client.patch(
+        f"/api/session/{sid}/lobby/mode",
+        json={"trpg_mode": True},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp2.status_code == 200
+    assert _sessions[sid]["trpg_mode"] is True
+
+
+def test_lobby_set_keeper_source():
+    """PATCH /lobby/keeper_source で waiting_for_gm が更新されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+
+    resp = client.patch(
+        f"/api/session/{sid}/lobby/keeper_source",
+        json={"waiting_for_gm": True},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["waiting_for_gm"] is True
+    assert _sessions[sid]["waiting_for_gm"] is True
+
+    resp2 = client.patch(
+        f"/api/session/{sid}/lobby/keeper_source",
+        json={"waiting_for_gm": False},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp2.status_code == 200
+    assert _sessions[sid]["waiting_for_gm"] is False
+
+
+def test_lobby_mode_after_start_returns_409():
+    """セッション開始後に /lobby/mode を呼ぶと 409 が返ること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+
+    # lobby_active を False にしてセッション開始済みをシミュレート
+    _sessions[sid]["lobby_active"] = False
+
+    resp = client.patch(
+        f"/api/session/{sid}/lobby/mode",
+        json={"trpg_mode": True},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_run_ai_turns_emits_waiting_for_human_after_ai_turn():
+    """AIターン完了後、次が人間ターンなら ai_resume の往復を待たずに
+    WAITING_FOR_HUMAN が emit されること（プレイヤーターン到達で進行が止まるバグの回帰テスト）。"""
+    from def_kari.api.routes.session import _run_ai_turns, _sessions
+
+    sid = "test-emit-waiting-after-ai"
+    _sessions[sid] = {
+        "initiative": ["char_ai", "char_human"],
+        "turn": 0,
+        "human_char_ids": ["char_human"],
+        "guest_chars": {},
+        "ai_task": None,
+        "idle_shutdown_task": None,
+        "name_map": {"char_ai": "AI", "char_human": "Human"},
+        "counters": {},
+        "_skip_gen": 0,
+        "ai_paused": False,
+        "round": 1,
+    }
+    sess = _sessions[sid]
+    emitted = []
+
+    def _fake_execute(s):
+        sess["turn"] = 1  # AIターン完了 → 次は human
+        return {"character_id": "char_ai", "character_name": "AI", "text": "hello"}
+
+    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute):
+        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+            mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+            await _run_ai_turns(sid)
+
+    types = [e[1] for e in emitted if len(e) > 1]
+    assert types == ["AI_TURN_COMPLETED", "WAITING_FOR_HUMAN"], f"got: {types}"
+    wfh = [e for e in emitted if len(e) > 1 and e[1] == "WAITING_FOR_HUMAN"][0]
+    assert wfh[2]["character_id"] == "char_human"
+    del _sessions[sid]
+
+
+@pytest.mark.asyncio
+async def test_run_ai_turns_no_waiting_emit_when_next_is_ai():
+    """AIターン完了後、次もAIターンなら WAITING_FOR_HUMAN は emit されないこと。"""
+    from def_kari.api.routes.session import _run_ai_turns, _sessions
+
+    sid = "test-no-waiting-next-ai"
+    _sessions[sid] = {
+        "initiative": ["char_ai1", "char_ai2", "char_human"],
+        "turn": 0,
+        "human_char_ids": ["char_human"],
+        "guest_chars": {},
+        "ai_task": None,
+        "idle_shutdown_task": None,
+        "name_map": {"char_ai1": "AI1", "char_ai2": "AI2", "char_human": "Human"},
+        "counters": {},
+        "_skip_gen": 0,
+        "ai_paused": False,
+        "round": 1,
+    }
+    sess = _sessions[sid]
+    emitted = []
+
+    def _fake_execute(s):
+        sess["turn"] = 1  # AIターン完了 → 次も AI
+        return {"character_id": "char_ai1", "character_name": "AI1", "text": "hi"}
+
+    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute):
+        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+            mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+            await _run_ai_turns(sid)
+
+    types = [e[1] for e in emitted if len(e) > 1]
+    assert types == ["AI_TURN_COMPLETED"], f"got: {types}"
+    del _sessions[sid]
+
+
+# ── PATCH /auto_advance（セッション状態としての自動進行）──────────────
+
+def test_auto_advance_patch_and_broadcast():
+    """PATCH /auto_advance がセッション状態を更新し AUTO_ADVANCE_CHANGED を emit すること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    emitted = []
+    with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+        mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+
+        # ロビー中: フラグは更新されるが ai_task は起動しない
+        resp = client.patch(f"/api/session/{sid}/auto_advance", json={"enabled": True}, headers=headers)
+        assert resp.status_code == 200
+        assert _sessions[sid]["auto_advance"] is True
+        assert _sessions[sid].get("ai_task") is None
+
+        # OFF: ai_paused が立つ
+        resp2 = client.patch(f"/api/session/{sid}/auto_advance", json={"enabled": False}, headers=headers)
+        assert resp2.status_code == 200
+        assert _sessions[sid]["auto_advance"] is False
+        assert _sessions[sid]["ai_paused"] is True
+
+        # セッション開始後・AIターン: ai_task が起動する
+        _sessions[sid]["lobby_active"] = False
+        _sessions[sid]["initiative"] = ["char_ai"]
+        _sessions[sid]["turn"] = 0
+        _sessions[sid]["human_char_ids"] = []
+        resp3 = client.patch(f"/api/session/{sid}/auto_advance", json={"enabled": True}, headers=headers)
+        assert resp3.status_code == 200
+        assert _sessions[sid]["ai_paused"] is False
+        assert _sessions[sid]["ai_task"] is not None
+
+    changed = [e for e in emitted if len(e) > 1 and e[1] == "AUTO_ADVANCE_CHANGED"]
+    assert [e[2]["enabled"] for e in changed] == [True, False, True]
+
+
+def test_auto_advance_host_forbidden_when_gm_joined():
+    """人間キーパー（gm）参加中はホストの PATCH /auto_advance が 403 になること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    _sessions[sid]["invited_gm_token"] = "dummy-gm-token"
+
+    resp = client.patch(
+        f"/api/session/{sid}/auto_advance",
+        json={"enabled": True},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 403
+    assert _sessions[sid].get("auto_advance", False) is False
+
+
+@pytest.mark.asyncio
+async def test_run_ai_turns_error_clears_auto_advance():
+    """生成エラー時に auto_advance が落ち AUTO_ADVANCE_CHANGED → AI_ERROR の順で emit されること。"""
+    from def_kari.api.routes.session import _run_ai_turns, _sessions
+
+    sid = "test-error-clears-auto"
+    _sessions[sid] = {
+        "initiative": ["char_ai"],
+        "turn": 0,
+        "human_char_ids": [],
+        "guest_chars": {},
+        "ai_task": None,
+        "idle_shutdown_task": None,
+        "name_map": {"char_ai": "AI"},
+        "counters": {},
+        "_skip_gen": 0,
+        "ai_paused": False,
+        "auto_advance": True,
+    }
+    emitted = []
+
+    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=lambda s: {"error": "backend down"}):
+        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+            mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+            await _run_ai_turns(sid)
+
+    types = [e[1] for e in emitted if len(e) > 1]
+    assert types == ["AUTO_ADVANCE_CHANGED", "AI_ERROR"], f"got: {types}"
+    assert _sessions[sid]["auto_advance"] is False
+    del _sessions[sid]
+
+
+def test_available_slots_includes_waiting_for_gm():
+    """available-slots レスポンスに waiting_for_gm と trpg_mode が含まれること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    # waiting_for_gm を True に設定
+    client.patch(
+        f"/api/session/{sid}/lobby/keeper_source",
+        json={"waiting_for_gm": True},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+
+    resp = client.post("/api/session/available-slots", json={"invite_code": invite_code})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "waiting_for_gm" in data
+    assert data["waiting_for_gm"] is True
+    assert "trpg_mode" in data

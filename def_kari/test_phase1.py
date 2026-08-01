@@ -88,7 +88,10 @@ def test_llm_backend_registry():
     from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 
     assert DEFAULT_LLM_BACKEND in LLM_BACKENDS
-    assert len(LLM_BACKENDS) == 5
+    # 組み込み5種は必ず存在する。llm_services.json による動的追加分（v3.1.0〜）が
+    # あるため総数は環境依存であり、個数の完全一致は検証しない
+    builtin = {"textgen_webui", "ollama", "openai", "gemini", "anthropic"}
+    assert builtin <= set(LLM_BACKENDS), f"missing builtins: {builtin - set(LLM_BACKENDS)}"
     for name, backend in LLM_BACKENDS.items():
         assert "chat" in backend, f"{name} missing chat"
         assert "list_models" in backend, f"{name} missing list_models"
