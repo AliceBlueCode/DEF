@@ -233,6 +233,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [charSheetData, setCharSheetData] = useState<Record<string, any>>({})
   const [showSheetPanel, setShowSheetPanel] = useState(false)
+  const [showParticipantPanel, setShowParticipantPanel] = useState(true)
   const [showDiceDialog, setShowDiceDialog] = useState(false)
   const [diceDialogChars, setDiceDialogChars] = useState<string[]>([])
   const [diceDialogLocked, setDiceDialogLocked] = useState(false)
@@ -2680,6 +2681,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               style={{ opacity: showSheetPanel ? 1 : 0.55 }}
             >📋</button>
           )}
+          {offInitiativeParticipants.length > 0 && (
+            <button
+              className="novel-hdr-btn"
+              onClick={() => setShowParticipantPanel(v => !v)}
+              title={t('session.participants.title')}
+              style={{ opacity: showParticipantPanel ? 1 : 0.55 }}
+            >👥</button>
+          )}
           {myRole === 'host' && inviteCode && (
             <InviteCodeDisplay inviteCode={inviteCode} />
           )}
@@ -2835,7 +2844,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           <div ref={messagesEndRef} />
         </div>
       </div>
-      {offInitiativeParticipants.length > 0 && (
+      {offInitiativeParticipants.length > 0 && showParticipantPanel && (
         <div style={{ width: 160, overflowY: 'auto', borderLeft: '1px solid var(--border-color, #444)', flexShrink: 0 }}>
           <ParticipantList participants={offInitiativeParticipants} />
         </div>
