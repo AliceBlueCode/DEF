@@ -1431,9 +1431,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setMyRole('observer')
     }
     setLobbyMode(false)
-    if (!waitingForHuman) {
-      void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
-    }
+    // ai_resume はここでは呼ばない。オフライン同様、キーパーが自動/次の発言で開始する。
   }
 
   const aiTakeover = async (charId: string) => {
