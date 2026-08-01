@@ -984,6 +984,14 @@ def start_session(req: SessionStartRequest):
     _sessions[session_id]["players"][host_token] = ""  # ホストはキャラなし（既存仕組みを維持）
 
     order = [name_map.get(c, c) for c in initiative]
+
+    # オンラインモードは招待コードを自動発行（ホストが手動発行する必要をなくす）
+    invite_code_auto = ""
+    if req.online_mode:
+        invite_code_auto = _generate_invite_code("SFW")
+        _invite_registry[invite_code_auto] = session_id
+        _sessions[session_id]["invite_codes"][invite_code_auto] = {"rating": "SFW", "used": False}
+
     _autosave(session_id)
     return {
         "session_id": session_id,
@@ -991,6 +999,7 @@ def start_session(req: SessionStartRequest):
         "order": order,
         "human_keeper": req.human_keeper,
         "host_token": host_token,
+        "invite_code": invite_code_auto,
     }
 
 

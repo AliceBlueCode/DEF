@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useRef } from 'react'
 import { useT } from '../i18n'
 import InvitePanel from './InvitePanel'
+import InviteCodeDisplay from './InviteCodeDisplay'
 import JoinDialog from './JoinDialog'
 import ParticipantList, { type Participant } from './ParticipantList'
 
@@ -155,6 +156,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [directiveOptions, setDirectiveOptions] = useState<DirectiveOption[]>([])
   const [sessionId, setSessionId] = useState('')
   const sessionIdRef = useRef('')
+  const [inviteCode, setInviteCode] = useState('')
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [sessionStarting, setSessionStarting] = useState(false)
@@ -666,6 +668,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     hostTokenRef.current = data.host_token ?? ''
     myRoleRef.current = 'host'
     setMyRole('host')
+    if (data.invite_code) setInviteCode(data.invite_code)
     const firstCharId = (data.initiative || [])[0]
     if (humanChar && firstCharId === humanChar.id) {
       setWaitingForHuman(true)
@@ -1361,6 +1364,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     wsRef.current = null
     sessionIdRef.current = ''
     setSessionId('')
+    setInviteCode('')
     setMessages([])
     initiativeRef.current = []
     setInitiative([])
@@ -1828,10 +1832,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                   )}
                 </div>
 
-                {/* 招待コード発行 */}
+                {/* 招待コード表示 */}
                 <div>
-                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>招待コードを発行して共有してください</div>
-                  <InvitePanel sessionId={sessionId} hostToken={hostTokenRef.current} />
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>招待コードを参加者に共有してください</div>
+                  <InvitePanel defaultCode={inviteCode} sessionId={sessionId} hostToken={hostTokenRef.current} onCodeChanged={setInviteCode} />
                 </div>
 
               </div>
@@ -2341,8 +2345,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               style={{ opacity: showSheetPanel ? 1 : 0.55 }}
             >📋</button>
           )}
-          {myRole === 'host' && sessionId && (
-            <InvitePanel sessionId={sessionId} hostToken={hostTokenRef.current} />
+          {myRole === 'host' && inviteCode && (
+            <InviteCodeDisplay inviteCode={inviteCode} />
           )}
           {myRole === 'host' && (
             <button className="save-btn" onClick={saveCurrentSession} title={t('session.header.saveTitle')}>💾</button>
