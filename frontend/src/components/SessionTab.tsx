@@ -542,12 +542,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
     const ttsUrl = data.text ? await generateTTSUrl(data.text, data.character_id) : null
     if (ttsUrl) {
-      setMessages(prev => { const last = prev.length - 1; return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m) })
+      // newMsgIndex を使って自分のメッセージスロットに書く（last だと並行処理で別キャラのスロットに誤設定される）
+      setMessages(prev => prev.map((m, i) => i === newMsgIndex ? { ...m, audioUrl: ttsUrl } : m))
       if (autoAdvanceRef.current) await playAudio(ttsUrl)
     }
 
     if (isLastOfRound && keeperFiredRoundRef.current !== data.round) {
       await fireKeeperTurn(sid, data.round)
+    }
+
+    // _run_ai_turns は1ターン1実行で停止する。自動モードなら次のターンを ai_resume で継続する。
+    if (autoAdvanceRef.current) {
+      void authFetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
     }
   }
 

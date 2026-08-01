@@ -400,52 +400,54 @@ def _execute_ai_turn(session_id: str) -> dict:
 
 
 async def _run_ai_turns(session_id: str) -> None:
-    """人間ターン完了後に呼ばれる非同期タスク。人間ターンになるまでAIを自律実行。"""
+    """ai_resume で呼ばれる非同期タスク。現在のターンを1回だけ実行して停止する。
+    連続進行（自動モード）はフロントエンドが AI_TURN_COMPLETED を受け取った後に
+    再度 ai_resume を呼ぶことで実現する。"""
     session = _sessions.get(session_id)
     if not session:
         return
     try:
-        while True:
-            if session.get("ai_paused"):
-                break
-            current = _get_current_speaker(session)
-            if not current or _is_human_char(session, current):
-                # 人間ターン到達をフロントに通知
-                if current:
-                    # _get_current_speaker は turn % len で折り返すが round/turn は更新しない。
-                    # ラウンド境界を越えていた場合はここで正規化する。
-                    _initiative = session.get("initiative", [])
-                    _raw_turn = session.get("turn", 0)
-                    if _initiative and _raw_turn >= len(_initiative):
-                        session["round"] = session.get("round", 1) + 1
-                        session["turn"] = _raw_turn % len(_initiative)
-                    _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
-                        "character_id": current,
-                        "character_name": session.get("name_map", {}).get(current, current),
-                        "round": session.get("round", 1),
-                        "counters": dict(session.get("counters", {})),
-                    })
-                break
-            _skip_gen_snap = session.get("_skip_gen", 0)
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, _execute_ai_turn, session_id
-            )
-            # executor 実行中に keeper_skip が入った場合は結果を捨てて再評価
-            if session.get("_skip_gen", 0) != _skip_gen_snap:
-                continue
-            if result.get("error"):
-                _game_event_bus.emit(session_id, "AI_ERROR", {"error": result["error"]})
-                break
-            if result.get("waiting_for_human"):
+        if session.get("ai_paused"):
+            return
+        current = _get_current_speaker(session)
+        if not current or _is_human_char(session, current):
+            # 人間ターン到達をフロントに通知
+            if current:
+                # _get_current_speaker は turn % len で折り返すが round/turn は更新しない。
+                # ラウンド境界を越えていた場合はここで正規化する。
+                _initiative = session.get("initiative", [])
+                _raw_turn = session.get("turn", 0)
+                if _initiative and _raw_turn >= len(_initiative):
+                    session["round"] = session.get("round", 1) + 1
+                    session["turn"] = _raw_turn % len(_initiative)
                 _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
-                    "character_id": result.get("character_id", ""),
-                    "character_name": result.get("character_name", ""),
-                    "round": result.get("round", 1),
-                    "counters": dict(result.get("counters", session.get("counters", {}))),
+                    "character_id": current,
+                    "character_name": session.get("name_map", {}).get(current, current),
+                    "round": session.get("round", 1),
+                    "counters": dict(session.get("counters", {})),
                 })
-                break
-            _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
-            await asyncio.sleep(0)  # event loop に yield
+            return
+        _skip_gen_snap = session.get("_skip_gen", 0)
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, _execute_ai_turn, session_id
+        )
+        # executor 実行中に keeper_skip が入った場合は結果を捨てる。
+        # skip_turn が新しいタスクを作成するのでここでは再実行不要。
+        if session.get("_skip_gen", 0) != _skip_gen_snap:
+            return
+        if result.get("error"):
+            _game_event_bus.emit(session_id, "AI_ERROR", {"error": result["error"]})
+            return
+        if result.get("waiting_for_human"):
+            _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
+                "character_id": result.get("character_id", ""),
+                "character_name": result.get("character_name", ""),
+                "round": result.get("round", 1),
+                "counters": dict(result.get("counters", session.get("counters", {}))),
+            })
+            return
+        _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
+        await asyncio.sleep(0)  # event loop に yield
     except asyncio.CancelledError:
         raise
     except Exception as e:
