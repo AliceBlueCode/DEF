@@ -178,7 +178,9 @@ def test_human_turn_send_creates_ai_task():
 
     # セッション作成（キャラなし）
     start = client.post("/api/session/start", json={"character_ids": []})
-    sid = start.json()["session_id"]
+    d = start.json()
+    sid = d["session_id"]
+    host_token = d["host_token"]
 
     # 最初のキャラを人間にする（initiative が空なので手動でセット）
     sess = _sessions[sid]
@@ -188,11 +190,109 @@ def test_human_turn_send_creates_ai_task():
     sess["name_map"]["char_human"] = "Human"
     sess["counters"] = {}
 
-    resp = client.post(f"/api/session/{sid}/human_turn", json={
-        "action": "send",
-        "text": "Hello world",
-    })
+    resp = client.post(
+        f"/api/session/{sid}/human_turn",
+        json={"action": "send", "text": "Hello world"},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
     assert resp.status_code == 200
     assert resp.json()["action"] == "send"
     # ai_task が作成されていること（まだ done かもしれないが None ではない）
     assert sess["ai_task"] is not None
+
+
+# ── keeper_skip 競合修正（_skip_gen）─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_skip_turn_increments_skip_gen():
+    """skip_turn が _skip_gen をインクリメントすること（競合検出フラグ）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": []})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    sess = _sessions[sid]
+    sess["initiative"] = ["char_ai", "char_human"]
+    sess["turn"] = 0
+    sess["human_char_ids"] = ["char_human"]
+    sess["name_map"] = {"char_ai": "AI", "char_human": "Human"}
+    sess["counters"] = {}
+
+    assert sess.get("_skip_gen", 0) == 0
+    resp = client.post(
+        f"/api/session/{sid}/skip",
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 200
+    assert sess.get("_skip_gen", 0) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_ai_turns_discards_stale_result_on_skip():
+    """executor 実行中に _skip_gen が変わったら AI 結果を捨てて continue すること。"""
+    from def_kari.api.routes.session import _run_ai_turns, _sessions
+    import asyncio
+
+    sid = "test-skip-gen-discard"
+    _sessions[sid] = {
+        "initiative": ["char_ai", "char_human"],
+        "turn": 0,
+        "human_char_ids": ["char_human"],
+        "guest_chars": {},
+        "ai_task": None,
+        "idle_shutdown_task": None,
+        "name_map": {"char_ai": "AI", "char_human": "Human"},
+        "counters": {},
+        "_skip_gen": 0,
+        "ai_paused": False,
+    }
+    sess = _sessions[sid]
+    emitted = []
+
+    def _fake_execute(s):
+        # LLM 実行中にスキップが来たシミュレーション
+        sess["_skip_gen"] += 1
+        sess["turn"] = 1  # スキップ後は human ターン
+        return {"character_id": "char_ai", "character_name": "AI", "text": "hello"}
+
+    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute):
+        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+            mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+            await _run_ai_turns(sid)
+
+    # AI_TURN_COMPLETED は emit されていない（stale 結果は捨てる）
+    ai_completed = [e for e in emitted if len(e) > 1 and e[1] == "AI_TURN_COMPLETED"]
+    assert ai_completed == [], f"stale result should be discarded, got: {ai_completed}"
+    del _sessions[sid]
+
+
+def test_lobby_config_preserves_observer_host_keeper_mode():
+    """観戦者ホストが lobby_config を呼んでも host_keeper_mode が False のまま保たれること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+
+    # 観戦者モードに設定（is_keeper=false）
+    client.patch(
+        f"/api/session/{sid}/host_role?is_keeper=false",
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert _sessions[sid]["host_keeper_mode"] is False
+
+    # lobby_config を host_char_id="" で呼ぶ（observer / keeper 両方が空文字を送る）
+    resp = client.post(
+        f"/api/session/{sid}/lobby_config",
+        json={"max_players": 4, "host_char_id": ""},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 200
+    # host_keeper_mode は False のまま（上書きされていない）
+    assert _sessions[sid]["host_keeper_mode"] is False

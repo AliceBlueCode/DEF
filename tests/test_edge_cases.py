@@ -349,7 +349,7 @@ def test_human_turn_send_empty_text_error():
     from def_kari.api.main import app
     from def_kari.api.routes.session import _sessions
     client = TestClient(app)
-    sid, _ = _start(client)
+    sid, host_token = _start(client)
     sess = _sessions[sid]
     sess["initiative"] = ["char_human"]
     sess["turn"] = 0
@@ -357,10 +357,11 @@ def test_human_turn_send_empty_text_error():
     sess["name_map"]["char_human"] = "Human"
     sess["counters"] = {}
 
-    resp = client.post(f"/api/session/{sid}/human_turn", json={
-        "action": "send",
-        "text": "   ",  # 空白のみ
-    })
+    resp = client.post(
+        f"/api/session/{sid}/human_turn",
+        json={"action": "send", "text": "   "},  # 空白のみ
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
     assert resp.status_code == 200
     assert "error" in resp.json()
 
@@ -372,13 +373,14 @@ async def test_human_turn_on_ended_session_returns_error():
     from def_kari.api.main import app
     from def_kari.api.routes.session import _end_session
     client = TestClient(app)
-    sid, _ = _start(client)
+    sid, host_token = _start(client)
     await _end_session(sid)
 
-    resp = client.post(f"/api/session/{sid}/human_turn", json={
-        "action": "send",
-        "text": "ghost message",
-    })
+    resp = client.post(
+        f"/api/session/{sid}/human_turn",
+        json={"action": "send", "text": "ghost message"},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
     # human_turn は session なしで 200+error を返す設計
     assert resp.status_code == 200
     assert resp.json().get("error") == "Session not found"
