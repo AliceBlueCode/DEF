@@ -1891,7 +1891,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               const aiSlots = initiative.filter(cid =>
                 !participants.some(p => p.char_id === cid) && !cid.startsWith('guest_')
               )
-              const humanSlots = participants.filter(p => p.role === 'player')
+              const humanSlots = participants.filter(p => p.role === 'player' || p.role === 'gm')
               const hostChar = hostRole === 'player' && hostCharForLobby
                 ? characters.find(c => c.id === hostCharForLobby) ?? null
                 : null
@@ -1938,12 +1938,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🏠 ホスト</span>
                       </div>
                     ) : null}
-                    {/* 参加済み人間スロット */}
+                    {/* 参加済み人間スロット（プレイヤー + キーパー） */}
                     {humanSlots.map(p => (
                       <div key={p.participant_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        <img src={`/api/characters/${p.char_id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        {p.role === 'gm' ? (
+                          <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.2))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
+                        ) : (
+                          <img src={`/api/characters/${p.char_id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        )}
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{p.display_name}</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 参加済み</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>{p.role === 'gm' ? '🎩 キーパー' : '🎭 参加済み'}</span>
                       </div>
                     ))}
                     {/* 空きスロット */}
