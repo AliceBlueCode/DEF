@@ -1826,7 +1826,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
                 {/* プレイヤー人数 */}
                 <div>
-                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>参加人数（ホスト含む・観戦者除く）</div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>参加人数（観戦者除く）</div>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
                       <button
