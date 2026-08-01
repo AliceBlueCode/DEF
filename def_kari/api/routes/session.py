@@ -1211,6 +1211,9 @@ def join_session(req: JoinRequest, request: Request):
         "claimed_char_id": char_id if req.claim_char_id else "",
     }
     sess.setdefault("joined_participants", []).append(pinfo)
+    # token → participant_id の逆引き（サーバー内部限定。joined_participants はそのまま
+    # クライアントに配信されるため token をそこに含めてはいけない）
+    sess.setdefault("token_to_participant", {})[player_token] = participant_id
     _game_event_bus.emit(session_id, "PLAYER_JOINED", pinfo)
 
     return {
@@ -1222,6 +1225,54 @@ def join_session(req: JoinRequest, request: Request):
         "role": role,
         "lobby_active": sess.get("lobby_active", False),
     }
+
+
+@router.post("/{session_id}/leave")
+async def leave_session(session_id: str, authorization: str = Header(...)):
+    """非ホスト参加者(player/gm/observer)の明示的退室。
+
+    参加者データを除去し PLAYER_LEFT を全タブに配信する。切断（通信途絶）とは区別し、
+    タイムアウトによる自動スキップの対象にはしない（設計書 §3.7 参照）。
+    """
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = verify_jwt(token)
+    except _JWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if payload.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    if payload.get("role") == "host":
+        raise HTTPException(400, "Host cannot leave a session it owns; use /end instead")
+
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+
+    # 冪等化: 連打や再送で同じトークンが二重に処理されても一度しか除去・emitしない
+    if token not in sess.get("players", {}):
+        return {"status": "already_left"}
+
+    char_id = sess["players"].pop(token, "")
+    participant_id = sess.get("token_to_participant", {}).pop(token, char_id or None)
+    if payload.get("role") == "gm" and sess.get("invited_gm_token") == token:
+        sess["invited_gm_token"] = None
+    sess["joined_participants"] = [
+        p for p in sess.get("joined_participants", [])
+        if p.get("participant_id") != participant_id
+    ]
+    ws = sess.get("ws_connections", {}).pop(token, None)
+    _ws_send_locks.pop(token, None)
+    if ws:
+        try:
+            await ws.close(code=1000)
+        except Exception:
+            pass
+
+    _game_event_bus.emit(session_id, "PLAYER_LEFT", {
+        "participant_id": participant_id,
+        "character_id": char_id,
+    })
+    return {"status": "ok"}
 
 
 class AiTakeoverRequest(BaseModel):
@@ -3536,6 +3587,16 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     sess.setdefault("ws_connections", {})[raw_token] = ws
     _cancel_idle_shutdown(session_id)
 
+    # 参加者（host以外）の再接続を全タブに通知（切断表示からの復帰）。
+    # 初回接続時にも飛ぶが、フロント側は connected:true への上書きのみなので無害。
+    if raw_token in sess.get("players", {}):
+        _rc_participant_id = sess.get("token_to_participant", {}).get(raw_token, raw_token)
+        _rc_char_id = sess["players"].get(raw_token, "")
+        _game_event_bus.emit(session_id, "PLAYER_RECONNECTED", {
+            "participant_id": _rc_participant_id,
+            "character_id": _rc_char_id,
+        })
+
     # 接続時に現在の状態を送信: 人間ターン待ちなら WAITING_FOR_HUMAN を再送する
     # （ブラウザ変更・リロード・遅延参加でイベントを見逃したタブ向け）
     if not sess.get("lobby_active"):
@@ -3584,5 +3645,14 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         sess = _sessions.get(session_id)
         if sess:
             sess["ws_connections"].pop(raw_token, None)
+            # /leave で既に除去済み（players からも消えている）なら通知しない。
+            # 参加者データは保持したまま切断のみを通知する（退室とは異なり再接続可能）
+            if raw_token in sess.get("players", {}):
+                _dc_participant_id = sess.get("token_to_participant", {}).get(raw_token, raw_token)
+                _dc_char_id = sess["players"].get(raw_token, "")
+                _game_event_bus.emit(session_id, "PLAYER_DISCONNECTED", {
+                    "participant_id": _dc_participant_id,
+                    "character_id": _dc_char_id,
+                })
             if not sess["ws_connections"]:
                 _schedule_idle_shutdown(session_id, delay=300)

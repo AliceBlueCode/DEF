@@ -639,6 +639,150 @@ def test_join_rejects_over_capacity():
     _sessions.pop(sid, None)
 
 
+# ── POST /leave（非ホスト参加者の明示的退室）───────────────────────
+
+def test_leave_removes_participant_and_emits_player_left():
+    """非ホストが /leave すると players・joined_participants から除去され PLAYER_LEFT が emit されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {"name": "わたし", "player_type": "human"}
+    join_res = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    player_token = join_res.json()["player_token"]
+    char_id = join_res.json()["character_id"]
+
+    assert player_token in _sessions[sid]["players"]
+    assert any(p["participant_id"] == char_id for p in _sessions[sid]["joined_participants"])
+
+    emitted = []
+    with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+        mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+        resp = client.post(f"/api/session/{sid}/leave", headers={"Authorization": f"Bearer {player_token}"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    assert player_token not in _sessions[sid]["players"]
+    assert not any(p["participant_id"] == char_id for p in _sessions[sid]["joined_participants"])
+    assert player_token not in _sessions[sid].get("token_to_participant", {})
+
+    left_events = [e for e in emitted if len(e) > 1 and e[1] == "PLAYER_LEFT"]
+    assert len(left_events) == 1
+    assert left_events[0][2]["participant_id"] == char_id
+    assert left_events[0][2]["character_id"] == char_id
+    _sessions.pop(sid, None)
+
+
+def test_leave_is_idempotent():
+    """/leave を連打しても2回目以降は already_left を返し PLAYER_LEFT を再emitしないこと。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    join_res = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": {}})
+    player_token = join_res.json()["player_token"]
+    headers = {"Authorization": f"Bearer {player_token}"}
+
+    r1 = client.post(f"/api/session/{sid}/leave", headers=headers)
+    assert r1.status_code == 200
+    assert r1.json()["status"] == "ok"
+
+    r2 = client.post(f"/api/session/{sid}/leave", headers=headers)
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "already_left"
+    _sessions.pop(sid, None)
+
+
+def test_leave_rejects_host():
+    """ホストトークンで /leave すると 400 が返ること（ホストは /end を使う）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+
+    resp = client.post(f"/api/session/{sid}/leave", headers={"Authorization": f"Bearer {host_token}"})
+    assert resp.status_code == 400
+    _sessions.pop(sid, None)
+
+
+def test_leave_distinguishes_multiple_char_id_empty_participants():
+    """char_id="" の観戦者が複数いても、leave した本人の participant_id だけが除去されること。
+
+    以前はフロント側が char_id で PLAYER_LEFT を判定しており、observer が複数いると
+    全員巻き添えになるバグがあった。participant_id ベースならこの問題は起きない。
+    """
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    obs1 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": {}}).json()
+    obs2 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": {}}).json()
+    assert obs1["character_id"] == "" and obs2["character_id"] == ""
+
+    participant_ids_before = {p["participant_id"] for p in _sessions[sid]["joined_participants"]}
+    assert len(participant_ids_before) == 2  # char_id="" でも participant_id は別々
+
+    client.post(f"/api/session/{sid}/leave", headers={"Authorization": f"Bearer {obs1['player_token']}"})
+
+    remaining = _sessions[sid]["joined_participants"]
+    assert len(remaining) == 1  # obs2 のみ残る
+    assert obs2["player_token"] in _sessions[sid]["players"]
+    _sessions.pop(sid, None)
+
+
+# ── WS切断/再接続イベント（PLAYER_DISCONNECTED / PLAYER_RECONNECTED）──
+
+def test_ws_disconnect_emits_player_disconnected_but_keeps_participant():
+    """WS切断時、players/joined_participants は保持したまま PLAYER_DISCONNECTED が emit されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+    join_res = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": {}}).json()
+    player_token = join_res["player_token"]
+
+    emitted = []
+    with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+        mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+        with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
+            ws.send_json({"type": "auth", "token": player_token})
+        # with ブロックを抜けると切断される
+
+    # 切断後も参加者データは残っている
+    assert player_token in _sessions[sid]["players"]
+    disconnected = [e for e in emitted if len(e) > 1 and e[1] == "PLAYER_DISCONNECTED"]
+    assert len(disconnected) == 1
+    assert disconnected[0][2]["participant_id"] == join_res["character_id"] or disconnected[0][2]["participant_id"].startswith("_")
+    _sessions.pop(sid, None)
+
+
 # ── POST /end の冪等性（episodic memory 多重書き込み防止）──────────
 
 def test_end_session_idempotent_episodic_write():

@@ -462,11 +462,20 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
     }
     if (event.type === 'PLAYER_LEFT') {
-      setParticipants(prev => prev.filter(x => x.char_id !== event.payload.character_id))
+      // participant_id で判定（char_id="" の observer/keeper が複数いても巻き添えにしない）
+      const pid = event.payload.participant_id ?? event.payload.character_id
+      setParticipants(prev => prev.filter(x => x.participant_id !== pid))
     }
     if (event.type === 'PLAYER_DISCONNECTED') {
+      const pid = event.payload.participant_id ?? event.payload.character_id
       setParticipants(prev =>
-        prev.map(x => x.char_id === event.payload.character_id ? { ...x, connected: false } : x)
+        prev.map(x => x.participant_id === pid ? { ...x, connected: false } : x)
+      )
+    }
+    if (event.type === 'PLAYER_RECONNECTED') {
+      const pid = event.payload.participant_id ?? event.payload.character_id
+      setParticipants(prev =>
+        prev.map(x => x.participant_id === pid ? { ...x, connected: true } : x)
       )
     }
     if (event.type === 'LOBBY_UPDATE') {
@@ -1417,7 +1426,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
-  const endSession = async () => {
+  // explicitLeave: ユーザーが「退出」ボタンを押した場合のみ true。
+  // SESSION_ENDED 受信時（ホストがセッションを終えた場合）はこの関数が引数なしで
+  // 呼ばれるため false のまま → /leave を叩かない（セッション自体が消滅済みのため無意味）
+  const endSession = async (explicitLeave = false) => {
     // 再入ガード: ホスト自身の /end が発火させる SESSION_ENDED ブロードキャストを
     // 自タブが受信して endSession() を再実行するループを防ぐ
     if (endingRef.current) return
@@ -1429,6 +1441,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (myRole === 'host' && sessionId) {
       try {
         await fetch(`/api/session/${sessionId}/end`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${hostTokenRef.current}` },
+        })
+      } catch {}
+    } else if (explicitLeave && myRole !== 'host' && sessionId) {
+      // 非ホストの明示的退室: サーバーの参加者データを除去し PLAYER_LEFT を他タブへ配信
+      try {
+        await fetch(`/api/session/${sessionId}/leave`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${hostTokenRef.current}` },
         })
@@ -2701,8 +2721,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             </span>
           )}
           {myRole === 'host'
-            ? <button className="end-btn" onClick={endSession}>{t('session.header.endBtn')}</button>
-            : <button className="end-btn" style={{ background: '#888' }} onClick={endSession}>退出</button>
+            ? <button className="end-btn" onClick={() => endSession()}>{t('session.header.endBtn')}</button>
+            : <button className="end-btn" style={{ background: '#888' }} onClick={() => endSession(true)}>退出</button>
           }
         </div>
       </div>
