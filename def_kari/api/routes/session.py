@@ -1702,7 +1702,9 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
     if not sess:
         raise HTTPException(404, "Session not found")
     sess["max_players"] = req.max_players
-    sess["host_keeper_mode"] = (req.host_char_id == "")  # キャラなし=キーパー専任
+    # host_keeper_mode は update_host_role で設定済み。キャラがある場合だけ上書き（プレイヤー参加確定）。
+    if req.host_char_id:
+        sess["host_keeper_mode"] = False
     # ホストキャラをイニシアティブに追加（プレイヤー参加時）
     if req.host_char_id and req.host_char_id not in sess["initiative"]:
         profiles = load_profiles()
@@ -1725,6 +1727,63 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
         "max_players": sess["max_players"],
         "initiative": sess["initiative"],
     }
+
+
+class LobbyAIRequest(BaseModel):
+    character_id: str
+
+
+@router.post("/{session_id}/lobby/add_ai")
+def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(require_host)):
+    """ロビーに AI キャラクターを追加する（ホストのみ）。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if not sess.get("lobby_active"):
+        raise HTTPException(409, "Session already started")
+    char_id = req.character_id
+    if char_id in sess["initiative"]:
+        raise HTTPException(409, "Already in initiative")
+    profiles = load_profiles()
+    char = get_character(char_id, profiles)
+    if not char:
+        raise HTTPException(404, "Character not found")
+    if char.get("player_type") == "human":
+        raise HTTPException(400, "Cannot add human character as AI slot")
+    sess["initiative"].append(char_id)
+    sess["name_map"][char_id] = char.get("name", char_id)
+    _autosave(session_id)
+    _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
+        "initiative": sess["initiative"],
+        "name_map": dict(sess["name_map"]),
+    })
+    return {"status": "ok", "initiative": sess["initiative"], "name_map": dict(sess["name_map"])}
+
+
+@router.post("/{session_id}/lobby/remove_ai")
+def lobby_remove_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(require_host)):
+    """ロビーから AI キャラクターを削除する（ホストのみ）。"""
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if not sess.get("lobby_active"):
+        raise HTTPException(409, "Session already started")
+    char_id = req.character_id
+    if char_id in sess.get("human_char_ids", []) or char_id in sess.get("guest_chars", {}):
+        raise HTTPException(400, "Cannot remove human player character")
+    if char_id in sess["initiative"]:
+        sess["initiative"].remove(char_id)
+        sess["name_map"].pop(char_id, None)
+        _autosave(session_id)
+    _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
+        "initiative": sess["initiative"],
+        "name_map": dict(sess["name_map"]),
+    })
+    return {"status": "ok", "initiative": sess["initiative"], "name_map": dict(sess["name_map"])}
 
 
 @router.post("/human")

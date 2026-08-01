@@ -157,15 +157,17 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [sessionId, setSessionId] = useState('')
   const sessionIdRef = useRef('')
   const [inviteCode, setInviteCode] = useState('')
+  const [extraNameMap, setExtraNameMap] = useState<Record<string, string>>({})
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [sessionStarting, setSessionStarting] = useState(false)
   const [lobbyMode, setLobbyMode] = useState(false)
   const [lobbyActive, setLobbyActive] = useState(false)  // 参加者側: ホスト開始待ち
   const [lobbyMaxPlayers, setLobbyMaxPlayers] = useState(4)
-  const [hostRole, setHostRole] = useState<'keeper' | 'player'>('keeper')
+  const [hostRole, setHostRole] = useState<'keeper' | 'player' | 'observer'>('keeper')
   const [hostCharForLobby, setHostCharForLobby] = useState('')
   const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
+  const [showAiAssignDialog, setShowAiAssignDialog] = useState(false)
   const [round, setRound] = useState(1)
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0)
   const [activeTurnCharId, setActiveTurnCharId] = useState('')
@@ -396,6 +398,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         initiativeRef.current = event.payload.initiative
         setInitiative(event.payload.initiative)
       }
+      if (event.payload?.name_map) {
+        setExtraNameMap(prev => ({ ...prev, ...event.payload.name_map }))
+      }
       if (event.payload?.participants) {
         setParticipants(prev => {
           const merged = [...prev]
@@ -432,6 +437,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setParticipants(prev =>
         prev.map(x => x.char_id === event.payload.character_id ? { ...x, connected: false } : x)
       )
+    }
+    if (event.type === 'LOBBY_UPDATE') {
+      if (event.payload?.initiative) {
+        initiativeRef.current = event.payload.initiative
+        setInitiative(event.payload.initiative)
+      }
+      if (event.payload?.name_map) {
+        setExtraNameMap(prev => ({ ...prev, ...event.payload.name_map }))
+      }
     }
   }
 
@@ -1429,6 +1443,36 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
+  const lobbyAddAi = async (charId: string) => {
+    if (!sessionId) return
+    const res = await authFetch(`/api/session/${sessionId}/lobby/add_ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character_id: charId }),
+    })
+    if (res.ok) {
+      const d = await res.json()
+      initiativeRef.current = d.initiative
+      setInitiative(d.initiative)
+      setExtraNameMap(prev => ({ ...prev, ...d.name_map }))
+    }
+    setShowAiAssignDialog(false)
+  }
+
+  const lobbyRemoveAi = async (charId: string) => {
+    if (!sessionId) return
+    const res = await authFetch(`/api/session/${sessionId}/lobby/remove_ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character_id: charId }),
+    })
+    if (res.ok) {
+      const d = await res.json()
+      initiativeRef.current = d.initiative
+      setInitiative(d.initiative)
+    }
+  }
+
   const addKeeperAction = () => {
     if (!keeperInput.trim()) return
     if (actionsPerTurnRef.current > 0 && pendingActions.length >= actionsPerTurnRef.current) return
@@ -1756,6 +1800,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   if (sessionId && lobbyMode) {
     // ローカルキャラ + 参加者のゲストキャラの名前マップを合成
     const nameMap: Record<string, string> = {
+      ...extraNameMap,
       ...Object.fromEntries(characters.map(c => [c.id, c.name])),
       ...Object.fromEntries(participants.filter(p => p.char_id).map(p => [p.char_id, p.display_name])),
     }
@@ -1799,7 +1844,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 <div>
                   <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>ホストの役割</div>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    {(['keeper', 'player'] as const).map(role => (
+                    {(['keeper', 'player', 'observer'] as const).map(role => (
                       <button
                         key={role}
                         onClick={() => {
@@ -1811,7 +1856,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         }}
                         style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${hostRole === role ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: hostRole === role ? '#4a6cf7' : 'transparent', color: hostRole === role ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: hostRole === role ? 600 : 400 }}
                       >
-                        {role === 'keeper' ? 'キーパー（専任）' : 'プレイヤー参加'}
+                        {role === 'keeper' ? 'キーパー（専任）' : role === 'player' ? 'プレイヤー参加' : '観戦者'}
                       </button>
                     ))}
                   </div>
@@ -1841,53 +1886,110 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               </div>
             )}
 
-            {/* キャラクター / イニシアティブ */}
-            {initiative.length > 0 ? (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
-                  {isOnlineLobby ? `参加キャラクター (${initiative.length}人)` : t('session.lobby.initiative')}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {initiative.map((cid) => {
-                    const char = characters.find(c => c.id === cid)
-                    const isHuman = char?.player_type === 'human' || cid.startsWith('guest_')
-                    const takenOverByAI = aiTakenOverChars.has(cid)
-                    const claimer = participants.find(p => p.claimed_char_id === cid || p.char_id === cid)
-                    const isClaimed = !!claimer
-                    return (
+            {/* 参加スロット（オンラインロビー） */}
+            {(() => {
+              const aiSlots = initiative.filter(cid =>
+                !participants.some(p => p.char_id === cid) && !cid.startsWith('guest_')
+              )
+              const humanSlots = participants.filter(p => p.role === 'player')
+              const hostChar = hostRole === 'player' && hostCharForLobby
+                ? characters.find(c => c.id === hostCharForLobby) ?? null
+                : null
+              const hostSlotCount = hostRole === 'keeper' ? 1 : (hostChar ? 1 : 0)
+              const emptyCount = Math.max(0, lobbyMaxPlayers - aiSlots.length - humanSlots.length - hostSlotCount)
+              const assignableChars = characters.filter(c =>
+                c.player_type !== 'human' && !initiative.includes(c.id)
+              )
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
+                    参加スロット ({aiSlots.length + humanSlots.length} / {lobbyMaxPlayers})
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {/* AI割付け済みスロット */}
+                    {aiSlots.map(cid => (
                       <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
                         <img src={`/api/characters/${cid}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                        <span style={{ fontWeight: isHuman && !takenOverByAI ? 600 : 400, flex: 1, fontSize: '0.95em' }}>
-                          {nameMap[cid] ?? cid}
-                        </span>
-                        {!isHuman || takenOverByAI ? (
-                          <span style={{ fontSize: '0.75em', opacity: 0.45, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color, #ccc)' }}>AI</span>
-                        ) : isClaimed ? (
-                          <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 {claimer.display_name}</span>
-                        ) : (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: '0.78em', opacity: 0.5 }}>{t('session.lobby.slotWaiting')}</span>
-                            {myRole === 'host' && (
-                              <button
-                                onClick={() => void aiTakeover(cid)}
-                                style={{ fontSize: '0.75em', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border-color, #888)', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.7 }}
-                              >
-                                {t('session.lobby.toAIBtn')}
-                              </button>
-                            )}
-                          </span>
+                        <span style={{ flex: 1, fontSize: '0.95em' }}>{nameMap[cid] ?? cid}</span>
+                        <span style={{ fontSize: '0.75em', opacity: 0.45, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color, #ccc)' }}>AI</span>
+                        <button
+                          onClick={() => void lobbyRemoveAi(cid)}
+                          style={{ fontSize: '0.75em', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border-color, #888)', background: 'transparent', color: 'var(--danger-color, #d32)', cursor: 'pointer' }}
+                        >解除</button>
+                      </div>
+                    ))}
+                    {/* ホストスロット（キーパー or プレイヤー） */}
+                    {hostRole === 'keeper' ? (
+                      <div key="host-keeper" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent-color, #4a6cf7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🎩</div>
+                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>キーパー</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>ホスト</span>
+                      </div>
+                    ) : hostRole === 'observer' ? (
+                      <div key="host-observer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.3))', opacity: 0.7 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>👁</div>
+                        <span style={{ flex: 1, fontSize: '0.88em' }}>観戦者</span>
+                        <span style={{ fontSize: '0.75em', opacity: 0.6 }}>ホスト（スロット外）</span>
+                      </div>
+                    ) : hostChar ? (
+                      <div key="host-char" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <img src={`/api/characters/${hostChar.id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{hostChar.name}</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🏠 ホスト</span>
+                      </div>
+                    ) : null}
+                    {/* 参加済み人間スロット */}
+                    {humanSlots.map(p => (
+                      <div key={p.participant_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
+                        <img src={`/api/characters/${p.char_id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{p.display_name}</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 参加済み</span>
+                      </div>
+                    ))}
+                    {/* 空きスロット */}
+                    {Array.from({ length: emptyCount }).map((_, i) => (
+                      <div key={`empty-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.3))' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', flexShrink: 0 }} />
+                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.45 }}>待機中…</span>
+                        {assignableChars.length > 0 && (
+                          <button
+                            onClick={() => setShowAiAssignDialog(true)}
+                            style={{ fontSize: '0.75em', padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-color, #4a6cf7)', color: 'var(--accent-color, #4a6cf7)', background: 'transparent', cursor: 'pointer' }}
+                          >AI割付け</button>
                         )}
                       </div>
-                    )
-                  })}
+                    ))}
+                  </div>
+
+                  {/* AI割付けダイアログ */}
+                  {showAiAssignDialog && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+                      onClick={() => setShowAiAssignDialog(false)}>
+                      <div style={{ background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '24px 28px', minWidth: 300, maxWidth: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}
+                        onClick={e => e.stopPropagation()}>
+                        <div style={{ fontWeight: 700, marginBottom: 14, fontSize: '1em' }}>AIキャラクターを割付ける</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {assignableChars.map(c => (
+                            <button key={c.id} onClick={() => void lobbyAddAi(c.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
+                              <img src={`/api/characters/${c.id}/icon`} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                              <span style={{ fontSize: '0.95em' }}>{c.name}</span>
+                            </button>
+                          ))}
+                          {assignableChars.length === 0 && (
+                            <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>割付け可能な AI キャラクターがいません</div>
+                          )}
+                        </div>
+                        <div style={{ marginTop: 16, textAlign: 'right' }}>
+                          <button onClick={() => setShowAiAssignDialog(false)}
+                            style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>キャンセル</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ) : (
-              /* オンラインモード: まだ誰も参加していない */
-              <div style={{ marginBottom: 20, padding: '20px', borderRadius: 10, border: '1px dashed var(--border-color, #ccc)', textAlign: 'center', opacity: 0.5, fontSize: '0.88em' }}>
-                参加者がキャラクターを持ち込むとここに表示されます
-              </div>
-            )}
+              )
+            })()}
 
             {/* 接続中の参加者サマリー */}
             {participants.length > 0 && (
