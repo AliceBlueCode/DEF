@@ -1425,6 +1425,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setHumanCharName(hc?.name ?? hostCharForLobby)
       isHumanKeeperRef.current = false
     }
+    // 観戦者モードはコントロールを非表示にするため observer ロールに切り替え
+    if (hostRole === 'observer') {
+      myRoleRef.current = 'observer'
+      setMyRole('observer')
+    }
     setLobbyMode(false)
     if (!waitingForHuman) {
       void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
