@@ -1805,7 +1805,6 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       ...Object.fromEntries(participants.filter(p => p.char_id).map(p => [p.char_id, p.display_name])),
     }
     const isOnlineLobby = initiative.length === 0 || participants.some(p => p.role === 'player' && !characters.find(c => c.id === p.char_id))
-    const joinedPlayers = participants.filter(p => p.role === 'player')
     const observerCount = participants.filter(p => p.role === 'observer').length
 
     return (
@@ -1995,15 +1994,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               )
             })()}
 
-            {/* 接続中の参加者サマリー */}
-            {participants.length > 0 && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
-                  接続中 — {joinedPlayers.length + 1}
-                  {myRole === 'host' ? ` / ${lobbyMaxPlayers}人` : '人'}
-                  {observerCount > 0 && ` • 観戦者 ${observerCount}人`}
-                </div>
-                <ParticipantList participants={participants} />
+            {/* 観戦者カウント（スロット表示に含まれないため別出し） */}
+            {observerCount > 0 && (
+              <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
+                観戦者 {observerCount}人
               </div>
             )}
 
