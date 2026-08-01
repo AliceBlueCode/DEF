@@ -240,6 +240,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [showJoinDialog, setShowJoinDialog] = useState(false)
   const [myRole, setMyRole] = useState<'host' | 'player' | 'observer' | 'gm'>('host')
 
+  // JWT を自動付与する fetch ラッパー（hostTokenRef = 自タブのトークン）
+  const authFetch = (path: string, init: RequestInit = {}) =>
+    fetch(path, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined ?? {}),
+        ...(hostTokenRef.current ? { 'Authorization': `Bearer ${hostTokenRef.current}` } : {}),
+      },
+    })
+
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
       .then(r => r.json())
@@ -299,6 +309,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
       if (typeof p.round === 'number') setRound(p.round)
       setActiveTurnCharId(p.character_id ?? '')
+      if (p.counters) setCounters(capCounters(p.counters))
       setLoading(false)
       // オンライン: 自分のキャラターンのときだけプレイヤーコントロールに切り替える
       // myCharIdRef が空 = キーパー/オブザーバー → 変更しない
@@ -311,19 +322,57 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
     if (event.type === 'HUMAN_ACTION') {
       const p = event.payload
+      if (p.counters) setCounters(capCounters(p.counters))
       // 自分が送信したメッセージはローカルで既に追加済みなのでスキップ
       // keeper メッセージ: sender_role が自分のロールと一致する場合のみスキップ
-      const isMine = p.action === 'keeper'
+      const isMine = (p.action === 'keeper' || p.action === 'keeper_skip')
         ? (p.sender_role === myRoleRef.current)
         : p.character_id === myCharIdRef.current
       if (p.character_id && !isMine) {
-        setMessages(prev => [...prev, {
-          character_id: p.character_id,
-          character_name: p.character_name ?? p.character_id,
-          text: p.text ?? '',
-          emotion: 'neutral',
-          tags: [],
-        }])
+        if (p.action === 'skip') {
+          setMessages(prev => [...prev, {
+            character_id: '_keeper',
+            character_name: '⚙ System',
+            text: t('session.msg.humanSkip', { name: p.character_name ?? p.character_id }),
+            emotion: '', tags: [],
+          }])
+        } else if (p.action === 'keeper_skip') {
+          setMessages(prev => [...prev, {
+            character_id: '_keeper',
+            character_name: '🎩 Keeper',
+            text: t('session.msg.skipTurn', { name: p.character_name ?? p.character_id }),
+            emotion: '', tags: [],
+          }])
+        } else {
+          setMessages(prev => [...prev, {
+            character_id: p.character_id,
+            character_name: p.character_name ?? p.character_id,
+            text: p.text ?? '',
+            emotion: 'neutral',
+            tags: [],
+          }])
+        }
+      }
+    }
+    if (event.type === 'SESSION_IMAGE') {
+      const p = event.payload
+      if (p.url) {
+        setMessages(prev => {
+          // 生成中プレースホルダーがある or 既にこのURLが存在する = 自分が送ったタブ → スキップ
+          const hasPlaceholder = prev.some((m: SessionMessage) => m.isSceneImage && m.imageStatus === 'generating')
+          const hasUrl = prev.some((m: SessionMessage) => m.imageUrl === p.url)
+          if (hasPlaceholder || hasUrl) return prev
+          return [...prev, {
+            character_id: '__scene__',
+            character_name: '',
+            text: '',
+            emotion: '',
+            tags: [],
+            isSceneImage: true,
+            imageStatus: 'done' as const,
+            imageUrl: p.url as string,
+          }]
+        })
       }
     }
     if (event.type === 'AI_ERROR') {
@@ -415,7 +464,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       if (data.counters) setCounters(capCounters(data.counters))
       setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `🗳 ${data.character_name} が投票を発議 [発言力-3]`, emotion: '', tags: [] }])
       try {
-        const delibRes = await fetch(`/api/session/${sid}/vote/deliberate`, {
+        const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vote_type: data.vote_type || 'topic_change', detail: data.vote_detail || '', target_id: '', proposer_id: data.character_id, proposer_text: data.proposer_text || '' }),
         })
@@ -637,7 +686,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const data = await res.json()
       await _initSession(data, selectedChars)
       // ロビーを経由せず即開始
-      void fetch(`/api/session/${data.session_id}/ai_resume`, { method: 'POST' })
+      void authFetch(`/api/session/${data.session_id}/ai_resume`, { method: 'POST' })
     } catch (e) {
       console.error(e)
     } finally {
@@ -717,7 +766,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (!sessionId || loading) return
     setAutoAdvance(false)
     autoAdvanceRef.current = false
-    const res = await fetch(`/api/session/${sessionId}/retake`, { method: 'POST' })
+    const res = await authFetch(`/api/session/${sessionId}/retake`, { method: 'POST' })
     const data = await res.json()
     if (data.error) { console.error(data.error); return }
     const removed = data.removed ?? 0
@@ -731,11 +780,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     autoAdvanceRef.current = next
     if (next) setAutoStopMsg(null)
     if (!next && sessionId) {
-      void fetch(`/api/session/${sessionId}/ai_pause`, { method: 'POST' })
+      void authFetch(`/api/session/${sessionId}/ai_pause`, { method: 'POST' })
     } else if (next && !loading && waitingForHuman) {
       void submitHumanTurn('skip')
     } else if (next && !loading && !waitingForHuman && sessionId) {
-      void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+      void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     }
   }
 
@@ -754,7 +803,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           audio_url: m.audioUrl && !m.audioUrl.startsWith('blob:') ? m.audioUrl : undefined,
         }))
         .filter(item => item.image_url || item.audio_url)
-      const res = await fetch(`/api/session/${sessionId}/save`, {
+      const res = await authFetch(`/api/session/${sessionId}/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ media }),
@@ -787,7 +836,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
   const fetchAIKeeperResult = async (sid: string): Promise<KeeperResult | null> => {
     try {
-      const res = await fetch(`/api/session/${sid}/ai_keeper`, {
+      const res = await authFetch(`/api/session/${sid}/ai_keeper`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backend }),
@@ -843,7 +892,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         emotion: '', tags: [],
       }])
       try {
-        const delibRes = await fetch(`/api/session/${sid}/vote/deliberate`, {
+        const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vote_type: 'end_session', detail: '', target_id: '', proposer_id: '_keeper', proposer_text: '' }),
@@ -901,7 +950,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }
     }
     // WS経由でAI_TURN_COMPLETEDが届く。ai_resumeでai_taskを再起動
-    void fetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
+    void authFetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
   }
 
   const rollJudgmentAuto = async (sid: string, j: KeeperJudgment, isSkill = false) => {
@@ -961,7 +1010,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         const flat = Object.fromEntries(
           Object.entries(updatedStats).map(([k, v]: [string, any]) => [k, v.current ?? 0])
         )
-        fetch(`/api/session/${sessionId}/sync_stats`, {
+        authFetch(`/api/session/${sessionId}/sync_stats`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ character_id: charId, stats: flat }),
@@ -1034,7 +1083,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       autoAdvanceRef.current = true
     }
     wasAutoAdvancingRef.current = false
-    void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+    void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
   }
 
   const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
@@ -1360,7 +1409,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
     setLobbyMode(false)
     if (!waitingForHuman) {
-      void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+      void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     }
   }
 
@@ -1378,7 +1427,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
   const addKeeperAction = () => {
     if (!keeperInput.trim()) return
-    if (pendingActions.length >= actionsPerTurnRef.current) return
+    if (actionsPerTurnRef.current > 0 && pendingActions.length >= actionsPerTurnRef.current) return
     setPendingActions(prev => [...prev, keeperInput.trim()])
     setKeeperInput('')
   }
@@ -1405,7 +1454,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setWaitingForKeeperTurn(false)
       setAutoAdvance(true)
       autoAdvanceRef.current = true
-      void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+      void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
     } else if (autoAdvanceRef.current) {
       setAutoAdvance(false)
       autoAdvanceRef.current = false
@@ -1414,7 +1463,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
   const skipCurrentTurn = async () => {
     if (!sessionId) return
-    const res = await fetch(`/api/session/${sessionId}/skip`, { method: 'POST' })
+    const res = await authFetch(`/api/session/${sessionId}/skip`, { method: 'POST' })
     const data = await res.json()
     if (data.error) return
     if (data.counters) setCounters(capCounters(data.counters))
@@ -1468,13 +1517,19 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (!sessionId) return
     const lines = [...humanPending, ...(humanInput.trim() ? [humanInput.trim()] : [])]
     const text = lines.join('\n')
+    // send/skip は fetch 前に waitingForHuman を false にしておく（競合防止）
+    // オンライン時: WAITING_FOR_HUMAN が即座に届くとHTTPレスポンスで上書きされるため
+    if (action === 'send' || action === 'skip') setWaitingForHuman(false)
     const res = await fetch(`/api/session/${sessionId}/human_turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ action, text, character_id: humanCharId }),
     })
     const data = await res.json()
-    if (data.error) return
+    if (data.error) {
+      if (action === 'send' || action === 'skip') setWaitingForHuman(true)  // 失敗時は戻す
+      return
+    }
 
     if (action === 'skip') {
       setMessages(prev => [...prev, {
@@ -1551,7 +1606,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setVoteLoading(true)
     setShowVoteDialog(false)
     try {
-      const res = await fetch(`/api/session/${sessionId}/vote/deliberate`, {
+      const res = await authFetch(`/api/session/${sessionId}/vote/deliberate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vote_type: voteType, detail: voteDetail, target_id: voteTarget, proposer_id: humanCharId, proposer_text: voteProposerText }),
@@ -1643,7 +1698,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const advanceScene = async () => {
     if (!sessionId) return
     try {
-      const res = await fetch(`/api/session/${sessionId}/scene/advance`, { method: 'POST' })
+      const res = await authFetch(`/api/session/${sessionId}/scene/advance`, { method: 'POST' })
       const data = await res.json()
       if (data.error) { console.error('scene/advance:', data.error); return }
       if (typeof data.current_scene_index === 'number') setCurrentSceneIndex(data.current_scene_index)
@@ -1674,7 +1729,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       _genId: genId,
     }])
     try {
-      const res = await fetch(`/api/session/${sessionId}/generate-image`, {
+      const res = await authFetch(`/api/session/${sessionId}/generate-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backend, t2i_backend: t2iBackend }),
@@ -2510,7 +2565,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               <button onClick={addHumanAction} disabled={(!waitingForHuman && !interruptMode) || !humanInput.trim() || (actionsPerTurn > 0 && humanPending.length >= actionsPerTurn)} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
               <button onClick={() => submitHumanTurn(interruptMode ? 'interrupt' : 'send')} disabled={(!waitingForHuman && !interruptMode) || (humanPending.length === 0 && !humanInput.trim())} className="keeper-send-btn">{interruptMode ? t('session.ctrl.interruptDoneBtn') : t('session.ctrl.speakDoneBtn')}</button>
               <button onClick={() => { setHumanInput(''); setHumanPending([]); setHasDiscarded(true) }} disabled={humanPending.length === 0 || hasDiscarded} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
-              <button onClick={() => void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+              <button onClick={() => void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
               <button onClick={() => submitHumanTurn('skip')} disabled={!waitingForHuman} className="keeper-add-btn" title={t('session.ctrl.skipBtn.title')}>{t('session.ctrl.skipBtn')}</button>
             </div>
             <div className="session-controls-row">
@@ -2587,10 +2642,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addKeeperAction() } }}
             placeholder={t('session.ctrl.keeperInput.placeholder')}
           />
-          <button onClick={addKeeperAction} disabled={!keeperInput.trim() || pendingActions.length >= actionsPerTurn} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
+          <button onClick={addKeeperAction} disabled={!keeperInput.trim() || (actionsPerTurn > 0 && pendingActions.length >= actionsPerTurn)} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
           <button onClick={commitKeeperActions} disabled={pendingActions.length === 0} className="keeper-send-btn">{t('session.ctrl.keeperSendBtn')}</button>
           <button onClick={() => setPendingActions([])} disabled={pendingActions.length === 0} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
-          <button onClick={() => void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+          <button onClick={() => void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
           {t2iBackend && (
             <button
               onClick={generateSceneImage}
@@ -2727,7 +2782,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                   autoAdvanceRef.current = true
                 }
                 wasAutoAdvancingRef.current = false
-                void fetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+                void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
               }}>{t('trpg.judgment.skip')}</button>
               <button className="novel-hdr-btn apply-btn" onClick={rollAllPendingJudgments}>{t('trpg.judgment.rollAll')}</button>
             </div>

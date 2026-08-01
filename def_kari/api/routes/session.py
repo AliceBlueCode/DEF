@@ -344,6 +344,19 @@ def require_player(authorization: str = Header(...)) -> dict:
     return payload
 
 
+def require_keeper(authorization: str = Header(...)) -> dict:
+    """role == host / gm を通す Dependency（player / observer は 403）。
+    オンラインセッションで専任キーパー(gm)がゲーム進行を操作できるようにする。"""
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = verify_jwt(token)
+    except _JWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if payload.get("role") not in ("host", "gm"):
+        raise HTTPException(403, "Keeper role required")
+    return payload
+
+
 def _schedule_idle_shutdown(session_id: str, delay: int = 300) -> None:
     """全員切断後 delay 秒で AI タスクを停止する。再接続時はキャンセルする。"""
     async def _shutdown() -> None:
@@ -399,10 +412,18 @@ async def _run_ai_turns(session_id: str) -> None:
             if not current or _is_human_char(session, current):
                 # 人間ターン到達をフロントに通知
                 if current:
+                    # _get_current_speaker は turn % len で折り返すが round/turn は更新しない。
+                    # ラウンド境界を越えていた場合はここで正規化する。
+                    _initiative = session.get("initiative", [])
+                    _raw_turn = session.get("turn", 0)
+                    if _initiative and _raw_turn >= len(_initiative):
+                        session["round"] = session.get("round", 1) + 1
+                        session["turn"] = _raw_turn % len(_initiative)
                     _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
                         "character_id": current,
                         "character_name": session.get("name_map", {}).get(current, current),
                         "round": session.get("round", 1),
+                        "counters": dict(session.get("counters", {})),
                     })
                 break
             result = await asyncio.get_event_loop().run_in_executor(
@@ -416,6 +437,7 @@ async def _run_ai_turns(session_id: str) -> None:
                     "character_id": result.get("character_id", ""),
                     "character_name": result.get("character_name", ""),
                     "round": result.get("round", 1),
+                    "counters": dict(result.get("counters", session.get("counters", {}))),
                 })
                 break
             _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
@@ -951,7 +973,7 @@ def start_session(req: SessionStartRequest):
         ],
         "online_mode": req.online_mode,
         "lobby_active": req.online_mode,  # Trueの間はターン進行をブロック
-        "host_keeper_mode": False,  # ホストがキーパー専任かどうか（ロビーPATCHで設定）
+        "host_keeper_mode": bool(req.online_mode),  # オンラインはデフォルトでキーパー専任（ロビーPATCHで変更可）
         "max_players": 0,      # ロビー設定で上書き
         "invited_gm_token": "", # 招待GMのtoken（1人まで）
     }
@@ -1085,8 +1107,8 @@ def join_session(req: JoinRequest, request: Request):
                 raise HTTPException(409, f"Session is full ({current_p}/{max_p})")
 
     if req.join_as_gm:
-        # GM/キーパーとして参加（1人まで）
-        if sess.get("invited_gm_token"):
+        # GM/キーパーとして参加（1人まで）; ホストがキーパー専任の場合も拒否
+        if sess.get("invited_gm_token") or sess.get("host_keeper_mode"):
             raise HTTPException(409, "GM slot is already taken")
         role = "gm"
         char_id = ""
@@ -1112,7 +1134,13 @@ def join_session(req: JoinRequest, request: Request):
         char_data["id"] = char_id
         char_data["player_type"] = "human"
         sess.setdefault("guest_chars", {})[char_id] = char_data
-        display_name = req.character_json.get("name", "Guest")
+        # DEFキャラJSON形式: {version: {base_profile: {name: ...}}} または フラット {name: ...}
+        _cj = req.character_json
+        display_name = _cj.get("name") or next(
+            (v["base_profile"]["name"] for v in _cj.values()
+             if isinstance(v, dict) and isinstance(v.get("base_profile"), dict) and v["base_profile"].get("name")),
+            "Guest"
+        )
         # イニシアティブと名前マップに追加（オンラインセッションで参加者が埋めていく）
         if char_id not in sess["initiative"]:
             sess["initiative"].append(char_id)
@@ -1558,7 +1586,7 @@ def next_turn(req: SessionNextRequest):
 
 
 @router.post("/{session_id}/retake")
-def retake_turn(session_id: str):
+def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -1596,7 +1624,7 @@ def retake_turn(session_id: str):
 
 
 @router.post("/{session_id}/ai_resume")
-async def ai_resume(session_id: str):
+async def ai_resume(session_id: str, _auth: dict = Depends(require_keeper)):
     """ai_task が停止している時に再起動する（retake・keeper・判定後など）。"""
     sess = _sessions.get(session_id)
     if not sess:
@@ -1611,7 +1639,7 @@ async def ai_resume(session_id: str):
 
 
 @router.post("/{session_id}/ai_pause")
-async def ai_pause(session_id: str):
+async def ai_pause(session_id: str, _auth: dict = Depends(require_keeper)):
     """自動進行を一時停止する（現在生成中のターンが完了してから止まる）。"""
     sess = _sessions.get(session_id)
     if not sess:
@@ -1715,7 +1743,7 @@ def human_message(req: SessionHumanMessage):
 
 
 @router.post("/{session_id}/keeper")
-def inject_keeper_message(session_id: str, req: KeeperMessageRequest, _auth: dict = Depends(require_player)):
+def inject_keeper_message(session_id: str, req: KeeperMessageRequest, _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -1742,7 +1770,7 @@ class AIKeeperRequest(BaseModel):
 
 
 @router.post("/{session_id}/ai_keeper")
-def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
+def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depends(require_player)):
     """AIキーパー（無個性モード）: シナリオ・ルールブック・履歴からGM発言を生成する。"""
     session = _sessions.get(session_id)
     if not session:
@@ -1824,7 +1852,7 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest):
 
 
 @router.post("/{session_id}/skip")
-def skip_turn(session_id: str):
+async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -1835,6 +1863,7 @@ def skip_turn(session_id: str):
         session["turn"] = 0
         turn = 0
     char_id = initiative[turn]
+    char_name = session["name_map"].get(char_id, char_id)
     counters = session.setdefault("counters", {})
     counters[char_id] = counters.get(char_id, 0) + 1
     session["turn"] = turn + 1
@@ -1843,9 +1872,20 @@ def skip_turn(session_id: str):
         session["round"] += 1
         session["turn"] = 0
     _autosave(session_id)
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "character_id": char_id,
+        "character_name": char_name,
+        "text": "",
+        "action": "keeper_skip",
+        "sender_role": _auth.get("role", "host"),
+        "counters": dict(counters),
+    })
+    _ai_task = session.get("ai_task")
+    if not _ai_task or _ai_task.done():
+        session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
     return {
         "character_id": char_id,
-        "character_name": session["name_map"].get(char_id, char_id),
+        "character_name": char_name,
         "round": session["round"],
         "counters": dict(counters),
     }
@@ -2069,7 +2109,7 @@ def judgment_roll(session_id: str, req: JudgmentRollRequest):
 
 
 @router.post("/{session_id}/scene/advance")
-def advance_scene(session_id: str):
+def advance_scene(session_id: str, _auth: dict = Depends(require_keeper)):
     """現在のシーンを次のシーンへ進める。"""
     session = _sessions.get(session_id)
     if not session:
@@ -2099,7 +2139,7 @@ def advance_scene(session_id: str):
 
 
 @router.post("/{session_id}/chapter/advance")
-def advance_chapter(session_id: str):
+def advance_chapter(session_id: str, _auth: dict = Depends(require_keeper)):
     """次のチャプターの最初のシーンへ進める。"""
     session = _sessions.get(session_id)
     if not session:
@@ -2161,7 +2201,7 @@ class CounterAdjustRequest(BaseModel):
 
 
 @router.post("/{session_id}/counter/{char_id}")
-def adjust_counter(session_id: str, char_id: str, req: CounterAdjustRequest):
+def adjust_counter(session_id: str, char_id: str, req: CounterAdjustRequest, _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -2238,6 +2278,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "character_name": interrupter_name,
             "text": req.text,
             "action": "interrupt",
+            "counters": dict(counters),
         })
         return {
             "action": "interrupt",
@@ -2263,6 +2304,13 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         session["turn"] = turn + 1
         session["action_count"] = 0
         _autosave(session_id)
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "character_id": current_char_id,
+            "character_name": char_name,
+            "text": "",
+            "action": "skip",
+            "counters": dict(counters),
+        })
         _ai_task = session.get("ai_task")
         if not _ai_task or _ai_task.done():
             session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
@@ -2293,6 +2341,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "character_name": char_name,
             "text": req.text,
             "action": "extend",
+            "counters": dict(counters),
         })
         return {
             "action": "extend",
@@ -2312,6 +2361,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "character_name": char_name,
             "text": req.text,
             "action": "send",
+            "counters": dict(counters),
         })
         # AIタスク起動（二重起動防止）
         _ai_task = session.get("ai_task")
@@ -2329,7 +2379,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
 
 
 @router.post("/{session_id}/vote/deliberate")
-def vote_deliberate(session_id: str, req: VoteRequest):
+def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(require_player)):
     """弁明ラウンド: 全 AI キャラが意見を述べてセッションに保存し、結果を返す。"""
     session = _sessions.get(session_id)
     if not session:
@@ -2706,7 +2756,7 @@ class NpcRelationshipRequest(BaseModel):
 
 
 @router.post("/{session_id}/npc/{npc_id}/knowledge")
-def add_npc_knowledge(session_id: str, npc_id: str, req: NpcKnowledgeRequest):
+def add_npc_knowledge(session_id: str, npc_id: str, req: NpcKnowledgeRequest, _auth: dict = Depends(require_keeper)):
     """NPC が新たな情報を獲得したとき knowledge に追加する。
 
     GM または自動ゲームロジックから呼び出す。
@@ -2728,7 +2778,7 @@ def add_npc_knowledge(session_id: str, npc_id: str, req: NpcKnowledgeRequest):
 
 
 @router.post("/{session_id}/npc/{npc_id}/relationship")
-def update_npc_relationship(session_id: str, npc_id: str, req: NpcRelationshipRequest):
+def update_npc_relationship(session_id: str, npc_id: str, req: NpcRelationshipRequest, _auth: dict = Depends(require_keeper)):
     """NPC の特定キャラクターへの関係値を更新する。
 
     trust / hostility は None を渡すと変更しない（部分更新）。
@@ -2880,7 +2930,7 @@ class SaveSessionRequest(BaseModel):
     media: list[SaveSessionMediaItem] = []
 
 @router.post("/{session_id}/save")
-def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSessionRequest())):
+def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSessionRequest()), _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -2935,7 +2985,7 @@ class SessionGenerateImageRequest(BaseModel):
 
 
 @router.post("/{session_id}/generate-image")
-def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
+def generate_session_image(session_id: str, req: SessionGenerateImageRequest, _auth: dict = Depends(require_player)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -3141,6 +3191,7 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest):
             "image_url": image_url,
         })
         _autosave(session_id)
+        _game_event_bus.emit(session_id, "SESSION_IMAGE", {"url": image_url})
         return {"url": image_url, "prompt": prompt_final}
     except Exception as e:
         return {"error": str(e)}
@@ -3160,7 +3211,7 @@ class StatSyncRequest(BaseModel):
 
 
 @router.post("/{session_id}/sync_stats")
-def sync_stats(session_id: str, req: StatSyncRequest):
+def sync_stats(session_id: str, req: StatSyncRequest, _auth: dict = Depends(require_keeper)):
     """フロントの runtime stat 変更をセッションに反映する（GMコンテキスト用）。"""
     session = _sessions.get(session_id)
     if not session:
@@ -3203,6 +3254,24 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
 
     sess.setdefault("ws_connections", {})[raw_token] = ws
     _cancel_idle_shutdown(session_id)
+
+    # 接続時に現在の状態を送信: 人間ターン待ちなら WAITING_FOR_HUMAN を再送する
+    # （ブラウザ変更・リロード・遅延参加でイベントを見逃したタブ向け）
+    if not sess.get("lobby_active"):
+        _ai_task = sess.get("ai_task")
+        _task_idle = _ai_task is None or _ai_task.done()
+        if _task_idle:
+            _current = _get_current_speaker(sess)
+            if _current and _is_human_char(sess, _current):
+                await _safe_send(session_id, raw_token, ws, {
+                    "type": "WAITING_FOR_HUMAN",
+                    "payload": {
+                        "character_id": _current,
+                        "character_name": sess.get("name_map", {}).get(_current, _current),
+                        "round": sess.get("round", 1),
+                        "counters": dict(sess.get("counters", {})),
+                    },
+                })
 
     # keepalive: Cloudflare の 100 秒タイムアウト対策（固定 30 秒）
     async def _keepalive() -> None:

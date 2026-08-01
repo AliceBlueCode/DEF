@@ -74,7 +74,10 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
       try {
         const json = JSON.parse(ev.target?.result as string)
         setCharJson(json)
-        setCharJsonName(json.name ?? file.name)
+        // DEFキャラJSON: {version: {base_profile: {name: ...}}} またはフラット {name: ...}
+        const topVal = Object.values(json)[0] as Record<string, any> | undefined
+        const extractedName: string = json.name ?? topVal?.base_profile?.name ?? file.name
+        setCharJsonName(extractedName)
         setError('')
       } catch {
         setError('JSONの解析に失敗しました')
