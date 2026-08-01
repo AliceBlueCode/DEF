@@ -553,6 +553,92 @@ async def test_run_ai_turns_error_clears_auto_advance():
     del _sessions[sid]
 
 
+# ── PATCH /lobby/settings（ロビー中のセッション設定変更）─────────────
+
+def test_lobby_set_settings_updates_and_rebuilds():
+    """PATCH /lobby/settings がお題・ルール・シナリオを更新し派生データも再構築すること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    resp = client.patch(
+        f"/api/session/{sid}/lobby/settings",
+        json={"topic": "深夜の怪談", "rule_set": "default"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert _sessions[sid]["topic"] == "深夜の怪談"
+    assert _sessions[sid]["rule_set"] == "default"
+    assert isinstance(_sessions[sid]["rules"], list)  # rule_set 変更で rules が再構築される
+
+    # 省略フィールドは変更されない
+    resp2 = client.patch(
+        f"/api/session/{sid}/lobby/settings",
+        json={"trpg_scenario": ""},
+        headers=headers,
+    )
+    assert resp2.status_code == 200
+    assert _sessions[sid]["topic"] == "深夜の怪談"
+    assert _sessions[sid]["npc_state"] == {}  # シナリオ変更で npc_state が再構築される
+
+    # セッション開始後は 409
+    _sessions[sid]["lobby_active"] = False
+    resp3 = client.patch(
+        f"/api/session/{sid}/lobby/settings",
+        json={"topic": "x"},
+        headers=headers,
+    )
+    assert resp3.status_code == 409
+    _sessions.pop(sid, None)
+
+
+def test_join_rejects_over_capacity():
+    """ロビー中でも定員（max_players）を超えるプレイヤー参加が409で拒否されること。
+
+    max_players がセッション開始時（lobby_config）まで保存されず、ロビー待機中は
+    定員チェックが素通りして無制限に参加できたバグの回帰テスト。
+    """
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+    assert _sessions[sid]["max_players"] == 4  # オンライン作成時のデフォルト
+
+    # 定員2に変更
+    client.patch(
+        f"/api/session/{sid}/lobby/settings",
+        json={"max_players": 2},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert _sessions[sid]["max_players"] == 2
+
+    char_json = {"name": "わたし", "player_type": "human"}
+    r1 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert r1.status_code == 200
+    r2 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert r2.status_code == 200
+    # 3人目は定員オーバー
+    r3 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert r3.status_code == 409
+
+    # 観戦者は定員の対象外
+    r4 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": {}})
+    assert r4.status_code == 200
+    assert r4.json().get("role") == "observer"
+    _sessions.pop(sid, None)
+
+
 # ── POST /end の冪等性（episodic memory 多重書き込み防止）──────────
 
 def test_end_session_idempotent_episodic_write():

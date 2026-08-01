@@ -774,6 +774,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
+  // ロビー中のセッション設定変更（お題・ルール・ルールブック・シナリオ・参加人数）。ホスト専用
+  const patchLobbySettings = (body: Record<string, string | number>) => {
+    if (!sessionIdRef.current) return
+    void fetch(`/api/session/${sessionIdRef.current}/lobby/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+      body: JSON.stringify(body),
+    })
+  }
+
   const generateTTSUrl = async (text: string, characterId: string): Promise<string | null> => {
     if (!ttsEnabledRef.current || !ttsBackend) return null
     try {
@@ -1895,6 +1905,12 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
                             body: JSON.stringify({ trpg_mode: isTrpg }),
                           })
+                          // /start と同じ条件付けで設定を同期する（TRPG: ルールブック/シナリオ、通常: ルール/お題）
+                          if (isTrpg) {
+                            patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: selectedRulebook, trpg_scenario: selectedScenario })
+                          } else {
+                            patchLobbySettings({ rule_set: ruleSet, topic, trpg_rulebook: '', trpg_scenario: '' })
+                          }
                         }}
                         style={{ padding: '6px 18px', borderRadius: 8, border: `1px solid ${lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'transparent', color: lobbyTrpgMode === isTrpg ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: lobbyTrpgMode === isTrpg ? 600 : 400 }}
                       >
@@ -1904,6 +1920,74 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                   </div>
                 </div>
 
+                {/* セッション設定（オフライン開始時と同じ項目をロビーでも変更可能にする） */}
+                {!lobbyTrpgMode ? (
+                  <>
+                    {ruleOptions.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('session.setup.ruleLabel')}</div>
+                        <select
+                          value={ruleSet}
+                          onChange={e => { setRuleSet(e.target.value); patchLobbySettings({ rule_set: e.target.value }) }}
+                          style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
+                        >
+                          {ruleOptions.map(r => (
+                            <option key={r.id} value={r.id}>{r.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('session.setup.topicLabel')}</div>
+                      <input
+                        value={topic}
+                        onChange={e => setTopic(e.target.value)}
+                        onBlur={() => patchLobbySettings({ topic })}
+                        onKeyDown={e => { if (e.key === 'Enter') patchLobbySettings({ topic }) }}
+                        placeholder={t('session.setup.topicPlaceholder')}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {rulebookOptions.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('trpg.rulebook.label')}</div>
+                        <select
+                          value={selectedRulebook}
+                          onChange={e => { setSelectedRulebook(e.target.value); patchLobbySettings({ trpg_rulebook: e.target.value }) }}
+                          style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
+                        >
+                          {rulebookOptions.map(r => (
+                            <option key={r.id} value={r.id}>{r.label}（{r.dice_system}）</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {scenarioOptions.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('trpg.scenario.label')}</div>
+                        <select
+                          value={selectedScenario}
+                          onChange={e => { setSelectedScenario(e.target.value); patchLobbySettings({ trpg_scenario: e.target.value }) }}
+                          style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
+                        >
+                          <option value="">{t('trpg.scenario.none')}</option>
+                          {scenarioOptions.map(s => (
+                            <option key={s.id} value={s.id}>{s.label}</option>
+                          ))}
+                        </select>
+                        {selectedScenario && scenarioOptions.find(s => s.id === selectedScenario)?.synopsis && (
+                          <p style={{ fontSize: '0.82em', opacity: 0.7, marginTop: 4, marginBottom: 0 }}>
+                            {scenarioOptions.find(s => s.id === selectedScenario)?.synopsis}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
                 {/* プレイヤー人数 */}
                 <div>
                   <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>参加人数（観戦者除く）</div>
@@ -1911,7 +1995,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
                       <button
                         key={n}
-                        onClick={() => setLobbyMaxPlayers(n)}
+                        onClick={() => { setLobbyMaxPlayers(n); patchLobbySettings({ max_players: n }) }}
                         style={{ width: 34, height: 34, borderRadius: 6, border: `1px solid ${lobbyMaxPlayers === n ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: lobbyMaxPlayers === n ? '#4a6cf7' : 'transparent', color: lobbyMaxPlayers === n ? '#fff' : 'inherit', cursor: 'pointer', fontWeight: lobbyMaxPlayers === n ? 700 : 400, fontSize: '0.9em' }}
                       >
                         {n}

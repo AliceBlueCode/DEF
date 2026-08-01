@@ -998,7 +998,7 @@ def start_session(req: SessionStartRequest):
         "online_mode": req.online_mode,
         "lobby_active": req.online_mode,  # Trueの間はターン進行をブロック
         "host_keeper_mode": bool(req.online_mode),  # オンラインはデフォルトでキーパー専任（ロビーPATCHで変更可）
-        "max_players": 0,      # ロビー設定で上書き
+        "max_players": 4 if req.online_mode else 0,  # オンライン: UIデフォルトと同じ4。ロビー設定・開始時lobby_configで上書き
         "invited_gm_token": "", # 招待GMのtoken（1人まで）
     }
 
@@ -1128,12 +1128,22 @@ def join_session(req: JoinRequest, request: Request):
     role = "observer"
     display_name = "Observer"
 
-    # 参加人数チェック（オブザーバー除く・ホスト込みでカウント）
-    if req.character_json or req.claim_char_id:
+    # 参加人数チェック（オブザーバー・GMは対象外）
+    if req.character_json and sess.get("online_mode"):
+        # オンラインロビー: initiative = AIスロット + 参加済みプレイヤーのゲストキャラ。
+        # ロビーUIのスロット表示（aiSlots + playerSlots）と同じ基準で判定する。
+        # ※ホストのプレイヤー参加枠は開始時（lobby_config）までinitiativeに入らないため
+        #   ここではカウントされない（ホストは自セッションのため定員外とする）
+        max_p = sess.get("max_players", 0)
+        current_p = len(sess.get("initiative", []))
+        if max_p > 0 and current_p >= max_p:
+            raise HTTPException(409, f"Session is full ({current_p}/{max_p})")
+    elif req.claim_char_id:
+        # オフライン形式のスロット引き継ぎ: 既存人間スロットへの割り当てなので
+        # 実質の定員はスロット数で制限済み（Slot already taken で拒否）
         max_p = sess.get("max_players", 0)
         if max_p > 0:
             host_token = sess.get("host_token", "")
-            # ホスト(1) + キャラ持ち参加者 = 実際の参加人数
             current_p = sum(
                 1 for tok, cid in sess.get("players", {}).items()
                 if tok == host_token or cid
@@ -1842,6 +1852,55 @@ def set_lobby_keeper_source(session_id: str, req: LobbyKeeperSourceRequest, auth
         raise HTTPException(409, "Session already started")
     sess["waiting_for_gm"] = req.waiting_for_gm
     return {"waiting_for_gm": req.waiting_for_gm}
+
+
+class LobbySettingsRequest(BaseModel):
+    topic: str | None = None
+    rule_set: str | None = None
+    trpg_rulebook: str | None = None
+    trpg_scenario: str | None = None
+    max_players: int | None = None
+
+
+@router.patch("/{session_id}/lobby/settings")
+def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = Depends(require_host)):
+    """ロビー中にセッション設定（お題・ルールセット・ルールブック・シナリオ）を変更する。
+
+    /start 時に確定する派生データ（rules/scene・skill_pool・npc_state）もここで再構築する。
+    省略されたフィールドは変更しない。ロビー解除後は 409。
+    """
+    if auth.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if not sess.get("lobby_active"):
+        raise HTTPException(409, "Session already started")
+    if req.topic is not None:
+        sess["topic"] = req.topic
+    if req.rule_set is not None:
+        sess["rule_set"] = req.rule_set
+        _rule_data = _load_session_rules().get(req.rule_set, {})
+        sess["rules"] = _rule_data.get("rules", [])
+        sess["scene"] = _rule_data.get("scene", "")
+    if req.trpg_rulebook is not None:
+        sess["trpg_rulebook"] = req.trpg_rulebook
+        _rb = _load_trpg_rulebook(req.trpg_rulebook) if req.trpg_rulebook else {}
+        _pool = int(_rb.get("skill_point_pool", 0))
+        # 開始前なので既存参加者の技能ポイントプールも新ルールブック値でリセットする
+        sess["skill_pool"] = {cid: _pool for cid in sess.get("skill_pool", {})}
+    if req.trpg_scenario is not None:
+        sess["trpg_scenario"] = req.trpg_scenario
+        sess["npc_state"] = _build_initial_npc_state(req.trpg_scenario)
+    if req.max_players is not None:
+        sess["max_players"] = max(1, min(8, req.max_players))
+    return {
+        "topic": sess.get("topic", ""),
+        "rule_set": sess.get("rule_set", ""),
+        "trpg_rulebook": sess.get("trpg_rulebook", ""),
+        "trpg_scenario": sess.get("trpg_scenario", ""),
+        "max_players": sess.get("max_players", 0),
+    }
 
 
 class LobbyAIRequest(BaseModel):
