@@ -544,7 +544,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (ttsUrl) {
       // newMsgIndex を使って自分のメッセージスロットに書く（last だと並行処理で別キャラのスロットに誤設定される）
       setMessages(prev => prev.map((m, i) => i === newMsgIndex ? { ...m, audioUrl: ttsUrl } : m))
-      if (autoAdvanceRef.current) await playAudio(ttsUrl)
+      await playAudio(ttsUrl)
     }
 
     if (isLastOfRound && keeperFiredRoundRef.current !== data.round) {
