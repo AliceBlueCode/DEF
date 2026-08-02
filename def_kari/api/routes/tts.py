@@ -25,6 +25,28 @@ class TTSRequest(BaseModel):
     backend: str = "voicevox"
 
 
+def synthesize_and_save(text: str, character_id: str, backend: str = "voicevox") -> str:
+    """TTS音声を合成してassets/に保存し、配信用URLを返す（サーバー内部呼び出し用）。
+
+    session.py の AIターン自動読み上げから使う。`POST /` → `POST /save` の
+    2段階（従来は各クライアントが個別に叩いていた）を1回のサーバー内呼び出しに集約する。
+    """
+    profiles = load_profiles()
+    char = get_character(character_id, profiles)
+    speaker_id = get_tts_speaker_id(char, backend)
+    text = apply_name_reading(text, char)
+    _vram_lock = get_vram_lock()
+    _vram_lock.acquire()
+    try:
+        audio_bytes = synthesize(text, speaker_id, backend)
+    finally:
+        _vram_lock.release()
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"tts_{uuid.uuid4().hex}.wav"
+    (ASSET_DIR / filename).write_bytes(audio_bytes)
+    return f"/api/tts/audio/{filename}"
+
+
 @router.post("/")
 def generate_tts(req: TTSRequest):
     profiles = load_profiles()

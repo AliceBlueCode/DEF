@@ -4,12 +4,25 @@ import logging
 import os
 import sys
 import threading
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
+_LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+_formatter = logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT)
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_formatter)
+
+_log_dir = Path(__file__).parent.parent.parent / "data" / "private" / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
+# 日次ローテーション、直近14日分を保持（ログには会話断片等の非公開情報が含まれ得るため data/private/ 配下）
+_file_handler = TimedRotatingFileHandler(
+    _log_dir / "def.log", when="midnight", backupCount=14, encoding="utf-8"
 )
+_file_handler.setFormatter(_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler])
 
 # Ensure def_kari package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -18,6 +31,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought, trpg
 
@@ -82,6 +97,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# オンラインセッションAPI（招待コード・持ち込みキャラJSON等）へのリクエストサイズ上限。
+# マルチプレイ設計書7章「キャラJSONの悪意ある入力」対策（JSON bomb等）。
+_SESSION_BODY_SIZE_LIMIT = 512 * 1024  # 512KB
+
+
+class SessionBodySizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.url.path.startswith("/api/session"):
+            content_length = request.headers.get("content-length")
+            if content_length is not None and int(content_length) > _SESSION_BODY_SIZE_LIMIT:
+                return JSONResponse({"error": "Request body too large"}, status_code=413)
+        return await call_next(request)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """XSSでJWTが盗まれた場合の実害（外部への送信）を抑制する。"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        return response
+
+
+app.add_middleware(SessionBodySizeLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],

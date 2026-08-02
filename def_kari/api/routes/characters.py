@@ -2,43 +2,21 @@
 
 import io
 import os
-import re
 import shutil
-from pathlib import Path
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from def_kari.characters import load_profiles, get_character, list_character_choices, get_raw_profile, save_profile, build_lora_prompt
 from def_kari.settings import load_settings
+from def_kari.api.routes.characters_common import (
+    _BASE,
+    _CHAR_DIRS,
+    _SAFE_ID_RE,
+    _NO_CACHE_HEADERS,
+    find_char_dir as _find_char_dir,
+)
 
 router = APIRouter()
-
-_BASE = Path(__file__).parent.parent.parent.parent
-_CHAR_DIRS = [
-    _BASE / "data" / "public" / "characters",
-    _BASE / "data" / "private" / "characters",
-]
-_SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
-
-
-def _find_char_dir(character_id: str) -> Path | None:
-    if not _SAFE_ID_RE.match(character_id):
-        return None
-    # DEF-Character リポジトリ（再帰走査、先勝ち）
-    from def_kari.characters import _get_repo_paths
-    for _repo in _get_repo_paths():
-        _public = _repo / "public"
-        if not _public.exists():
-            continue
-        for pf in sorted(_public.rglob("profile.json")):
-            if pf.parent.name == character_id:
-                return pf.parent
-    # フォールバック: DEF自身の data/
-    for d in _CHAR_DIRS:
-        p = d / character_id
-        if p.is_dir():
-            return p
-    return None
 
 
 @router.get("/")
@@ -61,9 +39,6 @@ def get_character_detail(character_id: str):
     if not char:
         return {"error": "Character not found"}
     return {"character": char}
-
-
-_NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
 
 @router.get("/{character_id}/icon")

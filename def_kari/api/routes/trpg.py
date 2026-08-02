@@ -164,77 +164,54 @@ class DiceRollRequest(BaseModel):
     is_stat: bool = False   # True=能力値生判定（untrained_success_condition を使用）
 
 
-@router.post("/dice")
-def dice_roll(req: DiceRollRequest):
-    try:
-        result = roll_dice(req.notation)
-    except ValueError as e:
-        return {"error": str(e)}
+def compute_dice_judgment(
+    notation: str,
+    skill_value: int = 0,
+    rulebook_id: str = "",
+    is_skill: bool = False,
+    is_stat: bool = False,
+) -> dict:
+    """ダイスロール＋判定計算のみを行う純粋関数（セッション状態には一切触れない）。
+
+    `session.py` の `/{session_id}/dice`（require_player）と、この後の無認証 `/dice`
+    （セッション非依存の汎用計算用）の両方から呼ばれる。notation不正時は ValueError。
+    """
+    result = roll_dice(notation)
 
     judgment = None
-    if req.skill_value > 0 and req.rulebook_id:
+    if skill_value > 0 and rulebook_id:
         books = _load_rulebooks()
-        rulebook = books.get(req.rulebook_id, {})
+        rulebook = books.get(rulebook_id, {})
         if rulebook:
-            if req.is_skill:
+            if is_skill:
                 # 技能値配分済みの場合は roll_lte_skill として扱う
                 from copy import deepcopy
                 rb_override = deepcopy(rulebook)
                 rb_override.setdefault("judgment", {})["success_condition"] = "roll_lte_skill"
-                judgment = judge(result["total"], req.skill_value, rb_override)
-            elif req.is_stat:
+                judgment = judge(result["total"], skill_value, rb_override)
+            elif is_stat:
                 # 能力値生判定: untrained_success_condition（例: roll_lte_stat_x5）を使用
                 from copy import deepcopy
                 rb_override = deepcopy(rulebook)
                 uc = rulebook.get("judgment", {}).get("untrained_success_condition", "roll_lte_stat_x5")
                 rb_override.setdefault("judgment", {})["success_condition"] = uc
-                judgment = judge(result["total"], req.skill_value, rb_override)
+                judgment = judge(result["total"], skill_value, rb_override)
             else:
-                judgment = judge(result["total"], req.skill_value, rulebook)
+                judgment = judge(result["total"], skill_value, rulebook)
 
-    # セッション履歴注入（判定ロール自動化用）
-    if req.session_id and req.character_id:
-        from def_kari.api.routes.session import _sessions
-        sess = _sessions.get(req.session_id)
-        if sess:
-            name_map = sess.get("name_map", {})
-            cname = name_map.get(req.character_id, req.character_id)
-            stat_part = f"【{req.stat_name}】" if req.stat_name else ""
-            j = judgment or {}
-            jv = j.get("judgment_value", req.skill_value)
-            if j.get("critical"):
-                outcome = "クリティカル！"
-            elif j.get("fumble"):
-                outcome = "ファンブル…"
-            elif j.get("success"):
-                outcome = "成功"
-            elif j:
-                outcome = "失敗"
-            else:
-                outcome = ""
-            msg = f"🎲 {cname}{stat_part} {result['total']} / {jv}"
-            if outcome:
-                msg += f" → {outcome}"
-            sess["history"].append({
-                "role": "user",
-                "content": msg,
-                "character_id": req.character_id,
-            })
+    return {"result": result, "judgment": judgment}
 
-    # イベントバス通知（判定が行われたセッションに記録する）
-    if judgment and req.session_id:
-        from def_kari.gm.events import game_event_bus, JUDGMENT_RESOLVED
-        game_event_bus.emit(req.session_id, JUDGMENT_RESOLVED, {
-            "character_id": req.character_id,
-            "stat_name": req.stat_name,
-            "notation": result["notation"],
-            "roll": result["total"],
-            "judgment_value": judgment.get("judgment_value"),
-            "success": judgment.get("success"),
-            "critical": judgment.get("critical"),
-            "fumble": judgment.get("fumble"),
-        })
 
+@router.post("/dice")
+def dice_roll(req: DiceRollRequest):
+    """セッション非依存の汎用ダイス計算。session_id/character_idを渡してもセッション状態は変更しない
+    （セッション連動のダイス判定は `POST /api/session/{session_id}/dice` を使うこと）。"""
+    try:
+        computed = compute_dice_judgment(req.notation, req.skill_value, req.rulebook_id, req.is_skill, req.is_stat)
+    except ValueError as e:
+        return {"error": str(e)}
+    result = computed["result"]
+    judgment = computed["judgment"]
     return {
         "notation": result["notation"],
         "rolls": result["rolls"],

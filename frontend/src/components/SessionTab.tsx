@@ -23,6 +23,10 @@ type SessionMessage = {
   imageUrl?: string
   imageError?: string
   _genId?: string
+  // AIターン自動生成の挿絵/音声（TURN_IMAGE_READY・TURN_AUDIO_READY）をこのメッセージに
+  // 紐付けるための識別子。サーバー側は history のインデックスを持たないため round+turn を使う
+  turnRound?: number
+  turnTurn?: number
 }
 
 type SavedSession = {
@@ -169,10 +173,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [hostRole, setHostRole] = useState<'keeper' | 'player' | 'observer'>('keeper')
   const [hostCharForLobby, setHostCharForLobby] = useState('')
   const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
-  const [showAiAssignDialog, setShowAiAssignDialog] = useState(false)
   const [lobbyKeeperCharId, setLobbyKeeperCharId] = useState('')
   const [lobbyKeeperCharName, setLobbyKeeperCharName] = useState('')
-  const [showKeeperAiAssignDialog, setShowKeeperAiAssignDialog] = useState(false)
+  // ロビーAI割付けウィザード（スロット/キーパー共通）: キャラ選択 → ゲームキャラシート選択（TRPG+スロットのみ）→ LLM選択
+  const [assignDialogTarget, setAssignDialogTarget] = useState<'slot' | 'keeper' | null>(null)
+  const [assignStep, setAssignStep] = useState<'char' | 'sheet' | 'backend'>('char')
+  const [assignCharId, setAssignCharId] = useState('')
+  const [assignSheetOptions, setAssignSheetOptions] = useState<string[]>([])
+  const [assignSheetId, setAssignSheetId] = useState('')
+  const [assignBackendId, setAssignBackendId] = useState('')
   const [round, setRound] = useState(1)
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0)
   const [activeTurnCharId, setActiveTurnCharId] = useState('')
@@ -197,6 +206,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const wsRef = useRef<WebSocket | null>(null)
   const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [standingFallback, setStandingFallback] = useState<Set<string>>(new Set())
+  // 持ち込みキャラのアイコン/立ち絵がバックグラウンド生成完了した際、no-cacheな画像を再取得させるためのバージョン値
+  const [iconVersion, setIconVersion] = useState<Record<string, number>>({})
+  const iconUrl = (charId: string) => `/api/characters/${charId}/icon${iconVersion[charId] ? `?v=${iconVersion[charId]}` : ''}`
+  const standingUrl = (charId: string) => `/api/characters/${charId}/standing${iconVersion[charId] ? `?v=${iconVersion[charId]}` : ''}`
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
   const [saveStatus, setSaveStatus] = useState('')
   const [showRuleDialog, setShowRuleDialog] = useState(false)
@@ -464,6 +477,27 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         initiativeRef.current = [...new Set([...initiativeRef.current, p.character_id])]
       }
     }
+    if (event.type === 'VISITOR_ICON_READY') {
+      const cid = event.payload?.character_id
+      if (cid) setIconVersion(prev => ({ ...prev, [cid]: Date.now() }))
+    }
+    if (event.type === 'TURN_IMAGE_READY') {
+      const { character_id, round: r, turn: t, url } = event.payload ?? {}
+      setMessages(prev => prev.map(m =>
+        m.character_id === character_id && m.turnRound === r && m.turnTurn === t
+          ? { ...m, imageStatus: 'done', imageUrl: url }
+          : m
+      ))
+    }
+    if (event.type === 'TURN_AUDIO_READY') {
+      const { character_id, round: r, turn: t, url } = event.payload ?? {}
+      setMessages(prev => prev.map(m =>
+        m.character_id === character_id && m.turnRound === r && m.turnTurn === t
+          ? { ...m, audioUrl: url }
+          : m
+      ))
+      if (url && ttsEnabledRef.current) void playAudio(url)
+    }
     if (event.type === 'PLAYER_LEFT') {
       // participant_id で判定（char_id="" の observer/keeper が複数いても巻き添えにしない）
       const pid = event.payload.participant_id ?? event.payload.character_id
@@ -554,11 +588,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       initiativeRef.current[initiativeRef.current.length - 1] === data.character_id
 
     const char = charMap[data.character_id]
-    let newMsgIndex = -1
-    setMessages(prev => {
-      newMsgIndex = prev.length
-      return [...prev, { character_id: data.character_id, character_name: data.character_name, text: data.text, emotion: data.emotion, tags: data.tags || [], imageColor: char?.image_color ?? undefined }]
-    })
+    setMessages(prev => [...prev, { character_id: data.character_id, character_name: data.character_name, text: data.text, emotion: data.emotion, tags: data.tags || [], imageColor: char?.image_color ?? undefined, turnRound: data.round, turnTurn: data.turn }])
     setRound(data.round)
 
     if (data.penalty_message) {
@@ -573,14 +603,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `👉 ${data.character_name} が ${data.designated_name} を指名 [発言力-1${typeof ctr === 'number' ? ` → 残${ctr}` : ''}]`, emotion: '', tags: [] }])
     }
 
-    if (data.image_prompt_en && t2iBackend && newMsgIndex >= 0) generateImage(data.image_prompt_en, newMsgIndex)
-
-    const ttsUrl = data.text ? await generateTTSUrl(data.text, data.character_id) : null
-    if (ttsUrl) {
-      // newMsgIndex を使って自分のメッセージスロットに書く（last だと並行処理で別キャラのスロットに誤設定される）
-      setMessages(prev => prev.map((m, i) => i === newMsgIndex ? { ...m, audioUrl: ttsUrl } : m))
-      await playAudio(ttsUrl)
-    }
+    // 挿絵・TTSはサーバー側でバックグラウンド生成され、TURN_IMAGE_READY / TURN_AUDIO_READY で
+    // 非同期に届く（WSハンドラ側でturnRound/turnTurnが一致するメッセージを探して更新する）。
 
     if (isLastOfRound && keeperFiredRoundRef.current !== data.round) {
       await fireKeeperTurn(sid, data.round)
@@ -801,47 +825,6 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     })
   }
 
-  const generateTTSUrl = async (text: string, characterId: string): Promise<string | null> => {
-    if (!ttsEnabledRef.current || !ttsBackend) return null
-    try {
-      const res = await fetch('/api/tts/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, character_id: characterId, backend: ttsBackend }),
-      })
-      if (!res.ok) return null
-      const blob = await res.blob()
-      const form = new FormData()
-      form.append('file', blob, 'audio.wav')
-      const saveRes = await fetch('/api/tts/save', { method: 'POST', body: form })
-      const saveData = await saveRes.json()
-      return saveData.url as string
-    } catch (e) {
-      console.error('TTS generate error:', e)
-      return null
-    }
-  }
-
-  const generateImage = async (prompt: string, msgIndex: number) => {
-    if (!t2iBackend) return
-    setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, imageStatus: 'generating' } : m))
-    try {
-      const res = await fetch('/api/t2i/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, backend: t2iBackend }),
-      })
-      const data = await res.json()
-      if (data.error) {
-        setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, imageStatus: 'error', imageError: data.error } : m))
-      } else {
-        setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, imageStatus: 'done', imageUrl: data.url } : m))
-      }
-    } catch (e) {
-      setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, imageStatus: 'error', imageError: String(e) } : m))
-    }
-  }
-
   const playAudio = (url: string): Promise<void> =>
     new Promise(resolve => {
       const audio = new Audio(url)
@@ -1054,12 +1037,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       return { total: 0, judgment: { success: dead, fumble: false, critical: false, judgment_value: 0 } }
     }
     try {
-      const res = await fetch('/api/trpg/dice', {
+      const res = await authFetch(`/api/session/${sid}/dice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           notation: '1d100',
-          session_id: sid,
           skill_value: j.stat_value,
           rulebook_id: selectedRulebook,
           character_id: j.character_id,
@@ -1250,7 +1232,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         body.is_stat = type === 'stat'
       }
       try {
-        const res = await fetch('/api/trpg/dice', {
+        const res = await authFetch(`/api/session/${sessionId}/dice`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -1540,20 +1522,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
-  const lobbyAddAi = async (charId: string) => {
+  const lobbyAddAi = async (charId: string, gameSheetId = '', backendId = '') => {
     if (!sessionId) return
     const res = await authFetch(`/api/session/${sessionId}/lobby/add_ai`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ character_id: charId }),
+      body: JSON.stringify({ character_id: charId, game_sheet_id: gameSheetId, backend_id: backendId }),
     })
     if (res.ok) {
       const d = await res.json()
       initiativeRef.current = d.initiative
       setInitiative(d.initiative)
       setExtraNameMap(prev => ({ ...prev, ...d.name_map }))
+      if (gameSheetId) setCharGameSheets(prev => ({ ...prev, [charId]: gameSheetId }))
+      if (backendId) setCharBackends(prev => ({ ...prev, [charId]: backendId }))
     }
-    setShowAiAssignDialog(false)
+    setAssignDialogTarget(null)
   }
 
   const lobbyRemoveAi = async (charId: string) => {
@@ -1571,19 +1555,54 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   }
 
   // charId="" で解除（無名AIキーパーに戻る。割り付けなくてもAI自動進行自体は維持される）
-  const lobbySetKeeperChar = async (charId: string) => {
+  const lobbySetKeeperChar = async (charId: string, backendId = '') => {
     if (!sessionId) return
     const res = await authFetch(`/api/session/${sessionId}/lobby/set_keeper_char`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ character_id: charId }),
+      body: JSON.stringify({ character_id: charId, backend_id: backendId }),
     })
     if (res.ok) {
       const d = await res.json()
       setLobbyKeeperCharId(d.keeper_char_id ?? '')
       setLobbyKeeperCharName(d.keeper_char_name ?? '')
+      if (charId && backendId) setCharBackends(prev => ({ ...prev, [charId]: backendId }))
     }
-    setShowKeeperAiAssignDialog(false)
+    setAssignDialogTarget(null)
+  }
+
+  // AI割付けウィザード: キャラ選択 → (TRPG+スロットのみ)ゲームキャラシート選択 → LLM選択
+  const openAssignDialog = (target: 'slot' | 'keeper') => {
+    setAssignDialogTarget(target)
+    setAssignStep('char')
+    setAssignCharId('')
+    setAssignSheetOptions([])
+    setAssignSheetId('')
+    setAssignBackendId('')
+  }
+
+  const selectAssignChar = async (charId: string) => {
+    setAssignCharId(charId)
+    if (lobbyTrpgMode && assignDialogTarget === 'slot') {
+      try {
+        const res = await fetch(`/api/characters/${charId}/game_sheets`)
+        const data = await res.json()
+        setAssignSheetOptions(Object.keys(data.game_sheets ?? {}))
+      } catch {
+        setAssignSheetOptions([])
+      }
+      setAssignStep('sheet')
+    } else {
+      setAssignStep('backend')
+    }
+  }
+
+  const confirmAssignDialog = () => {
+    if (assignDialogTarget === 'slot') {
+      void lobbyAddAi(assignCharId, assignSheetId, assignBackendId)
+    } else if (assignDialogTarget === 'keeper') {
+      void lobbySetKeeperChar(assignCharId, assignBackendId)
+    }
   }
 
   const addKeeperAction = () => {
@@ -1709,30 +1728,14 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         tags: [],
         imageColor: charMap[humanCharId]?.image_color,
       }])
-      if (ttsHumanEnabledRef.current && ttsBackend) {
-        const ttsUrl = await (async () => {
-          try {
-            const r = await fetch('/api/tts/', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text, character_id: humanCharId, backend: ttsBackend }),
-            })
-            if (!r.ok) return null
-            const blob = await r.blob()
-            const form = new FormData()
-            form.append('file', blob, 'audio.wav')
-            const sr = await fetch('/api/tts/save', { method: 'POST', body: form })
-            const sd = await sr.json()
-            return sd.url as string
-          } catch { return null }
-        })()
-        if (ttsUrl) {
-          setMessages(prev => {
-            const last = prev.length - 1
-            return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m)
-          })
-          await playAudio(ttsUrl)
-        }
+      // TTSはサーバー側（human_turn_action）で合成済み。再生するかどうかだけクライアントが判断する。
+      const ttsUrl: string | null = data.audio_url || null
+      if (ttsUrl) {
+        setMessages(prev => {
+          const last = prev.length - 1
+          return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m)
+        })
+        if (ttsHumanEnabledRef.current) await playAudio(ttsUrl)
       }
     }
 
@@ -1785,29 +1788,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             tags: [],
             imageColor: charMap[d.character_id]?.image_color,
           }])
-          if (d.character_id !== '_keeper' && d.text && d.text !== '(弁明なし)') {
-            let ttsUrl: string | null = null
-            if (d.character_id === humanCharId) {
-              if (ttsHumanEnabledRef.current && ttsBackend) {
-                try {
-                  const r = await fetch('/api/tts/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: d.text, character_id: d.character_id, backend: ttsBackend }) })
-                  if (r.ok) {
-                    const blob = await r.blob()
-                    const form = new FormData()
-                    form.append('file', blob, 'audio.wav')
-                    const sr = await fetch('/api/tts/save', { method: 'POST', body: form })
-                    const sd = await sr.json()
-                    ttsUrl = sd.url as string
-                  }
-                } catch {}
-              }
-            } else {
-              ttsUrl = await generateTTSUrl(d.text, d.character_id)
-            }
-            if (ttsUrl) {
-              setMessages(prev => { const last = prev.length - 1; return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m) })
-              await playAudio(ttsUrl)
-            }
+          // TTSはサーバー側（vote_deliberate）で合成済み。再生するかどうかだけクライアントが判断する
+          // （人間プレイヤー発言は ttsHumanEnabled、それ以外は ttsEnabled に従う）。
+          const ttsUrl: string | null = (d as { audio_url?: string }).audio_url || null
+          if (ttsUrl) {
+            const shouldPlay = d.character_id === humanCharId ? ttsHumanEnabledRef.current : ttsEnabledRef.current
+            setMessages(prev => { const last = prev.length - 1; return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m) })
+            if (shouldPlay) await playAudio(ttsUrl)
           }
         }
       }
@@ -2136,7 +2123,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
               const hostSlotCount = hostChar ? 1 : 0
               const emptyCount = Math.max(0, lobbyMaxPlayers - aiSlots.length - playerSlots.length - hostSlotCount)
               const assignableChars = characters.filter(c =>
-                c.player_type !== 'human' && !initiative.includes(c.id)
+                c.player_type !== 'human' && !initiative.includes(c.id) && c.id !== lobbyKeeperCharId
               )
               const keeperLabel = lobbyTrpgMode ? 'キーパー' : '進行管理'
               return (
@@ -2164,8 +2151,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                       </div>
                     ) : lobbyKeeperCharId ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        <img src={`/api/characters/${lobbyKeeperCharId}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <img src={iconUrl(lobbyKeeperCharId)} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{lobbyKeeperCharName || lobbyKeeperCharId}</span>
+                        {charBackends[lobbyKeeperCharId] && (
+                          <span style={{ fontSize: '0.72em', opacity: 0.6 }}>
+                            [{llmBackendOptions.find(b => b.id === charBackends[lobbyKeeperCharId])?.label ?? charBackends[lobbyKeeperCharId]}]
+                          </span>
+                        )}
                         <span style={{ fontSize: '0.75em', opacity: 0.45, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color, #ccc)' }}>AI</span>
                         <button
                           onClick={() => void lobbySetKeeperChar('')}
@@ -2178,7 +2170,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.7 }}>AI（自動進行）</span>
                         {lobbyTrpgMode && assignableChars.length > 0 && (
                           <button
-                            onClick={() => setShowKeeperAiAssignDialog(true)}
+                            onClick={() => openAssignDialog('keeper')}
                             style={{ fontSize: '0.75em', padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-color, #4a6cf7)', color: 'var(--accent-color, #4a6cf7)', background: 'transparent', cursor: 'pointer' }}
                           >AI割付け</button>
                         )}
@@ -2194,8 +2186,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     {/* AI割付け済みスロット */}
                     {aiSlots.map(cid => (
                       <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        <img src={`/api/characters/${cid}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <img src={iconUrl(cid)} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em' }}>{nameMap[cid] ?? cid}</span>
+                        {charGameSheets[cid] && (
+                          <span style={{ fontSize: '0.72em', opacity: 0.6, color: 'var(--accent-color, #4a6cf7)' }}>
+                            [{charGameSheets[cid]}]
+                          </span>
+                        )}
+                        {charBackends[cid] && (
+                          <span style={{ fontSize: '0.72em', opacity: 0.6 }}>
+                            [{llmBackendOptions.find(b => b.id === charBackends[cid])?.label ?? charBackends[cid]}]
+                          </span>
+                        )}
                         <span style={{ fontSize: '0.75em', opacity: 0.45, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color, #ccc)' }}>AI</span>
                         <button
                           onClick={() => void lobbyRemoveAi(cid)}
@@ -2212,7 +2214,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                       </div>
                     ) : hostChar ? (
                       <div key="host-char" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        <img src={`/api/characters/${hostChar.id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <img src={iconUrl(hostChar.id)} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{hostChar.name}</span>
                         <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🏠 ホスト</span>
                       </div>
@@ -2220,7 +2222,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     {/* 参加済みプレイヤースロット */}
                     {playerSlots.map(p => (
                       <div key={p.participant_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
-                        <img src={`/api/characters/${p.char_id}/icon`} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <img src={iconUrl(p.char_id)} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{p.display_name}</span>
                         <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 参加済み</span>
                       </div>
@@ -2232,7 +2234,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.45 }}>待機中…</span>
                         {assignableChars.length > 0 && (
                           <button
-                            onClick={() => setShowAiAssignDialog(true)}
+                            onClick={() => openAssignDialog('slot')}
                             style={{ fontSize: '0.75em', padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-color, #4a6cf7)', color: 'var(--accent-color, #4a6cf7)', background: 'transparent', cursor: 'pointer' }}
                           >AI割付け</button>
                         )}
@@ -2240,54 +2242,91 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     ))}
                   </div>
 
-                  {/* AI割付けダイアログ */}
-                  {showAiAssignDialog && (
+                  {/* AI割付けウィザード（スロット/キーパー共通） */}
+                  {assignDialogTarget && (
                     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-                      onClick={() => setShowAiAssignDialog(false)}>
+                      onClick={() => setAssignDialogTarget(null)}>
                       <div style={{ background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '24px 28px', minWidth: 300, maxWidth: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}
                         onClick={e => e.stopPropagation()}>
-                        <div style={{ fontWeight: 700, marginBottom: 14, fontSize: '1em' }}>AIキャラクターを割付ける</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {assignableChars.map(c => (
-                            <button key={c.id} onClick={() => void lobbyAddAi(c.id)}
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
-                              <img src={`/api/characters/${c.id}/icon`} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                              <span style={{ fontSize: '0.95em' }}>{c.name}</span>
-                            </button>
-                          ))}
-                          {assignableChars.length === 0 && (
-                            <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>割付け可能な AI キャラクターがいません</div>
-                          )}
+                        <div style={{ fontWeight: 700, marginBottom: 4, fontSize: '1em' }}>
+                          {assignDialogTarget === 'keeper' ? `${keeperLabel}役のAIキャラクターを割付ける` : 'AIキャラクターを割付ける'}
                         </div>
-                        <div style={{ marginTop: 16, textAlign: 'right' }}>
-                          <button onClick={() => setShowAiAssignDialog(false)}
-                            style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>キャンセル</button>
+                        <div style={{ fontSize: '0.75em', opacity: 0.5, marginBottom: 14 }}>
+                          {(() => {
+                            const total = lobbyTrpgMode && assignDialogTarget === 'slot' ? 3 : 2
+                            if (assignStep === 'char') return `ステップ 1/${total} : キャラクターを選択`
+                            if (assignStep === 'sheet') return `ステップ 2/${total} : プレイするゲームキャラ`
+                            return `ステップ ${total}/${total} : 使用するLLM`
+                          })()}
                         </div>
-                      </div>
-                    </div>
-                  )}
 
-                  {/* キーパー用AI割付けダイアログ */}
-                  {showKeeperAiAssignDialog && (
-                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-                      onClick={() => setShowKeeperAiAssignDialog(false)}>
-                      <div style={{ background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '24px 28px', minWidth: 300, maxWidth: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}
-                        onClick={e => e.stopPropagation()}>
-                        <div style={{ fontWeight: 700, marginBottom: 14, fontSize: '1em' }}>{keeperLabel}役のAIキャラクターを割付ける</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {assignableChars.map(c => (
-                            <button key={c.id} onClick={() => void lobbySetKeeperChar(c.id)}
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
-                              <img src={`/api/characters/${c.id}/icon`} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                              <span style={{ fontSize: '0.95em' }}>{c.name}</span>
-                            </button>
-                          ))}
-                          {assignableChars.length === 0 && (
-                            <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>割付け可能な AI キャラクターがいません</div>
-                          )}
-                        </div>
+                        {assignStep === 'char' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {assignableChars.map(c => (
+                              <button key={c.id} onClick={() => void selectAssignChar(c.id)}
+                                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
+                                <img src={iconUrl(c.id)} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                <span style={{ fontSize: '0.95em' }}>{c.name}</span>
+                              </button>
+                            ))}
+                            {assignableChars.length === 0 && (
+                              <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>割付け可能な AI キャラクターがいません</div>
+                            )}
+                          </div>
+                        )}
+
+                        {assignStep === 'sheet' && (
+                          <div>
+                            <div style={{ fontSize: '0.85em', opacity: 0.65, marginBottom: 8 }}>
+                              {characters.find(c => c.id === assignCharId)?.name ?? assignCharId}
+                            </div>
+                            <select
+                              className="session-select"
+                              style={{ width: '100%' }}
+                              value={assignSheetId}
+                              onChange={e => setAssignSheetId(e.target.value)}
+                            >
+                              <option value="">シートなし</option>
+                              {assignSheetOptions.map(sid => (
+                                <option key={sid} value={sid}>{sid}</option>
+                              ))}
+                            </select>
+                            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
+                              <button onClick={() => setAssignStep('char')}
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>戻る</button>
+                              <button onClick={() => setAssignStep('backend')}
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--accent-color, #4a6cf7)', background: 'var(--accent-color, #4a6cf7)', color: '#fff', cursor: 'pointer' }}>次へ</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {assignStep === 'backend' && (
+                          <div>
+                            <div style={{ fontSize: '0.85em', opacity: 0.65, marginBottom: 8 }}>
+                              {characters.find(c => c.id === assignCharId)?.name ?? assignCharId}
+                            </div>
+                            <select
+                              className="session-select"
+                              style={{ width: '100%' }}
+                              value={assignBackendId}
+                              onChange={e => setAssignBackendId(e.target.value)}
+                            >
+                              <option value="">設定タブのデフォルトに従う</option>
+                              {llmBackendOptions.map(b => (
+                                <option key={b.id} value={b.id}>{b.label}</option>
+                              ))}
+                            </select>
+                            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
+                              <button onClick={() => setAssignStep(lobbyTrpgMode && assignDialogTarget === 'slot' ? 'sheet' : 'char')}
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>戻る</button>
+                              <button onClick={confirmAssignDialog}
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--accent-color, #4a6cf7)', background: 'var(--accent-color, #4a6cf7)', color: '#fff', cursor: 'pointer' }}>割付ける</button>
+                            </div>
+                          </div>
+                        )}
+
                         <div style={{ marginTop: 16, textAlign: 'right' }}>
-                          <button onClick={() => setShowKeeperAiAssignDialog(false)}
+                          <button onClick={() => setAssignDialogTarget(null)}
                             style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>キャンセル</button>
                         </div>
                       </div>
@@ -2654,7 +2693,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 const options = charGameSheetOptions[id] ?? []
                 return (
                   <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <img src={`/api/characters/${id}/icon`} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
+                    <img src={iconUrl(id)} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
                     <span style={{ width: 80, fontWeight: 500, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{charMap[id]?.name ?? id}</span>
                     <button
                       className="novel-hdr-btn"
@@ -2805,7 +2844,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             return (
               <img
                 key={cid}
-                src={standingFallback.has(cid) ? `/api/characters/${cid}/icon` : `/api/characters/${cid}/standing`}
+                src={standingFallback.has(cid) ? iconUrl(cid) : standingUrl(cid)}
                 alt=""
                 className={standingFallback.has(cid) ? 'standing-icon-fallback' : ''}
                 style={{ left: `${leftPct}%` }}
@@ -2876,7 +2915,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 {!m.isHuman && (
                   m.character_id.startsWith('_')
                     ? <span className="avatar avatar-system">{m.character_id === '_dice' ? '🎲' : m.character_id === '_keeper' ? '🎩' : '⚙️'}</span>
-                    : <img src={`/api/characters/${m.character_id}/icon`} alt="" className="avatar" />
+                    : <img src={iconUrl(m.character_id)} alt="" className="avatar" />
                 )}
                 <div
                   className="session-msg-body"
@@ -2945,7 +2984,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
             return (
               <div key={charId} style={{ marginBottom: 16, opacity: isDead ? 0.5 : 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-                  <img src={`/api/characters/${charId}/icon`} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', filter: isDead ? 'grayscale(1)' : 'none' }} />
+                  <img src={iconUrl(charId)} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', filter: isDead ? 'grayscale(1)' : 'none' }} />
                   <span style={{ fontWeight: 600 }}>{isDead ? '💀 ' : ''}{charMap[charId]?.name ?? charId}</span>
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -3254,7 +3293,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                     <span style={{ fontWeight: 600 }}>{t('trpg.diceDialog.targets')}</span>
                     {diceDialogChars[0] && (
                       <>
-                        <img src={`/api/characters/${diceDialogChars[0]}/icon`} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }} />
+                        <img src={iconUrl(diceDialogChars[0])} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }} />
                         <span>{charMap[diceDialogChars[0]]?.name ?? diceDialogChars[0]}</span>
                       </>
                     )}
@@ -3270,7 +3309,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                             <input type="checkbox" checked={checked} style={{ margin: 0 }} onChange={() =>
                               setDiceDialogChars(prev => checked ? prev.filter(x => x !== id) : [...prev, id])
                             } />
-                            <img src={`/api/characters/${id}/icon`} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+                            <img src={iconUrl(id)} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
                             <span style={{ fontSize: '0.88em' }}>{charMap[id]?.name ?? id}</span>
                           </label>
                         )

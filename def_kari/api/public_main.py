@@ -1,0 +1,69 @@
+"""DEF(kari) 公開用（Cloudflare Tunnel等でリモート公開する）軽量FastAPIアプリ。
+
+`session.router`（オンラインセッション機能、JWT認証済み）と、キャラクター画像・
+T2I画像・TTS音声の読み取り専用配信ルーターのみをマウントする。
+`settings`/`chat`/`novel`/`t2i`(生成)/`tts`(生成)/`thought`/`trpg`/`characters`(フル機能)
+等、ホスト管理・ローカル専用機能は意図的に一切importしない（誤って追加しないよう、
+フル機能アプリ `main.py` とは別ファイルに分離している。allowlistテストで到達可能な
+パスを検証する: `tests/test_public_api_isolation.py`）。
+
+起動は `def_kari/api/dual_run.py` から行う。単体で `uvicorn def_kari.api.public_main:public_app`
+として起動することも可能だが、その場合 `_sessions` 等のシングルトンは `main.py` 側の
+プロセスとは別インスタンスになり整合性が壊れるため、本番運用では必ず dual_run 経由で
+同一プロセス内に同居させること。
+"""
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from def_kari.api.main import (
+    SessionBodySizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
+from def_kari import __version__
+from def_kari.api.routes import session
+from def_kari.api.routes.characters_public import router as characters_public_router
+from def_kari.api.routes.t2i_public import router as t2i_public_router
+from def_kari.api.routes.tts_public import router as tts_public_router
+
+
+@asynccontextmanager
+async def _public_lifespan(app: FastAPI):
+    import asyncio as _asyncio
+    from def_kari.api.routes.session import set_main_loop as _set_session_loop
+    # main.py 側のlifespanと同じ呼び出し。同一プロセス・同一イベントループなので
+    # 起動順に関わらず冪等（asyncio.get_running_loop() は常に同じループを返す）。
+    _set_session_loop(_asyncio.get_running_loop())
+    yield
+
+
+public_app = FastAPI(
+    title="DEF(kari) Public API",
+    version=__version__,
+    description="DEF(kari) — オンラインセッション公開用エンドポイントのみ",
+    lifespan=_public_lifespan,
+)
+
+public_app.add_middleware(SessionBodySizeLimitMiddleware)
+public_app.add_middleware(SecurityHeadersMiddleware)
+public_app.add_middleware(
+    CORSMiddleware,
+    # Tunnel URLは起動のたびに変わりうるため事前に許可リストを組めない。
+    # JWTはAuthorizationヘッダーで送るためCookie不要（allow_credentials=Falseで両立可能）。
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+public_app.include_router(session.router, prefix="/api/session", tags=["session"])
+public_app.include_router(characters_public_router, prefix="/api/characters", tags=["characters-public"])
+public_app.include_router(t2i_public_router, prefix="/api/t2i", tags=["t2i-public"])
+public_app.include_router(tts_public_router, prefix="/api/tts", tags=["tts-public"])
+
+
+@public_app.get("/api/health")
+def health():
+    return {"status": "ok", "version": __version__}

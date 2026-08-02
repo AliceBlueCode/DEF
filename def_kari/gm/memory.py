@@ -19,6 +19,7 @@ _BASE = Path(__file__).parent.parent.parent
 _CHAR_DIRS = [
     _BASE / "data" / "public" / "characters",
     _BASE / "data" / "private" / "characters",
+    _BASE / "data" / "visitors",  # 持ち込みキャラ（guest_*）の副本。session.py:_autosave_visitors 参照
 ]
 
 

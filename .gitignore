@@ -29,6 +29,11 @@ data/private/action_directives/*
 data/private/thoughts/*
 !data/private/thoughts/.gitkeep
 
+# Visitor data (guest characters brought in by online session participants)
+!data/visitors/
+data/visitors/*
+!data/visitors/.gitkeep
+
 # Encrypted API keys & secret key material
 data/api_keys.enc.json
 data/api_keys.key

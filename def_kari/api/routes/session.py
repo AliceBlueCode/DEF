@@ -8,6 +8,8 @@ import os
 import random
 import re
 import secrets
+import shutil
+import threading
 import time
 import uuid as _uuid_mod
 from collections import OrderedDict, deque
@@ -53,6 +55,7 @@ from def_kari.gm.context_builder import (
     build_turn_instruction as _build_turn_instruction,
 )
 from def_kari.gm.gm_agent import _gm_agent
+from def_kari.safety.character_audit import audit_character_json
 
 router = APIRouter()
 
@@ -380,6 +383,41 @@ def _cancel_idle_shutdown(session_id: str) -> None:
         sess["idle_shutdown_task"] = None
 
 
+# vram_lockは他の生成処理（LLM/T2I/TTS）と共有のグローバルシングルトン。取得元が
+# 増えるほど「誰かが握ったまま長時間返ってこない」場合の影響範囲が広がるため、
+# バックグラウンド生成系は無期限ブロックせずタイムアウトで諦める（fail-silent）。
+# テスト環境でLLM呼び出しが未モックのままvram_lockを握り続け、後発のTTS取得が
+# デッドロックした事例があったため導入（2026-08-02）。
+# 環境変数で上書き可能にしているのはテスト実行時間の短縮用（モックし忘れを
+# 60秒待たされず即座に検出できるようにするため）。本番の挙動自体は変えない。
+_VRAM_LOCK_TIMEOUT_SECONDS = float(os.environ.get("DEF_VRAM_LOCK_TIMEOUT", "60"))
+
+
+def _synthesize_turn_audio_sync(text: str, character_id: str, tts_backend: str) -> str:
+    """テキストをTTS合成してassets/に保存し、配信用URLを返す（同期・fail-silent）。
+
+    呼び出し元は必ずバックグラウンドスレッド（_generate_turn_audio /
+    _synthesize_and_notify_audio）経由で呼ぶこと。リクエストハンドラから直接
+    同期呼び出しすると、TTSバックエンドが無応答の場合にHTTPレスポンスごと
+    ブロックされる（2026-08-02、human_turn_actionでの実装ミスで発覚）。
+    """
+    if not tts_backend or not text:
+        return ""
+    try:
+        from def_kari.api.routes.tts import synthesize_and_save
+        from def_kari.resources.vram_lock import get_vram_lock
+        lock = get_vram_lock()
+        if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+            _log.warning("vram_lock busy for over %.0fs, skipping TTS synthesis", _VRAM_LOCK_TIMEOUT_SECONDS)
+            return ""
+        try:
+            return synthesize_and_save(text, character_id, tts_backend)
+        finally:
+            lock.release()
+    except Exception:
+        return ""
+
+
 # ── サーバー自律AIターン ──────────────────────────────────────────
 
 def _get_current_speaker(session: dict) -> str | None:
@@ -422,6 +460,114 @@ def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
     return True
 
 
+def _generate_turn_image(session_id: str, result: dict) -> None:
+    """AIターン結果の image_prompt_en から挿絵をバックグラウンド生成し、TURN_IMAGE_READY をemitする（fail-silent）。
+
+    従来は各クライアントが個別に POST /api/t2i/ を叩いていたが、それだと画像生成という
+    重い操作を無認証で外部公開する必要が生じてしまう。サーバー側で1回だけ生成してWS配信する
+    ことで、参加者側は読み取り専用の /api/t2i/image/{filename} だけで済むようにする。
+    """
+    try:
+        image_prompt_en = result.get("image_prompt_en", "")
+        if not image_prompt_en:
+            return
+        settings = load_settings()
+        backend = settings.get("t2i_backend", "")
+        if not backend:
+            return
+        model = settings.get(f"t2i_model_{backend}") or None
+        from def_kari.resources.vram_lock import get_vram_lock
+        lock = get_vram_lock()
+        if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+            _log.warning("vram_lock busy for over %.0fs, skipping turn image generation", _VRAM_LOCK_TIMEOUT_SECONDS)
+            return
+        try:
+            image_path = _generate_t2i_image(prompt=image_prompt_en, backend=backend, model=model)
+        finally:
+            lock.release()
+        filename = Path(image_path).name
+        url = f"/api/t2i/image/{filename}"
+        _game_event_bus.emit(session_id, "TURN_IMAGE_READY", {
+            "character_id": result.get("character_id", ""),
+            "round": result.get("round"),
+            "turn": result.get("turn"),
+            "url": url,
+        })
+    except Exception as e:
+        _log.warning("turn image generation failed for session=%s: %s", session_id, e)
+
+
+def _generate_turn_audio(session_id: str, result: dict) -> None:
+    """AIターン結果のテキストをバックグラウンドでTTS合成し、TURN_AUDIO_READY をemitする（fail-silent）。
+
+    従来は各クライアントが個別に POST /api/tts/ → POST /api/tts/save を叩いていたが、
+    それだと音声合成という重い操作を無認証で外部公開する必要が生じてしまう。
+    サーバー側で1回だけ合成してWS配信し、再生するかどうかはクライアント側の
+    ttsEnabled 設定に委ねる。
+    """
+    try:
+        tts_backend = load_settings().get("tts_backend", "")
+        url = _synthesize_turn_audio_sync(result.get("text", ""), result.get("character_id", ""), tts_backend)
+        if not url:
+            return
+        _game_event_bus.emit(session_id, "TURN_AUDIO_READY", {
+            "character_id": result.get("character_id", ""),
+            "round": result.get("round"),
+            "turn": result.get("turn"),
+            "url": url,
+        })
+    except Exception as e:
+        _log.warning("turn audio generation failed for session=%s: %s", session_id, e)
+
+
+def _maybe_generate_turn_media(session_id: str, result: dict) -> None:
+    """AIターン完了後の挿絵・TTSをそれぞれ独立したデーモンスレッドでバックグラウンド生成する。
+
+    _run_ai_turns から AI_TURN_COMPLETED emit直後に呼ばれる。参加処理と同様、
+    生成の成否に関わらずターン進行はブロックしない（fail-silent）。
+    """
+    threading.Thread(target=_generate_turn_image, args=(session_id, result), daemon=True).start()
+    threading.Thread(target=_generate_turn_audio, args=(session_id, result), daemon=True).start()
+
+
+def _synthesize_and_notify_audio(session_id: str, text: str, character_id: str, request_id: str) -> None:
+    """バックグラウンドでTTS合成し、完了したら AUDIO_READY イベントをemitする（fail-silent）。
+
+    human_turn_action（人間プレイヤー自己発言）・vote_deliberate（弁明ラウンド）が使う汎用版。
+    AIターン自動読み上げ専用の _generate_turn_audio とは別に、character_id + request_id で
+    紐付ける（呼び出し元ごとにレスポンス形状が異なり round/turn を持たないため）。
+    """
+    try:
+        tts_backend = load_settings().get("tts_backend", "")
+        url = _synthesize_turn_audio_sync(text, character_id, tts_backend)
+        if not url:
+            return
+        _game_event_bus.emit(session_id, "AUDIO_READY", {
+            "character_id": character_id,
+            "request_id": request_id,
+            "url": url,
+        })
+    except Exception as e:
+        _log.warning("audio synth failed for session=%s: %s", session_id, e)
+
+
+def _start_background_tts(session_id: str, text: str, character_id: str) -> str:
+    """TTS合成をバックグラウンドスレッドで起動し、呼び出し元に返すrequest_idを発行する。
+
+    text が空、またはTTSバックエンド未設定の場合は空文字列を返しスレッドは起動しない
+    （呼び出し元はaudio_request_idが空なら音声なしとして扱う）。
+    """
+    if not text or not load_settings().get("tts_backend", ""):
+        return ""
+    request_id = _uuid_mod.uuid4().hex[:12]
+    threading.Thread(
+        target=_synthesize_and_notify_audio,
+        args=(session_id, text, character_id, request_id),
+        daemon=True,
+    ).start()
+    return request_id
+
+
 async def _run_ai_turns(session_id: str) -> None:
     """ai_resume で呼ばれる非同期タスク。現在のターンを1回だけ実行して停止する。
     連続進行（自動モード）はフロントエンドが AI_TURN_COMPLETED を受け取った後に
@@ -461,6 +607,7 @@ async def _run_ai_turns(session_id: str) -> None:
             })
             return
         _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
+        _maybe_generate_turn_media(session_id, result)
         # 次のターンが人間なら ai_resume の往復を待たずに即通知する。
         # ai_resume は require_keeper のためプレイヤータブは連鎖を駆動できず、
         # ここで通知しないと人間ターン直前で進行が止まる。
@@ -585,7 +732,112 @@ _SESSION_HISTORY_DIRS = [
     _BASE / "data" / "private" / "session_history",
 ]
 _AUTOSAVE_DIR = _BASE / "data" / "private" / "session_autosave"
+_VISITORS_DIR = _BASE / "data" / "visitors"
+_VISITORS_MAX_FILES = 5000  # 新規ディレクトリ作成時のみ判定。既存の上書き更新は無制限
 _SAFE_FILENAME_RE = re.compile(r'^[A-Za-z0-9_\-]+\.json$')
+
+
+def _autosave_visitors(session: dict) -> None:
+    """guest_chars（持ち込みキャラ）を data/visitors/{char_id}/profile.json に書き出す。
+
+    join直後と _autosave() の両方から呼ばれる（べき等・上書き）。ディレクトリ形式にしているのは
+    def_kari/gm/memory.py の _char_base_dir() がそのまま visitors/{char_id}/ を認識できるようにするため
+    （episodic memory 対応、guest_id は毎回使い捨てなので次回セッションへの引き継ぎはされない）。
+    """
+    guest_chars = session.get("guest_chars", {})
+    if not guest_chars:
+        return
+    try:
+        _VISITORS_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+    existing_count = None  # 新規ディレクトリ作成が発生したときだけ遅延評価する
+    skill_values = session.get("skill_values", {})
+    runtime_stats = session.get("runtime_stats", {})
+    counters = session.get("counters", {})
+    for char_id, char_data in guest_chars.items():
+        char_dir = _VISITORS_DIR / char_id
+        if not char_dir.exists():
+            if existing_count is None:
+                existing_count = sum(1 for _ in _VISITORS_DIR.iterdir() if _.is_dir())
+            if existing_count >= _VISITORS_MAX_FILES:
+                _log.warning("visitors/ cap (%d) reached, skipping new visitor dir for %s", _VISITORS_MAX_FILES, char_id)
+                continue
+            existing_count += 1
+        snapshot = dict(char_data)
+        if char_id in skill_values:
+            snapshot["_session_skill_values"] = skill_values[char_id]
+        if char_id in runtime_stats:
+            snapshot["_session_runtime_stats"] = runtime_stats[char_id]
+        if char_id in counters:
+            snapshot["_session_counter"] = counters[char_id]
+        try:
+            char_dir.mkdir(parents=True, exist_ok=True)
+            (char_dir / "profile.json").write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+
+def _extract_appearance_tags(character_json: dict) -> str:
+    """flat形式・versioned形式（base_profile入れ子）の両方から appearance_tags（無ければ features）を取り出す。"""
+    if not isinstance(character_json, dict):
+        return ""
+    for v in character_json.values():
+        if isinstance(v, dict) and isinstance(v.get("base_profile"), dict):
+            bp = v["base_profile"]
+            vr = bp.get("visual_references") or {}
+            return bp.get("appearance_tags") or vr.get("appearance_tags") or vr.get("features") or ""
+    vr = character_json.get("visual_references") or {}
+    return character_json.get("appearance_tags") or vr.get("appearance_tags") or vr.get("features") or ""
+
+
+def _generate_visitor_images(session_id: str, char_id: str, character_json: dict) -> None:
+    """持ち込みキャラのアイコン・立ち絵をバックグラウンドで生成する（fail-silent）。
+
+    join_session からデーモンスレッドで起動され、参加処理の完了はこれを待たない。
+    生成完了時に VISITOR_ICON_READY をemitし、フロントにアイコン再取得を促す
+    （画像配信は _NO_CACHE_HEADERS 済みなので、フロント側は同URLを再フェッチするだけでよい）。
+    """
+    try:
+        appearance_tags = _extract_appearance_tags(character_json)
+        if not appearance_tags:
+            return
+        settings = load_settings()
+        backend = settings.get("t2i_backend", "")
+        if not backend:
+            return
+        model = settings.get(f"t2i_model_{backend}") or None
+        char_dir = _VISITORS_DIR / char_id
+        char_dir.mkdir(parents=True, exist_ok=True)
+
+        from def_kari.resources.vram_lock import get_vram_lock
+        lock = get_vram_lock()
+
+        icon_prompt = f"portrait, face close-up, {appearance_tags}, white background, simple background"
+        if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+            _log.warning("vram_lock busy for over %.0fs, skipping visitor icon generation", _VRAM_LOCK_TIMEOUT_SECONDS)
+            return
+        try:
+            icon_path = _generate_t2i_image(prompt=icon_prompt, backend=backend, model=model, width=512, height=512)
+        finally:
+            lock.release()
+        shutil.copy2(icon_path, char_dir / "icon.png")
+
+        standing_prompt = f"full body, standing, {appearance_tags}, white background, simple background"
+        if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+            _log.warning("vram_lock busy for over %.0fs, skipping visitor standing generation", _VRAM_LOCK_TIMEOUT_SECONDS)
+            return
+        try:
+            standing_path = _generate_t2i_image(prompt=standing_prompt, backend=backend, model=model, width=832, height=1216)
+        finally:
+            lock.release()
+        shutil.copy2(standing_path, char_dir / "standing.png")
+
+        _game_event_bus.emit(session_id, "VISITOR_ICON_READY", {"character_id": char_id})
+    except Exception as e:
+        _log.warning("visitor image generation failed for %s: %s", char_id, e)
 
 
 def _autosave(session_id: str) -> None:
@@ -599,6 +851,7 @@ def _autosave(session_id: str) -> None:
         )
     except Exception:
         pass
+    _autosave_visitors(session)
 
 
 def _delete_autosave(session_id: str) -> None:
@@ -1175,10 +1428,26 @@ def join_session(req: JoinRequest, request: Request):
         # オンラインセッション: 参加者がキャラJSONを持ち込む
         role = "player"
         char_id = f"guest_{_uuid_mod.uuid4().hex[:8]}"
+
+        # LLM審査（jailbreak/プロンプトインジェクション対策、多層防御の1枚。fail-open）
+        audit_result = audit_character_json(
+            req.character_json, session_rating, sess.get("backend", DEFAULT_LLM_BACKEND)
+        )
+        if not audit_result.passed:
+            _log.warning("join rejected by character audit: session=%s reason=%s", session_id, audit_result.reason)
+            raise HTTPException(400, f"Character content rejected: {audit_result.reason}")
+
         char_data = dict(req.character_json)
         char_data["id"] = char_id
         char_data["player_type"] = "human"
         sess.setdefault("guest_chars", {})[char_id] = char_data
+        _autosave_visitors(sess)
+        # アイコン・立ち絵をバックグラウンドで生成（参加処理はこれを待たない。fail-silent）
+        threading.Thread(
+            target=_generate_visitor_images,
+            args=(session_id, char_id, req.character_json),
+            daemon=True,
+        ).start()
         # DEFキャラJSON形式: {version: {base_profile: {name: ...}}} または フラット {name: ...}
         _cj = req.character_json
         display_name = _cj.get("name") or next(
@@ -1235,6 +1504,16 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
     タイムアウトによる自動スキップの対象にはしない（設計書 §3.7 参照）。
     """
     token = authorization.removeprefix("Bearer ").strip()
+
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+
+    # 冪等化: 連打や再送で同じトークンが二重に処理されても一度しか除去・emitしない。
+    # revoke_token() 済みトークンでの再送も verify_jwt の 401 より先にここで拾う。
+    if token not in sess.get("players", {}):
+        return {"status": "already_left"}
+
     try:
         payload = verify_jwt(token)
     except _JWTError:
@@ -1243,14 +1522,6 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
         raise HTTPException(403, "Token session mismatch")
     if payload.get("role") == "host":
         raise HTTPException(400, "Host cannot leave a session it owns; use /end instead")
-
-    sess = _sessions.get(session_id)
-    if not sess:
-        raise HTTPException(404, "Session not found")
-
-    # 冪等化: 連打や再送で同じトークンが二重に処理されても一度しか除去・emitしない
-    if token not in sess.get("players", {}):
-        return {"status": "already_left"}
 
     char_id = sess["players"].pop(token, "")
     participant_id = sess.get("token_to_participant", {}).pop(token, char_id or None)
@@ -1267,6 +1538,7 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
             await ws.close(code=1000)
         except Exception:
             pass
+    revoke_token(token)
 
     _game_event_bus.emit(session_id, "PLAYER_LEFT", {
         "participant_id": participant_id,
@@ -1550,7 +1822,10 @@ def next_turn(req: SessionNextRequest):
     global _last_session_debug
     from def_kari.resources.vram_lock import get_vram_lock
     _vram_lock = get_vram_lock()
-    _vram_lock.acquire()
+    if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+        err = f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s"
+        _last_session_debug = {"error": err, "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
+        return {"error": err, "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {err})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}
     try:
         _narrate_kwargs = dict(
             character=char,
@@ -1956,6 +2231,8 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = 
 
 class LobbyAIRequest(BaseModel):
     character_id: str
+    game_sheet_id: str = ""  # 任意。TRPGモードでプレイするゲームキャラ（キャラシート）を指定
+    backend_id: str = ""  # 任意。未指定なら設定タブのデフォルトに従う
 
 
 @router.post("/{session_id}/lobby/add_ai")
@@ -1971,6 +2248,8 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(requ
     char_id = req.character_id
     if char_id in sess["initiative"]:
         raise HTTPException(409, "Already in initiative")
+    if char_id and char_id == sess.get("keeper_char_id"):
+        raise HTTPException(409, "Character already assigned to keeper")
     profiles = load_profiles()
     char = get_character(char_id, profiles)
     if not char:
@@ -1979,6 +2258,10 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(requ
         raise HTTPException(400, "Cannot add human character as AI slot")
     sess["initiative"].append(char_id)
     sess["name_map"][char_id] = char.get("name", char_id)
+    if req.game_sheet_id:
+        sess.setdefault("char_game_sheets", {})[char_id] = req.game_sheet_id
+    if req.backend_id:
+        sess.setdefault("char_backends", {})[char_id] = req.backend_id
     _autosave(session_id)
     _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
         "initiative": sess["initiative"],
@@ -1989,6 +2272,7 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(requ
 
 class LobbyKeeperCharRequest(BaseModel):
     character_id: str  # 空文字列 = 解除（無名AIキーパーに戻す）
+    backend_id: str = ""  # 任意。未指定なら設定タブのデフォルトに従う
 
 
 @router.post("/{session_id}/lobby/set_keeper_char")
@@ -2024,6 +2308,8 @@ def lobby_set_keeper_char(session_id: str, req: LobbyKeeperCharRequest, auth: di
         raise HTTPException(400, "Cannot assign human character as AI keeper")
     sess["keeper_char_id"] = char_id
     sess["keeper_char_name"] = char.get("name", char_id)
+    if req.backend_id:
+        sess.setdefault("char_backends", {})[char_id] = req.backend_id
     _autosave(session_id)
     _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
         "keeper_char_id": char_id,
@@ -2128,7 +2414,8 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
 
     from def_kari.resources.vram_lock import get_vram_lock as _get_vram_lock
     _keeper_lock = _get_vram_lock()
-    _keeper_lock.acquire()
+    if not _keeper_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+        return {"error": f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s"}
     try:
         result = _gm_agent.narrate(
             session=session,
@@ -2230,6 +2517,85 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
         "character_name": char_name,
         "round": session["round"],
         "counters": dict(counters),
+    }
+
+
+class SessionDiceRollRequest(BaseModel):
+    notation: str
+    skill_value: int = 0
+    rulebook_id: str = ""
+    character_id: str = ""
+    stat_name: str = ""
+    is_skill: bool = False
+    is_stat: bool = False
+
+
+@router.post("/{session_id}/dice")
+def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict = Depends(require_player)):
+    """TRPGモードのダイス判定（require_player）。セッション履歴への注入・WS配信を行う。
+
+    判定計算そのものは trpg.py の compute_dice_judgment を共有する。無認証の
+    `POST /api/trpg/dice` はセッション状態を変更しない汎用計算専用として別途残っている
+    （こちらは `session_id` を知っているだけの第三者が他人のセッション履歴を
+    改ざんできてしまう問題があったための分離、2026-08-02）。
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    from def_kari.api.routes.trpg import compute_dice_judgment
+    try:
+        computed = compute_dice_judgment(req.notation, req.skill_value, req.rulebook_id, req.is_skill, req.is_stat)
+    except ValueError as e:
+        return {"error": str(e)}
+    result = computed["result"]
+    judgment = computed["judgment"]
+
+    if req.character_id:
+        name_map = session.get("name_map", {})
+        cname = name_map.get(req.character_id, req.character_id)
+        stat_part = f"【{req.stat_name}】" if req.stat_name else ""
+        j = judgment or {}
+        jv = j.get("judgment_value", req.skill_value)
+        if j.get("critical"):
+            outcome = "クリティカル！"
+        elif j.get("fumble"):
+            outcome = "ファンブル…"
+        elif j.get("success"):
+            outcome = "成功"
+        elif j:
+            outcome = "失敗"
+        else:
+            outcome = ""
+        msg = f"🎲 {cname}{stat_part} {result['total']} / {jv}"
+        if outcome:
+            msg += f" → {outcome}"
+        session["history"].append({
+            "role": "user",
+            "content": msg,
+            "character_id": req.character_id,
+        })
+        _autosave(session_id)
+
+    if judgment:
+        from def_kari.gm.events import JUDGMENT_RESOLVED
+        _game_event_bus.emit(session_id, JUDGMENT_RESOLVED, {
+            "character_id": req.character_id,
+            "stat_name": req.stat_name,
+            "notation": result["notation"],
+            "roll": result["total"],
+            "judgment_value": judgment.get("judgment_value"),
+            "success": judgment.get("success"),
+            "critical": judgment.get("critical"),
+            "fumble": judgment.get("fumble"),
+        })
+
+    return {
+        "notation": result["notation"],
+        "rolls": result["rolls"],
+        "total": result["total"],
+        "modifier": result["modifier"],
+        "judgment": judgment,
     }
 
 
@@ -2700,6 +3066,12 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         "tags": [],
     })
 
+    # 人間プレイヤー自身の発言読み上げ。他参加者には配信しない（HUMAN_ACTION は元々
+    # 「自分以外」専用のイベントで、本人はこのレスポンスから直接処理する設計のため）。
+    # バックグラウンドで合成し、完了したら AUDIO_READY(character_id + request_id) で通知する
+    # （同期呼び出しだとTTSバックエンド無応答時にHTTPレスポンスごとブロックされるため、2026-08-02修正）。
+    audio_request_id = _start_background_tts(session_id, req.text, current_char_id)
+
     if req.action == "extend":
         counters[current_char_id] = counters.get(current_char_id, 0) - 1
         _autosave(session_id)
@@ -2717,6 +3089,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "text": req.text,
             "round": session["round"],
             "counters": dict(counters),
+            "audio_request_id": audio_request_id,
         }
     else:  # "send"
         # 人間プレイヤーは「積む→発言完」が1ターン完了とみなす（actions_per_turn に関わらず即時進行）
@@ -2742,6 +3115,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "text": req.text,
             "round": session["round"],
             "counters": dict(counters),
+            "audio_request_id": audio_request_id,
         }
 
 
@@ -2819,6 +3193,7 @@ def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(req
             "character_name": proposer_name,
             "text": req.proposer_text,
             "emotion": "neutral",
+            "audio_request_id": _start_background_tts(session_id, req.proposer_text, req.proposer_id),
         })
         session["_pending_vote"]["deliberation_texts"][req.proposer_id] = req.proposer_text
 
@@ -2872,7 +3247,9 @@ def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(req
         try:
             from def_kari.resources.vram_lock import get_vram_lock as _get_vl
             _delib_lock = _get_vl()
-            _delib_lock.acquire()
+            if not _delib_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+                # 外側のexceptにフォールスルーさせ、既存の「弁明なし」処理に乗せる
+                raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
             try:
                 from def_kari.models.t2i_profiles import get_current_tag_format as _get_tag_fmt
                 result = generate_structured_reply(
@@ -2891,15 +3268,19 @@ def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(req
                 _delib_lock.release()
             dialogue = ""
             emotion = "neutral"
+            had_dialogue = False
             if result.get("success") and result.get("result"):
                 parsed = result["result"]
                 dialogue = parsed.get("dialogue", "")
                 emotion = parsed.get("emotion", "neutral")
-            if not dialogue:
+            if dialogue:
+                had_dialogue = True
+            else:
                 dialogue = _sp("no_deliberation", _v_lang) or "(弁明なし)"
         except Exception:
             dialogue = _sp("no_deliberation", _v_lang) or "(弁明なし)"
             emotion = "neutral"
+            had_dialogue = False
 
         session["history"].append({
             "role": "assistant",
@@ -2913,6 +3294,7 @@ def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(req
             "character_name": char_name,
             "text": dialogue,
             "emotion": emotion,
+            "audio_request_id": _start_background_tts(session_id, dialogue, char_id) if had_dialogue else "",
         })
         session["_pending_vote"]["deliberation_texts"][char_id] = dialogue
 
@@ -2980,7 +3362,8 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
                 {"role": "system", "content": char.get("persona_description", "")},
                 {"role": "user", "content": judge_prompt},
             ]
-            _vram_lock.acquire()
+            if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+                raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
             try:
                 reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 32})
             finally:
@@ -3011,7 +3394,8 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
                     {"role": "system", "content": _sp("keeper_system", _v_lang) or "あなたはセッションのキーパー（GM・司会者）です。"},
                     {"role": "user", "content": keeper_judge_prompt},
                 ]
-                _vram_lock.acquire()
+                if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+                    raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
                 try:
                     reply = chat_fn(keeper_msgs, model, json_mode=False, options={"num_predict": 32})
                 finally:
@@ -3501,7 +3885,8 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest, _a
             ]
             from def_kari.resources.vram_lock import get_vram_lock
             _vram_lock_llm = get_vram_lock()
-            _vram_lock_llm.acquire()
+            if not _vram_lock_llm.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+                raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
             try:
                 image_prompt = chat_fn(messages, model, json_mode=False, options={"num_predict": num_predict})
             finally:
@@ -3545,7 +3930,8 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest, _a
         set_t2i_debug(t2i_debug)
         from def_kari.resources.vram_lock import get_vram_lock
         _vram_lock = get_vram_lock()
-        _vram_lock.acquire()
+        if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+            raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
         try:
             image_path = _generate_t2i_image(
                 prompt=prompt_final,
