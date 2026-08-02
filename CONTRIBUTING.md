@@ -122,14 +122,14 @@ locales/
 ## 6. PRの手順
 
 1. このリポジトリをforkする。
-1. `develop` ブランチから作業ブランチを切る。
+1. `main` ブランチから作業ブランチを切る。
 
    ```
-   git checkout develop
+   git checkout main
    git checkout -b feature/add-groq-adapter
    ```
 1. 変更を加えてcommitする。`.gitignore`で除外されているファイル（`.env`・APIキー・プライベートキャラクターデータ・生成アセット等）が誤って含まれていないか確認してください。
-1. forkしたリポジトリにpushし、`develop` ブランチへのPRを作成する。
+1. forkしたリポジトリにpushし、`main` ブランチへのPRを作成する。
 1. PR本文に以下を記載する。
 - 追加・変更の概要
 - 動作確認済みの環境(OS・Pythonバージョン。UI/フロントエンドの変更はNode.jsバージョン・ブラウザも、アダプター追加は動作確認したサービス/モデル名も)
