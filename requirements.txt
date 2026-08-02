@@ -6,6 +6,9 @@ fastapi>=0.95.0
 uvicorn[standard]>=0.21.0
 python-multipart>=0.0.9
 
+# Authentication (JWT, オンラインセッションの招待コード・ホスト/プレイヤートークン用)
+python-jose>=3.3.0
+
 # HTTP client
 requests>=2.28.0
 
@@ -23,3 +26,4 @@ PyYAML>=6.0.0
 
 # --- dev / test ---
 pytest>=8.0.0
+pytest-asyncio>=1.0.0
