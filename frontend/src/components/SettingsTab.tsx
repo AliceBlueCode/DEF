@@ -104,6 +104,8 @@ export default function SettingsTab({
   const [llmDebug, setLlmDebug] = useState(false)
   const [ttsDebug, setTtsDebug] = useState(false)
   const [t2iDebug, setT2iDebug] = useState(false)
+  const [jwtRegenerating, setJwtRegenerating] = useState(false)
+  const [jwtRegenerateMsg, setJwtRegenerateMsg] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/version')
@@ -592,6 +594,15 @@ export default function SettingsTab({
           />
         </div>
         <div className="settings-row">
+          <label>{t('settings.label.disconnectTimeoutSec')}</label>
+          <input
+            type="number" min={10} max={600}
+            className="settings-number"
+            value={get('disconnect_timeout_sec', 60)}
+            onChange={e => set('disconnect_timeout_sec', Number(e.target.value))}
+          />
+        </div>
+        <div className="settings-row">
           <label>{t('settings.label.keeperJudgmentMode')}</label>
           <select
             value={get('keeper_judgment_mode', 'inline')}
@@ -624,6 +635,37 @@ export default function SettingsTab({
           >
             {SIZE_PRESETS.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
           </select>
+        </div>
+      </div>
+
+      <div className="settings-divider" />
+
+      {/* ── Security ── */}
+      <div className="settings-section">
+        <h3>{t('settings.section.security')}</h3>
+        <div className="char-danger-zone">
+          <button
+            className="danger-btn"
+            disabled={jwtRegenerating}
+            onClick={async () => {
+              if (!window.confirm(t('settings.confirm.jwtSecretRegenerate'))) return
+              setJwtRegenerating(true)
+              setJwtRegenerateMsg('')
+              try {
+                const res = await fetch('/api/settings/jwt-secret/regenerate', { method: 'POST' })
+                const data = await res.json()
+                setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerated', { count: String(data.disconnected_connections ?? 0) }))
+              } catch {
+                setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerateFailed'))
+              } finally {
+                setJwtRegenerating(false)
+              }
+            }}
+          >
+            {jwtRegenerating ? t('settings.btn.jwtSecretRegenerate.loading') : t('settings.btn.jwtSecretRegenerate')}
+          </button>
+          <p className="settings-hint">{t('settings.hint.jwtSecretRegenerate')}</p>
+          {jwtRegenerateMsg && <p className="settings-hint">{jwtRegenerateMsg}</p>}
         </div>
       </div>
 

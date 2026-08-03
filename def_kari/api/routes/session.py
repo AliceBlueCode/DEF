@@ -93,7 +93,11 @@ _sessions: OrderedDict[str, dict] = OrderedDict()
 _last_session_debug: dict = {}
 
 # シリアライズ不可能なフィールド（WebSocket/asyncio.Task/deque 等）
-_NON_SERIALIZABLE_KEYS = frozenset({"ws_connections", "ai_task", "idle_shutdown_task", "ws_rate"})
+_NON_SERIALIZABLE_KEYS = frozenset({
+    "ws_connections", "ai_task", "idle_shutdown_task", "ws_rate",
+    "gen_rate", "gen_inflight",  # S-6: dict[str, deque] / set はJSON化できない
+    "disconnect_skip_tasks",  # dict[str, asyncio.Task] はJSON化できない
+})
 
 
 def _session_for_json(session: dict) -> dict:
@@ -297,7 +301,10 @@ def revoke_token(token: str) -> None:
         _revoked_jtis.add(payload["jti"])
         sess = _sessions.get(payload.get("session_id", ""))
         if sess:
-            sess["ws_connections"].pop(token, None)
+            # autosaveから復元された直後のセッションは ws_connections キーを
+            # 持たない（_session_for_json でシリアライズ時に除外されるため）。
+            # 直接アクセスだとKeyErrorになるため .get() を使う。
+            sess.get("ws_connections", {}).pop(token, None)
     except Exception:
         pass
 
@@ -536,6 +543,117 @@ def _get_current_speaker(session: dict) -> str | None:
     return initiative[turn % len(initiative)]
 
 
+def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
+    """指定キャラの現ターンをskip扱いで処理する（発言力+1・ターン進行・AIターン再開）。
+
+    人間プレイヤー自身の自主skip（human_turn_action）と、切断タイムアウトによる
+    自動skip（_schedule_disconnect_skip）の両方から呼ぶ共通ロジック。
+    """
+    name_map = session.get("name_map", {})
+    char_name = name_map.get(char_id, char_id)
+    counters = session.setdefault("counters", {})
+    counters[char_id] = counters.get(char_id, 0) + 1
+    session["turn"] = session.get("turn", 0) + 1
+    session["action_count"] = 0
+    _autosave(session_id)
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "character_id": char_id,
+        "character_name": char_name,
+        "text": "",
+        "action": "skip",
+        "counters": dict(counters),
+    })
+    _ai_task = session.get("ai_task")
+    if not _ai_task or _ai_task.done():
+        session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    return {
+        "action": "skip",
+        "character_id": char_id,
+        "character_name": char_name,
+        "round": session["round"],
+        "counters": dict(counters),
+    }
+
+
+_DEFAULT_DISCONNECT_TIMEOUT_SEC = 60.0
+
+
+def _disconnect_timeout_sec() -> float:
+    from def_kari.settings import load_settings
+    try:
+        return max(1.0, float(load_settings().get("disconnect_timeout_sec", _DEFAULT_DISCONNECT_TIMEOUT_SEC)))
+    except (TypeError, ValueError):
+        return _DEFAULT_DISCONNECT_TIMEOUT_SEC
+
+
+def _find_player_token(session: dict, char_id: str) -> str | None:
+    """char_id を担当する人間プレイヤーの token を逆引きする。
+
+    見つからない場合は None（オフラインセッション等、そもそもWS接続を介して
+    操作されていないキャラ）。この場合「切断」の概念自体が存在しないため、
+    呼び出し側は切断タイムアウトの対象外として扱う。
+    """
+    return next((t for t, c in session.get("players", {}).items() if c == char_id), None)
+
+
+def _schedule_disconnect_skip(session_id: str, char_id: str) -> None:
+    """切断中のキャラが設定秒数以内に再接続しなければ、自動的にターンをskipする。
+
+    マルチプレイ設計書§3.7「切断（通信途絶）時のターン処理（決定・一部未実装）」の
+    自動skip部分。現在のターン担当者が切断した場合（ws_endpointのfinallyブロック）と、
+    まだターンが来ていないキャラが切断中のままターンが回ってきた場合
+    （WAITING_FOR_HUMAN発行直後）の両方から呼ぶ。再接続・退室・expel・セッション
+    終了時は必ず _cancel_disconnect_skip を呼ぶこと。
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return
+    timers: dict[str, asyncio.Task] = session.setdefault("disconnect_skip_tasks", {})
+    existing = timers.get(char_id)
+    if existing and not existing.done():
+        return  # 既にタイマー起動中
+    timeout = _disconnect_timeout_sec()
+
+    async def _do_skip() -> None:
+        try:
+            await asyncio.sleep(timeout)
+        except asyncio.CancelledError:
+            raise
+        sess = _sessions.get(session_id)
+        if not sess:
+            return
+        sess.setdefault("disconnect_skip_tasks", {}).pop(char_id, None)
+        token = _find_player_token(sess, char_id)
+        if token is not None and token in sess.get("ws_connections", {}):
+            return  # 再接続済み
+        if _get_current_speaker(sess) != char_id:
+            return  # 別の経緯で既にターンが進んでいた
+        _apply_skip(session_id, sess, char_id)
+
+    timers[char_id] = asyncio.create_task(_do_skip())
+
+
+def _cancel_disconnect_skip(session_id: str, char_id: str) -> None:
+    session = _sessions.get(session_id)
+    if not session:
+        return
+    timers: dict[str, asyncio.Task] = session.get("disconnect_skip_tasks", {})
+    task = timers.pop(char_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+def _maybe_schedule_disconnect_skip(session_id: str, session: dict, char_id: str) -> None:
+    """WAITING_FOR_HUMANの対象キャラが既に切断中なら、切断タイムアウトタイマーを仕込む。
+
+    3つのWAITING_FOR_HUMAN送出経路（_emit_waiting_for_human／_run_ai_turns内の
+    waiting_for_human分岐／ロビー開始直後の初回通知）すべてから呼ぶ。
+    """
+    token = _find_player_token(session, char_id)
+    if token is not None and token not in session.get("ws_connections", {}):
+        _schedule_disconnect_skip(session_id, char_id)
+
+
 def _execute_ai_turn(session_id: str) -> dict:
     """AIターンを1回同期実行する（run_in_executor 用）。"""
     sess = _sessions.get(session_id)
@@ -564,6 +682,7 @@ def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
         "round": session.get("round", 1),
         "counters": dict(session.get("counters", {})),
     })
+    _maybe_schedule_disconnect_skip(session_id, session, current)
     return True
 
 
@@ -712,6 +831,8 @@ async def _run_ai_turns(session_id: str) -> None:
                 "round": result.get("round", 1),
                 "counters": dict(result.get("counters", session.get("counters", {}))),
             })
+            if result.get("character_id"):
+                _maybe_schedule_disconnect_skip(session_id, session, result["character_id"])
             return
         _game_event_bus.emit(session_id, "AI_TURN_COMPLETED", result)
         _maybe_generate_turn_media(session_id, result)
@@ -736,6 +857,10 @@ async def _end_session(session_id: str) -> None:
         if (t := session.get(key)) and not t.done():
             t.cancel()
             tasks_to_cancel.append(t)
+    for t in session.get("disconnect_skip_tasks", {}).values():
+        if not t.done():
+            t.cancel()
+            tasks_to_cancel.append(t)
     if tasks_to_cancel:
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
     for ws in list(session.get("ws_connections", {}).values()):
@@ -743,7 +868,8 @@ async def _end_session(session_id: str) -> None:
             await ws.close(code=1000)
         except Exception:
             pass
-    session["ws_connections"].clear()
+    # 復元直後のセッションは ws_connections キーを持たない可能性があるため .get() を使う
+    session.get("ws_connections", {}).clear()
     for token in list(session.get("players", {}).keys()):
         _ws_send_locks.pop(token, None)
     # 招待コードのグローバルレジストリからも削除
@@ -959,6 +1085,7 @@ def _autosave(session_id: str) -> None:
     except Exception:
         pass
     _autosave_visitors(session)
+    _cleanup_stale_autosaves()
 
 
 def _delete_autosave(session_id: str) -> None:
@@ -968,12 +1095,52 @@ def _delete_autosave(session_id: str) -> None:
         pass
 
 
+# autosaveファイルのTTL（この期間以上更新がなければ放置されたセッションとみなす）。
+# _delete_autosave() はセッション正常終了時（/end 等）にしか呼ばれないため、プロセスの
+# 異常終了やホストが /end を呼ばずに放置した場合、ファイルが際限なく溜まり続けていた
+# （実測1752個）。
+_AUTOSAVE_TTL_SEC = 7 * 24 * 3600.0  # 7日
+_AUTOSAVE_CLEANUP_INTERVAL_SEC = 3600.0  # 稼働中の定期掃除の間隔（1時間）
+_autosave_last_cleanup: dict[str, float] = {"t": 0.0}
+
+
+def _cleanup_stale_autosaves() -> None:
+    """_sessions に存在しない（＝終了済み・復元されなかった）セッションのうち、
+    最終更新からTTLを超えたautosaveファイルを間引く。呼び出し頻度の高い
+    _autosave() に軽量にフックし、一定間隔でのみ実際の掃除を行う
+    （S-3の _cleanup_invite_rate_state と同じパターン）。
+    """
+    now = time.monotonic()
+    if now - _autosave_last_cleanup["t"] < _AUTOSAVE_CLEANUP_INTERVAL_SEC:
+        return
+    _autosave_last_cleanup["t"] = now
+    try:
+        if not _AUTOSAVE_DIR.is_dir():
+            return
+        wall_now = time.time()
+        for _f in _AUTOSAVE_DIR.iterdir():
+            if _f.suffix != ".json" or _f.stem in _sessions:
+                continue
+            try:
+                if wall_now - _f.stat().st_mtime > _AUTOSAVE_TTL_SEC:
+                    _f.unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 # ── 起動時に進行中セッションを復元 ──────────────────────────────
 try:
     if _AUTOSAVE_DIR.is_dir():
+        _wall_now = time.time()
         for _f in sorted(_AUTOSAVE_DIR.iterdir()):
             if _f.suffix == ".json":
                 try:
+                    # TTLを超えて放置されたファイルは復元せず削除する
+                    if _wall_now - _f.stat().st_mtime > _AUTOSAVE_TTL_SEC:
+                        _f.unlink(missing_ok=True)
+                        continue
                     _restored = json.loads(_f.read_text(encoding="utf-8"))
                     if isinstance(_restored, dict) and _restored.get("id"):
                         _sessions[_restored["id"]] = _restored
@@ -1642,6 +1809,8 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
         raise HTTPException(400, "Host cannot leave a session it owns; use /end instead")
 
     char_id = sess["players"].pop(token, "")
+    if char_id:
+        _cancel_disconnect_skip(session_id, char_id)
     participant_id = sess.get("token_to_participant", {}).pop(token, char_id or None)
     if payload.get("role") == "gm" and sess.get("invited_gm_token") == token:
         sess["invited_gm_token"] = None
@@ -2255,6 +2424,7 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
             "round": sess.get("round", 1),
             "counters": dict(sess.get("counters", {})),
         })
+        _maybe_schedule_disconnect_skip(session_id, sess, _first)
     return {
         "status": "ok",
         "max_players": sess["max_players"],
@@ -3151,27 +3321,8 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         }
 
     if req.action == "skip":
-        counters[current_char_id] = counters.get(current_char_id, 0) + 1
-        session["turn"] = turn + 1
-        session["action_count"] = 0
-        _autosave(session_id)
-        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
-            "character_id": current_char_id,
-            "character_name": char_name,
-            "text": "",
-            "action": "skip",
-            "counters": dict(counters),
-        })
-        _ai_task = session.get("ai_task")
-        if not _ai_task or _ai_task.done():
-            session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
-        return {
-            "action": "skip",
-            "character_id": current_char_id,
-            "character_name": char_name,
-            "round": session["round"],
-            "counters": dict(counters),
-        }
+        _cancel_disconnect_skip(session_id, current_char_id)
+        return _apply_skip(session_id, session, current_char_id)
 
     if not req.text.strip():
         return {"error": "text required"}
@@ -3529,11 +3680,37 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
     no_count = len(results) - yes_count
     passed = yes_count > no_count
 
+    _expelled_participant_id = ""
     if passed:
         if vote_type == "topic_change" and detail:
             session["topic"] = detail
         elif vote_type == "expel" and target_id:
             session["initiative"] = [c for c in initiative if c != target_id]
+            # 対象が人間プレイヤーの場合、initiativeから外すだけでは接続・トークンが
+            # 生きたまま残り続ける（leave_session相当の後始末が漏れていた）。
+            # char_id→tokenを逆引きし、players/ws_connections/token_to_participant
+            # から完全に除去し、JWTも無効化する。
+            _expelled_token = next(
+                (t for t, c in list(session.get("players", {}).items()) if c == target_id), None
+            )
+            if _expelled_token:
+                session["players"].pop(_expelled_token, None)
+                _cancel_disconnect_skip(session_id, target_id)
+                _expelled_participant_id = session.get("token_to_participant", {}).pop(
+                    _expelled_token, target_id
+                )
+                session["joined_participants"] = [
+                    p for p in session.get("joined_participants", [])
+                    if p.get("participant_id") != _expelled_participant_id
+                ]
+                _expelled_ws = session.get("ws_connections", {}).pop(_expelled_token, None)
+                _ws_send_locks.pop(_expelled_token, None)
+                if _expelled_ws:
+                    try:
+                        await _expelled_ws.close(code=1000)
+                    except Exception:
+                        pass
+                revoke_token(_expelled_token)
 
     # イベントバス通知（vote結果をゲームロジックレイヤーへ伝播）
     if passed:
@@ -3593,6 +3770,14 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
         "action": "vote_result",
         "counters": dict(session.get("counters", {})),
     })
+
+    if _expelled_participant_id:
+        # 参加者パネル（PLAYER_LEFTで participant_id を照合して除去するUI）にも
+        # 反映されるよう、leave_session と同じイベントを発行する。
+        _game_event_bus.emit(session_id, "PLAYER_LEFT", {
+            "participant_id": _expelled_participant_id,
+            "character_id": target_id,
+        })
 
     ended = passed and vote_type == "end_session"
     if ended and not session.get("_ending"):
@@ -4172,6 +4357,8 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
             "participant_id": _rc_participant_id,
             "character_id": _rc_char_id,
         })
+        if _rc_char_id:
+            _cancel_disconnect_skip(session_id, _rc_char_id)
 
     # 接続時に現在の状態を送信: 人間ターン待ちなら WAITING_FOR_HUMAN を再送する
     # （ブラウザ変更・リロード・遅延参加でイベントを見逃したタブ向け）
@@ -4229,6 +4416,13 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
                 _game_event_bus.emit(session_id, "PLAYER_DISCONNECTED", {
                     "participant_id": _dc_participant_id,
                     "character_id": _dc_char_id,
+                    "timeout_sec": _disconnect_timeout_sec(),
                 })
+                # 切断したのが現在のターン担当者なら、タイムアウト後の自動skipタイマーを
+                # 起動する（マルチプレイ設計書§3.7）。他キャラのターン中の切断は、
+                # そのキャラの番が回ってきた時点で _maybe_schedule_disconnect_skip が
+                # 改めて判定する。
+                if _dc_char_id and _get_current_speaker(sess) == _dc_char_id:
+                    _schedule_disconnect_skip(session_id, _dc_char_id)
             if not sess["ws_connections"]:
                 _schedule_idle_shutdown(session_id, delay=300)

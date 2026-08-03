@@ -519,14 +519,15 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
     if (event.type === 'PLAYER_DISCONNECTED') {
       const pid = event.payload.participant_id ?? event.payload.character_id
+      const timeoutSec = event.payload.timeout_sec as number | undefined
       setParticipants(prev =>
-        prev.map(x => x.participant_id === pid ? { ...x, connected: false } : x)
+        prev.map(x => x.participant_id === pid ? { ...x, connected: false, disconnectTimeoutSec: timeoutSec } : x)
       )
     }
     if (event.type === 'PLAYER_RECONNECTED') {
       const pid = event.payload.participant_id ?? event.payload.character_id
       setParticipants(prev =>
-        prev.map(x => x.participant_id === pid ? { ...x, connected: true } : x)
+        prev.map(x => x.participant_id === pid ? { ...x, connected: true, disconnectTimeoutSec: undefined } : x)
       )
     }
     if (event.type === 'LOBBY_UPDATE') {

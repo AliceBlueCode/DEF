@@ -72,6 +72,7 @@ const ja: Record<string, string> = {
   // Session — participants panel
   'session.participants.title': '参加者',
   'session.participants.disconnected': '切断中',
+  'session.participants.disconnectedWithTimeout': '切断中（{sec}秒後に自動スキップ）',
 
   // Session — rule dialog
   'session.ruleDialog.header': 'セッションルール設定',
@@ -233,6 +234,13 @@ const ja: Record<string, string> = {
   'settings.section.t2iSettings': 'T2I 設定',
   'settings.section.chat': 'チャット設定',
   'settings.section.session': 'セッション設定',
+  'settings.section.security': 'セキュリティ',
+  'settings.btn.jwtSecretRegenerate': 'JWT秘密鍵を再生成',
+  'settings.btn.jwtSecretRegenerate.loading': '再生成中…',
+  'settings.confirm.jwtSecretRegenerate': 'JWT秘密鍵を再生成すると、現在接続中の全ての参加者が切断されます（招待コードで再参加が必要になります）。実行しますか？',
+  'settings.hint.jwtSecretRegenerate': '不正利用が疑われる場合や、招待コードが漏洩した場合に実行してください。実行すると発行済みの全トークンが無効になります。',
+  'settings.msg.jwtSecretRegenerated': '再生成しました（{count}件の接続を切断）。',
+  'settings.msg.jwtSecretRegenerateFailed': '再生成に失敗しました。',
   'settings.section.episode': 'ノベル設定',
   'settings.section.display': '表示設定',
   'settings.label.multiLaunch': '多重起動',
@@ -259,6 +267,7 @@ const ja: Record<string, string> = {
   'settings.label.actionsPerTurn': 'アクション数 / ターン',
   'settings.label.repeatPenalty': 'リピートペナルティ',
   'settings.label.maxCounter': '発言力上限',
+  'settings.label.disconnectTimeoutSec': '切断タイムアウト（秒）',
   'settings.label.sessionIllustSize': 'セッション挿絵サイズ',
   'settings.label.keeperJudgmentMode': 'キーパー判定検出',
   'settings.keeperJudgmentMode.inline': 'インライン（1パス）',
@@ -612,6 +621,7 @@ const en: Record<string, string> = {
   // Session — participants
   'session.participants.title': 'Participants',
   'session.participants.disconnected': 'Disconnected',
+  'session.participants.disconnectedWithTimeout': 'Disconnected (auto-skip in {sec}s)',
 
   // Session — rule dialog
   'session.ruleDialog.header': 'Session Rule Settings',
@@ -773,6 +783,13 @@ const en: Record<string, string> = {
   'settings.section.t2iSettings': 'T2I Settings',
   'settings.section.chat': 'Chat Settings',
   'settings.section.session': 'Session Settings',
+  'settings.section.security': 'Security',
+  'settings.btn.jwtSecretRegenerate': 'Regenerate JWT Secret',
+  'settings.btn.jwtSecretRegenerate.loading': 'Regenerating…',
+  'settings.confirm.jwtSecretRegenerate': 'Regenerating the JWT secret will disconnect all currently connected participants (they will need to rejoin with the invite code). Continue?',
+  'settings.hint.jwtSecretRegenerate': 'Use this if you suspect abuse, or if an invite code has leaked. All issued tokens become invalid immediately.',
+  'settings.msg.jwtSecretRegenerated': 'Regenerated ({count} connection(s) disconnected).',
+  'settings.msg.jwtSecretRegenerateFailed': 'Regeneration failed.',
   'settings.section.episode': 'Novel Settings',
   'settings.section.display': 'Display Settings',
   'settings.label.multiLaunch': 'Multiple instances',
@@ -799,6 +816,7 @@ const en: Record<string, string> = {
   'settings.label.actionsPerTurn': 'Actions per turn',
   'settings.label.repeatPenalty': 'Repeat penalty',
   'settings.label.maxCounter': 'Max Speech Power',
+  'settings.label.disconnectTimeoutSec': 'Disconnect timeout (sec)',
   'settings.label.sessionIllustSize': 'Session illustration size',
   'settings.label.keeperJudgmentMode': 'Keeper judgment detection',
   'settings.keeperJudgmentMode.inline': 'Inline (1-pass)',

@@ -54,6 +54,7 @@ PERSISTED_KEYS = [
     "keeper_judgment_mode",
     "tts_voicevox_cpu_mode",
     "jwt_secret",
+    "disconnect_timeout_sec",
 ]
 
 
@@ -66,6 +67,23 @@ def load_settings() -> dict:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def _write_jwt_secret(secret: str) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    current: dict = {}
+    if SETTINGS_PATH.exists():
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as f:
+                current = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    current["jwt_secret"] = secret
+    tmp = str(SETTINGS_PATH) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    import os as _os
+    _os.replace(tmp, str(SETTINGS_PATH))
 
 
 def get_jwt_secret() -> str:
@@ -82,12 +100,20 @@ def get_jwt_secret() -> str:
     if current.get("jwt_secret"):
         return current["jwt_secret"]
     new_secret = _secrets.token_hex(32)
-    current["jwt_secret"] = new_secret
-    tmp = str(SETTINGS_PATH) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(current, f, ensure_ascii=False, indent=2)
-    import os as _os
-    _os.replace(tmp, str(SETTINGS_PATH))
+    _write_jwt_secret(new_secret)
+    return new_secret
+
+
+def regenerate_jwt_secret() -> str:
+    """JWT秘密鍵を強制的に再生成する（設定タブからの手動再生成用）。
+
+    get_jwt_secret() と異なり、既存値の有無に関わらず新しい値で上書きする。
+    再生成前に発行された全JWTは新しい鍵で検証できなくなり無効になる。
+    呼び出し元（APIルート側）で全WS接続を強制切断すること。
+    """
+    import secrets as _secrets
+    new_secret = _secrets.token_hex(32)
+    _write_jwt_secret(new_secret)
     return new_secret
 
 

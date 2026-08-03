@@ -64,6 +64,32 @@ def update_settings(req: SaveSettingsRequest):
     return {"status": "ok"}
 
 
+@router.post("/jwt-secret/regenerate")
+async def regenerate_jwt_secret_endpoint():
+    """JWT秘密鍵を再生成し、全アクティブセッションのWS接続をcode=1008で強制切断する。
+
+    マルチプレイ設計書§7で「設定タブから再生成可能」と決定されていたが未実装だった
+    機能。再生成前に発行された全JWT（player_token/host_token含む）は新しい鍵で
+    検証できなくなり無効になるため、参加者は招待コードで、ホストは再度セッション
+    開始操作で入り直す必要がある。
+    """
+    from def_kari.settings import regenerate_jwt_secret
+    regenerate_jwt_secret()
+
+    from def_kari.api.routes.session import _sessions
+    disconnected = 0
+    for sess in list(_sessions.values()):
+        connections = sess.get("ws_connections", {})
+        for ws in list(connections.values()):
+            try:
+                await ws.close(code=1008)
+                disconnected += 1
+            except Exception:
+                pass
+        connections.clear()
+    return {"status": "ok", "disconnected_connections": disconnected}
+
+
 @router.get("/backends")
 def get_backends():
     from def_kari.tts.backend import TTS_BACKENDS, TTS_BACKEND_LABELS, DEFAULT_TTS_BACKEND
