@@ -1,7 +1,7 @@
 """OpenAI DALL-E Adapter: DALL-E 3 via OpenAI Images API"""
 
 import os
-import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -80,7 +80,7 @@ def generate(
         image_bytes = img_resp.content
 
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = ASSET_DIR / f"openai_{int(time.time() * 1000)}.png"
+    out_path = ASSET_DIR / f"openai_{uuid.uuid4().hex}.png"
     out_path.write_bytes(image_bytes)
     print(f"[OPENAI T2I] generated: {out_path}")
     return str(out_path)

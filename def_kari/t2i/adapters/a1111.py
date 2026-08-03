@@ -2,7 +2,7 @@
 
 import base64
 import os
-import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -47,6 +47,6 @@ def generate(
     image_b64 = resp.json()["images"][0]
 
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = ASSET_DIR / f"a1111_{int(time.time() * 1000)}.png"
+    out_path = ASSET_DIR / f"a1111_{uuid.uuid4().hex}.png"
     out_path.write_bytes(base64.b64decode(image_b64))
     return str(out_path)

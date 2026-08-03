@@ -3,7 +3,7 @@
 import io
 import os
 import shutil
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from def_kari.characters import load_profiles, get_character, list_character_choices, get_raw_profile, save_profile, build_lora_prompt
@@ -17,6 +17,18 @@ from def_kari.api.routes.characters_common import (
 )
 
 router = APIRouter()
+
+# アップロード画像のサイズ上限。上限なしで file.read() すると、巨大ファイルを
+# 送りつけられた場合にメモリを圧迫し得る（decompression bomb 自体は
+# Image.MAX_IMAGE_PIXELS のデフォルト保護で別途防がれている）。
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
+
+
+async def _read_upload_limited(file: UploadFile, max_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(413, f"File too large (max {max_bytes // (1024 * 1024)}MB)")
+    return content
 
 
 @router.get("/")
@@ -117,7 +129,7 @@ async def upload_icon(character_id: str, file: UploadFile = File(...)):
     from PIL import Image as _PILImage
     d = _find_char_dir(character_id) or (_CHAR_DIRS[0] / character_id)
     d.mkdir(parents=True, exist_ok=True)
-    content = await file.read()
+    content = await _read_upload_limited(file)
     img = _PILImage.open(io.BytesIO(content)).convert("RGB")
     img = img.resize((512, 512), _PILImage.LANCZOS)
     img.save(str(d / "icon.png"), "PNG")
@@ -131,7 +143,7 @@ async def upload_standing(character_id: str, file: UploadFile = File(...)):
     from PIL import Image as _PILImage
     d = _find_char_dir(character_id) or (_CHAR_DIRS[0] / character_id)
     d.mkdir(parents=True, exist_ok=True)
-    content = await file.read()
+    content = await _read_upload_limited(file)
     img = _PILImage.open(io.BytesIO(content)).convert("RGB")
     img = img.resize((832, 1216), _PILImage.LANCZOS)
     img.save(str(d / "standing.png"), "PNG")

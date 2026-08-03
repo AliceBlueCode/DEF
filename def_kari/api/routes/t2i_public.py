@@ -11,6 +11,8 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
+from def_kari.api.path_safety import is_safe_path
+
 router = APIRouter()
 
 ASSET_DIR = (Path(__file__).parent.parent.parent.parent / "assets").resolve()
@@ -19,6 +21,6 @@ ASSET_DIR = (Path(__file__).parent.parent.parent.parent / "assets").resolve()
 @router.get("/image/{filename}")
 def get_t2i_image(filename: str):
     path = (ASSET_DIR / filename).resolve()
-    if not str(path).startswith(str(ASSET_DIR)) or not path.exists():
+    if not is_safe_path(path, ASSET_DIR) or not path.exists():
         return {"error": "Image not found"}
     return FileResponse(str(path), media_type="image/png")

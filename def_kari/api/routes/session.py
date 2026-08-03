@@ -157,6 +157,49 @@ def _check_ws_rate(session_id: str, token: str, limit: int = 60, window: int = 6
     return len(q) <= limit
 
 
+def _check_generation_rate(session_id: str, key: str, limit: int = 6, window: int = 60) -> bool:
+    """True=許可、False=制限超過。
+
+    generate-image 等、実コスト（課金API呼び出し / GPU時間）を伴う生成系
+    アクションに対するレート制限。`_check_ws_rate`（発言用、60回/分）とは
+    独立したバケットで管理する。デフォルトは 1参加者あたり6回/分。
+    """
+    sess = _sessions.get(session_id)
+    if not sess:
+        return True
+    gen_rate: dict[str, deque] = sess.setdefault("gen_rate", {})
+    now = time.monotonic()
+    q = gen_rate.setdefault(key, deque())
+    q.append(now)
+    while q and q[0] < now - window:
+        q.popleft()
+    return len(q) <= limit
+
+
+def _try_acquire_generation_lock(session_id: str, key: str) -> bool:
+    """同一参加者からの生成リクエストの多重実行（in-flight）を防ぐ。
+
+    レート制限（回数/時間）だけでは、生成処理自体に数秒〜数十秒かかる場合、
+    枠内で連続投入されると同時実行数が積み上がりGPU/APIを圧迫し得る。
+    生成中は次のリクエストを受け付けない排他制御を別途行う。
+    呼び出し元は必ず `finally` で `_release_generation_lock` を呼ぶこと。
+    """
+    sess = _sessions.get(session_id)
+    if sess is None:
+        return False
+    inflight: set = sess.setdefault("gen_inflight", set())
+    if key in inflight:
+        return False
+    inflight.add(key)
+    return True
+
+
+def _release_generation_lock(session_id: str, key: str) -> None:
+    sess = _sessions.get(session_id)
+    if sess:
+        sess.get("gen_inflight", set()).discard(key)
+
+
 async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) -> None:
     """送信失敗時に ws_connections から除去する。create_task 経由で呼ぶ。
 
@@ -300,8 +343,38 @@ def _generate_invite_code(rating: str) -> str:
     return f"{rating}-{alpha}-{num}"
 
 
+# invite レート制限状態の最終クリーンアップ時刻（無制限のキー増加を防ぐ）
+_invite_rate_last_cleanup: dict[str, float] = {"t": 0.0}
+_INVITE_RATE_CLEANUP_INTERVAL = 300.0  # 5分ごと
+
+
+def _cleanup_invite_rate_state() -> None:
+    """失効した招待レート制限エントリを間引く。
+
+    `_invite_fail_rate` / `_invite_locked_until` はキーを明示的に削除する
+    処理がなかったため、長時間稼働・多数の異なるIPからのアクセスで
+    辞書が際限なく増加し得た。呼び出し頻度の低いこの関数を
+    `_check_invite_rate` の呼び出し経路に軽量にフックし、一定間隔でのみ
+    実際の掃除を行う。
+    """
+    now = time.monotonic()
+    if now - _invite_rate_last_cleanup["t"] < _INVITE_RATE_CLEANUP_INTERVAL:
+        return
+    _invite_rate_last_cleanup["t"] = now
+    for ip in list(_invite_fail_rate.keys()):
+        recent = [t for t in _invite_fail_rate[ip] if t > now - 60]
+        if recent:
+            _invite_fail_rate[ip] = deque(recent)
+        else:
+            del _invite_fail_rate[ip]
+    for ip in list(_invite_locked_until.keys()):
+        if _invite_locked_until[ip] <= now:
+            del _invite_locked_until[ip]
+
+
 def _check_invite_rate(client_ip: str) -> bool:
     """True=許可、False=ロック中 or 制限超過（10回/分、10回失敗で1時間ロック）"""
+    _cleanup_invite_rate_state()
     now = time.monotonic()
     if _invite_locked_until.get(client_ip, 0) > now:
         return False
@@ -321,6 +394,40 @@ def _record_invite_fail(client_ip: str) -> None:
 # ── FastAPI Dependency ────────────────────────────────────────────────
 
 from fastapi import Header, HTTPException, Depends, Request
+
+
+def _is_trusted_proxy_hop(request: Request) -> bool:
+    """`CF-Connecting-IP` ヘッダーを信頼してよい接続か判定する。
+
+    環境変数フラグだけでは、フラグをONにしたまま誤って `--host 0.0.0.0` で
+    直接公開してしまった場合に、任意の第三者が `CF-Connecting-IP` ヘッダーを
+    詐称してレート制限をバイパスできてしまう。そのため「cloudflared からの
+    ローカル接続である」ことを TCPピア（127.0.0.1 / ::1）でも確認し、
+    両方を満たす場合のみ信頼する。デフォルトOFF（環境変数を明示的に立てない
+    限り従来通り `request.client.host` を使用する）。
+
+    本判定はCloudflare Tunnelを公式デプロイ手段とする現行構成（dual_run.py、
+    TCPソケットのみを使用しUnix Domain Socketは使わない）を前提としたもの。
+    """
+    if not os.environ.get("DEF_BEHIND_CLOUDFLARE_TUNNEL"):
+        return False
+    peer = request.client.host if request.client else ""
+    return peer in ("127.0.0.1", "::1")
+
+
+def _resolve_client_ip(request: Request) -> str:
+    """レート制限のキーに使う実クライアントIPを解決する。
+
+    `X-Forwarded-For` は複数プロキシ構成での解釈が難しく誤実装がそのまま
+    ヘッダー詐称によるIP偽装に直結するため、意図的に採用しない。
+    信頼できる場合のみ `CF-Connecting-IP`（Cloudflareが挿入する単一ヘッダー）
+    を使用する。
+    """
+    if _is_trusted_proxy_hop(request):
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+    return request.client.host if request.client else "unknown"
 
 
 def require_host(authorization: str = Header(...)) -> dict:
@@ -1355,7 +1462,7 @@ class JoinRequest(BaseModel):
 @router.post("/join")
 def join_session(req: JoinRequest, request: Request):
     """招待コードでセッションに参加し、player JWT を返す。"""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _resolve_client_ip(request)
     if not _check_invite_rate(client_ip):
         raise HTTPException(429, "Too many failed attempts")
 
@@ -1436,6 +1543,17 @@ def join_session(req: JoinRequest, request: Request):
         if not audit_result.passed:
             _log.warning("join rejected by character audit: session=%s reason=%s", session_id, audit_result.reason)
             raise HTTPException(400, f"Character content rejected: {audit_result.reason}")
+        if audit_result.fail_open:
+            # 審査自体が実行できず通過扱いになったケース。ホストに可視化し、
+            # 「気づけない自動回避」を防ぐ（S-4）。
+            _log.warning(
+                "character audit fail-open: session=%s char_id=%s reason=%s",
+                session_id, char_id, audit_result.reason,
+            )
+            _game_event_bus.emit(session_id, "CHARACTER_AUDIT_SKIPPED", {
+                "character_id": char_id,
+                "reason": audit_result.reason,
+            })
 
         char_data = dict(req.character_json)
         char_data["id"] = char_id
@@ -3747,6 +3865,25 @@ class SessionGenerateImageRequest(BaseModel):
 
 @router.post("/{session_id}/generate-image")
 def generate_session_image(session_id: str, req: SessionGenerateImageRequest, _auth: dict = Depends(require_player)):
+    """レート制限＋in-flight排他制御を課した上で実際の生成処理へ委譲する。
+
+    generate-image は課金API呼び出し・GPU時間を消費する実コストの高い
+    操作であるため、WS発言用の `_check_ws_rate` とは別の専用バケットで
+    頻度を制限し（1参加者あたり6回/分）、加えて同一参加者からの
+    多重同時実行（in-flight）を防ぐ。
+    """
+    gen_key = _auth.get("jti") or str(_auth)
+    if not _check_generation_rate(session_id, gen_key):
+        raise HTTPException(429, "Too many image generation requests. Please wait a moment.")
+    if not _try_acquire_generation_lock(session_id, gen_key):
+        raise HTTPException(429, "An image is already being generated for you. Please wait for it to finish.")
+    try:
+        return _generate_session_image_impl(session_id, req)
+    finally:
+        _release_generation_lock(session_id, gen_key)
+
+
+def _generate_session_image_impl(session_id: str, req: SessionGenerateImageRequest):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -3988,7 +4125,15 @@ def sync_stats(session_id: str, req: StatSyncRequest, _auth: dict = Depends(requ
 
 @router.websocket("/{session_id}/ws")
 async def ws_endpoint(ws: WebSocket, session_id: str):
-    """マルチプレイ用 WebSocket。first-message auth 方式。"""
+    """マルチプレイ用 WebSocket。first-message auth 方式。
+
+    設計判断（S-10, 検討済み）: 接続受理時に Origin ヘッダーを検証していない。
+    一般には Cross-Site WebSocket Hijacking (CSWSH) を疑うべき箇所だが、認証は
+    Cookie ではなく「接続後5秒以内の first-message で送るJWT」方式であり、
+    JWTはブラウザが自動送信するものではなくフロントエンドJSが明示的に送信する
+    必要があるため、悪意あるサイトが接続を開いても有効なJWTを保持できず
+    実害は限定的と判断し、Origin検証は追加していない。
+    """
     await ws.accept()
 
     # 認証: 接続後5秒以内に {"type":"auth","token":"..."} を受け取る

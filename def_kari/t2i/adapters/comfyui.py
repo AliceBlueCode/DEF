@@ -3,6 +3,7 @@
 import copy
 import os
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -93,7 +94,7 @@ def generate(
                 )
                 img_resp.raise_for_status()
                 ASSET_DIR.mkdir(parents=True, exist_ok=True)
-                out_path = ASSET_DIR / f"comfyui_{int(time.time() * 1000)}.png"
+                out_path = ASSET_DIR / f"comfyui_{uuid.uuid4().hex}.png"
                 out_path.write_bytes(img_resp.content)
                 print(f"[COMFYUI] generated: {out_path}")
                 return str(out_path)

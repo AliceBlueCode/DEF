@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.models.registry import get_llm_profile
 from def_kari.config import DEFAULT_T2I_BACKEND
+from def_kari.api.path_safety import is_safe_path
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ _SAFE_NAME_RE = re.compile(r'[^\w\-　-鿿゠-ヿ぀-ゟ]+')
 def _safe_path(title: str) -> Path | None:
     safe_name = _SAFE_NAME_RE.sub("_", title).strip("_") or "untitled"
     path = (_NOVELS_DIR / f"{safe_name}.json").resolve()
-    if not str(path).startswith(str(_NOVELS_DIR.resolve())):
+    if not is_safe_path(path, _NOVELS_DIR.resolve()):
         return None
     return path
 
@@ -50,7 +51,7 @@ def list_plots():
 def get_plot(filename: str):
     for d in _PLOTS_DIRS:
         path = (d / filename).resolve()
-        if str(path).startswith(str(d.resolve())) and path.exists():
+        if is_safe_path(path, d.resolve()) and path.exists():
             return {"content": path.read_text(encoding="utf-8"), "name": filename}
     return {"error": "not found"}
 
@@ -63,7 +64,7 @@ class SavePlotFileRequest(BaseModel):
 def save_plot_file(filename: str, req: SavePlotFileRequest):
     for d in _PLOTS_DIRS:
         path = (d / filename).resolve()
-        if str(path).startswith(str(d.resolve())) and path.exists():
+        if is_safe_path(path, d.resolve()) and path.exists():
             path.write_text(req.content, encoding="utf-8")
             return {"status": "ok", "name": filename}
     return {"error": "not found"}
@@ -339,6 +340,6 @@ def get_novel_t2i_debug():
 def get_novel_image(filename: str):
     from def_kari.workers._t2i_generate import ASSET_DIR
     path = (ASSET_DIR / filename).resolve()
-    if not str(path).startswith(str(ASSET_DIR.resolve())) or not path.exists():
+    if not is_safe_path(path, ASSET_DIR.resolve()) or not path.exists():
         return {"error": "Image not found"}
     return FileResponse(str(path), media_type="image/png")

@@ -195,6 +195,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [autoStopMsg, setAutoStopMsg] = useState<string | null>(null)
   const [actionsPerTurn, setActionsPerTurn] = useState(0)
   const [sceneImageStatus, setSceneImageStatus] = useState<'idle' | 'generating' | 'error'>('idle')
+  // 持ち込みキャラのLLM審査がfail-open（未実行のまま通過）になった場合の
+  // ホスト/GM向け警告。CHARACTER_AUDIT_SKIPPED（WS）で追加、×で個別に消せる。
+  const [auditWarnings, setAuditWarnings] = useState<{ id: string; characterId: string; reason: string }[]>([])
   const actionsPerTurnRef = useRef(0)
   const [, setTtsEnabled] = useState(false)
   const ttsEnabledRef = useRef(false)
@@ -475,6 +478,17 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           prev.includes(p.character_id) ? prev : [...prev, p.character_id]
         )
         initiativeRef.current = [...new Set([...initiativeRef.current, p.character_id])]
+      }
+    }
+    if (event.type === 'CHARACTER_AUDIT_SKIPPED') {
+      // 持ち込みキャラのLLM審査を実行できず通過扱いになったケース（S-4）。
+      // ホスト/GMだけに見せる（参加者全員への表示は不要な内部情報のため）。
+      if (myRoleRef.current === 'host' || myRoleRef.current === 'gm') {
+        const { character_id, reason } = event.payload ?? {}
+        setAuditWarnings(prev => [
+          ...prev,
+          { id: `${character_id}-${Date.now()}`, characterId: character_id ?? '', reason: reason ?? '' },
+        ])
       }
     }
     if (event.type === 'VISITOR_ICON_READY') {
@@ -2833,6 +2847,20 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           }
         </div>
       </div>
+
+      {isKeeperUi && auditWarnings.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 10px', background: 'rgba(231,76,60,0.12)', borderBottom: '1px solid var(--error-color, #e74c3c)' }}>
+          {auditWarnings.map(w => (
+            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--error-color, #e74c3c)' }}>
+              <span>⚠ {t('session.auditSkipped', { name: nameMap[w.characterId] || w.characterId, reason: w.reason })}</span>
+              <button
+                onClick={() => setAuditWarnings(prev => prev.filter(x => x.id !== w.id))}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', opacity: 0.7 }}
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <div className="session-stage" style={{ flex: 1, minWidth: 0 }}>

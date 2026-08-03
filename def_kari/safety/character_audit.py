@@ -32,6 +32,10 @@ AUDIT_SYSTEM_PROMPT = """あなたはロールプレイプラットフォーム�
 class AuditResult:
     passed: bool
     reason: str
+    # True の場合、実際にはLLM審査を実行できなかった（タイムアウト/呼び出しエラー/
+    # 応答パース失敗/バックエンド未設定）ためfail-openで通過扱いにしたことを示す。
+    # 呼び出し元はこれを見て、ホストへの「審査スキップ」通知やログ集計を行う。
+    fail_open: bool = False
 
 
 def _extract_audit_text(character_json: dict) -> str:
@@ -109,7 +113,7 @@ def audit_character_json(
 
     chat_entry = LLM_BACKENDS.get(backend)
     if not chat_entry:
-        return AuditResult(passed=True, reason="unknown_backend_fail_open")
+        return AuditResult(passed=True, reason="unknown_backend_fail_open", fail_open=True)
     chat_fn = chat_entry["chat"]
 
     messages = [
@@ -135,15 +139,15 @@ def audit_character_json(
 
     if thread.is_alive():
         _log.warning("character audit timed out after %.1fs (backend=%s); fail-open", timeout, backend)
-        return AuditResult(passed=True, reason="audit_timeout_fail_open")
+        return AuditResult(passed=True, reason="audit_timeout_fail_open", fail_open=True)
 
     if "error" in result_holder:
         _log.warning("character audit call failed (backend=%s): %s; fail-open", backend, result_holder["error"])
-        return AuditResult(passed=True, reason="audit_error_fail_open")
+        return AuditResult(passed=True, reason="audit_error_fail_open", fail_open=True)
 
     parsed = _parse_audit_response(result_holder.get("raw", ""))
     if parsed is None:
         _log.warning("character audit response unparseable (backend=%s); fail-open", backend)
-        return AuditResult(passed=True, reason="audit_unparseable_fail_open")
+        return AuditResult(passed=True, reason="audit_unparseable_fail_open", fail_open=True)
 
     return parsed

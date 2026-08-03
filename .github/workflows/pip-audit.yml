@@ -1,0 +1,29 @@
+name: pip-audit
+
+on:
+  push:
+    paths:
+      - "requirements.txt"
+  pull_request:
+    paths:
+      - "requirements.txt"
+  schedule:
+    # 依存自体に変更がなくても新規CVEが公表され得るため週次でも実行する
+    - cron: "0 3 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt
+        # 既知脆弱性が見つかった場合はデフォルトで非ゼロ終了し、このジョブを失敗させる。
+        # python-jose / cryptography / Pillow は本プロジェクトのセキュリティ上
+        # 特に重要な依存であるため、失敗時は優先的に確認すること。

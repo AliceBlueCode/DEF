@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from def_kari.t2i.backend import generate_image
 from def_kari.settings import load_settings
+from def_kari.api.path_safety import is_safe_path
 
 router = APIRouter()
 
@@ -108,6 +109,6 @@ def get_t2i_debug():
 @router.get("/image/{filename}")
 def get_t2i_image(filename: str):
     path = (ASSET_DIR / filename).resolve()
-    if not str(path).startswith(str(ASSET_DIR)) or not path.exists():
+    if not is_safe_path(path, ASSET_DIR) or not path.exists():
         return {"error": "Image not found"}
     return FileResponse(str(path), media_type="image/png")

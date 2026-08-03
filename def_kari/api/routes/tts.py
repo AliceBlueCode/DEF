@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from def_kari.characters import load_profiles, get_character, get_tts_speaker_id, apply_name_reading
 from def_kari.resources.vram_lock import get_vram_lock
 from def_kari.workers._tts_synth import synthesize
+from def_kari.api.path_safety import is_safe_path
 
 router = APIRouter()
 
@@ -146,6 +147,6 @@ async def save_tts_audio(file: UploadFile = File(...)):
 @router.get("/audio/{filename}")
 def get_tts_audio(filename: str):
     path = (ASSET_DIR / filename).resolve()
-    if not str(path).startswith(str(ASSET_DIR)) or not path.exists():
+    if not is_safe_path(path, ASSET_DIR) or not path.exists():
         return {"error": "Audio not found"}
     return FileResponse(str(path), media_type="audio/wav")

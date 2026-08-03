@@ -1,7 +1,7 @@
 """OpenAI Images API互換アダプター — 任意のベースURLで動作"""
 
 import base64
-import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -55,7 +55,7 @@ def make_generate_fn(base_url: str, api_key: str, default_model: str, name: str 
 
         data = resp.json()["data"][0]
         ASSET_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = ASSET_DIR / f"{name}_{int(time.time() * 1000)}.png"
+        out_path = ASSET_DIR / f"{name}_{uuid.uuid4().hex}.png"
 
         if "b64_json" in data and data["b64_json"]:
             out_path.write_bytes(base64.b64decode(data["b64_json"]))

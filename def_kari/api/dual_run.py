@@ -15,6 +15,7 @@ Cloudflare Tunnel等での公開向け軽量アプリ（デフォルト0.0.0.0:8
 
 import argparse
 import asyncio
+import os
 
 import uvicorn
 
@@ -29,6 +30,10 @@ async def _run(local_host: str, local_port: int, public_host: str, public_port: 
     public_server = uvicorn.Server(public_config)
     print(f"[dual_run] local (full API):   http://{local_host}:{local_port}")
     print(f"[dual_run] public (Tunnel用):  http://{public_host}:{public_port}")
+    if os.environ.get("DEF_BEHIND_CLOUDFLARE_TUNNEL"):
+        print("[dual_run] CF-Connecting-IP trust: ENABLED (DEF_BEHIND_CLOUDFLARE_TUNNEL=1)")
+    else:
+        print("[dual_run] CF-Connecting-IP trust: disabled (--no-trust-cloudflare-tunnel が指定されました)")
     await asyncio.gather(local_server.serve(), public_server.serve())
 
 
@@ -38,7 +43,22 @@ def main() -> None:
     parser.add_argument("--local-port", type=int, default=8511)
     parser.add_argument("--public-host", default="0.0.0.0")
     parser.add_argument("--public-port", type=int, default=8512)
+    parser.add_argument(
+        "--no-trust-cloudflare-tunnel",
+        action="store_true",
+        help=(
+            "本スクリプトはCloudflare Tunnel経由での公開を前提とするため、"
+            "デフォルトで DEF_BEHIND_CLOUDFLARE_TUNNEL=1 を設定し、"
+            "session.py の招待コードレート制限が実クライアントIP（CF-Connecting-IP）を"
+            "使えるようにする（cloudflaredを経由しない直接接続からは、TCPピアが"
+            "ループバックにならないため、この信頼設定はそもそも悪用できない）。"
+            "cloudflaredを使わずローカルネットワークのみで動かす等、Cloudflare Tunnel"
+            "を前提としない運用の場合はこのフラグを指定して無効化すること。"
+        ),
+    )
     args = parser.parse_args()
+    if not args.no_trust_cloudflare_tunnel:
+        os.environ.setdefault("DEF_BEHIND_CLOUDFLARE_TUNNEL", "1")
     asyncio.run(_run(args.local_host, args.local_port, args.public_host, args.public_port))
 
 

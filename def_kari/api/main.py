@@ -112,11 +112,16 @@ class SessionBodySizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """XSSでJWTが盗まれた場合の実害（外部への送信）を抑制する。"""
+    """XSSでJWTが盗まれた場合の実害（外部への送信）およびクリックジャッキングを抑制する。"""
 
     async def dispatch(self, request, call_next):
         response = await call_next(request)
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # frame-ancestors がモダンブラウザでは優先されるが、CSP未対応の古い環境向けの
+        # フォールバックとして X-Frame-Options も併記する。
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "same-origin"
         return response
 
 
