@@ -1,15 +1,31 @@
-"""main.py に追加したセキュリティミドルウェア（CSPヘッダー・/api/session ボディサイズ上限）のテスト。"""
+"""main.py に追加したセキュリティミドルウェア（セキュリティヘッダー・/api/session ボディサイズ上限）、
+および session.py のクライアントIP解決（S-1）のテスト。"""
+
+from starlette.requests import Request
+
+
+def _make_request(client_host: str | None, headers: dict[str, str] | None = None) -> Request:
+    """`_is_trusted_proxy_hop` / `_resolve_client_ip` の単体テスト用に最小限の Request を組み立てる。"""
+    scope = {
+        "type": "http",
+        "client": (client_host, 12345) if client_host is not None else None,
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+    }
+    return Request(scope)
 
 
 def test_csp_header_present_on_response():
-    """全レスポンスに Content-Security-Policy ヘッダーが付与されること。"""
+    """全レスポンスにセキュリティヘッダー一式が付与されること（S-8）。"""
     from fastapi.testclient import TestClient
     from def_kari.api.main import app
     client = TestClient(app)
 
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.headers.get("content-security-policy") == "default-src 'self'"
+    assert resp.headers.get("content-security-policy") == "default-src 'self'; frame-ancestors 'none'"
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert resp.headers.get("x-frame-options") == "DENY"
+    assert resp.headers.get("referrer-policy") == "same-origin"
 
 
 def test_session_body_size_limit_rejects_oversized_request():
@@ -50,3 +66,46 @@ def test_body_size_limit_does_not_apply_outside_session_routes():
         headers={"Content-Type": "application/json", "Content-Length": str(len(oversized_payload))},
     )
     assert resp.status_code != 413
+
+
+# ── S-1: クライアントIP解決（_is_trusted_proxy_hop / _resolve_client_ip）────────
+
+
+def test_cf_header_alone_is_not_trusted(monkeypatch):
+    """(a) 環境変数OFFの場合、CF-Connecting-IP ヘッダーだけでは信頼されない。"""
+    monkeypatch.delenv("DEF_BEHIND_CLOUDFLARE_TUNNEL", raising=False)
+    from def_kari.api.routes.session import _resolve_client_ip
+
+    req = _make_request("127.0.0.1", {"CF-Connecting-IP": "203.0.113.9"})
+    assert _resolve_client_ip(req) == "127.0.0.1"
+
+
+def test_cf_header_trusted_only_with_flag_and_loopback_peer(monkeypatch):
+    """(b) 環境変数ON かつ TCPピアがループバックの場合のみヘッダーを信頼する。"""
+    monkeypatch.setenv("DEF_BEHIND_CLOUDFLARE_TUNNEL", "1")
+    from def_kari.api.routes.session import _resolve_client_ip
+
+    trusted = _make_request("127.0.0.1", {"CF-Connecting-IP": "203.0.113.9"})
+    assert _resolve_client_ip(trusted) == "203.0.113.9"
+
+    # TCPピアがループバックでなければ、フラグがONでもヘッダーは信頼しない
+    # （直接公開構成でのヘッダー詐称対策）。
+    untrusted_peer = _make_request("198.51.100.5", {"CF-Connecting-IP": "203.0.113.9"})
+    assert _resolve_client_ip(untrusted_peer) == "198.51.100.5"
+
+
+def test_cf_header_ignored_when_flag_disabled(monkeypatch):
+    """(c) 環境変数OFF時は、TCPピアがループバックでもヘッダーは無視される。"""
+    monkeypatch.delenv("DEF_BEHIND_CLOUDFLARE_TUNNEL", raising=False)
+    from def_kari.api.routes.session import _resolve_client_ip
+
+    req = _make_request("::1", {"CF-Connecting-IP": "203.0.113.9"})
+    assert _resolve_client_ip(req) == "::1"
+
+
+def test_resolve_client_ip_falls_back_when_no_client():
+    """request.client が None の場合は "unknown" を返す（詐称の温床にしない）。"""
+    from def_kari.api.routes.session import _resolve_client_ip
+
+    req = _make_request(None)
+    assert _resolve_client_ip(req) == "unknown"

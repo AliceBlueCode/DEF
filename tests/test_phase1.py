@@ -85,5 +85,72 @@ def test_check_ws_rate_different_tokens_independent():
         _sessions.pop(sid, None)
 
 
+# ── _check_generation_rate / _try_acquire_generation_lock（S-6）────────
+
+def test_check_generation_rate_allows_within_limit():
+    """制限内の生成リクエストは許可されること。"""
+    from def_kari.api.routes.session import _check_generation_rate, _sessions
+    sid = "_gen_rate_test_allow"
+    _sessions[sid] = {"gen_rate": {}}
+    try:
+        for _ in range(6):
+            assert _check_generation_rate(sid, "tok1", limit=6, window=60) is True
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_check_generation_rate_blocks_over_limit():
+    """7回目は制限超過になること（デフォルト: 6回/分）。"""
+    from def_kari.api.routes.session import _check_generation_rate, _sessions
+    sid = "_gen_rate_test_block"
+    _sessions[sid] = {"gen_rate": {}}
+    try:
+        for _ in range(6):
+            _check_generation_rate(sid, "tok2", limit=6, window=60)
+        assert _check_generation_rate(sid, "tok2", limit=6, window=60) is False
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_check_generation_rate_independent_from_ws_rate():
+    """generation用のバケットは _check_ws_rate（発言用）とは独立していること。"""
+    from def_kari.api.routes.session import _check_generation_rate, _check_ws_rate, _sessions
+    sid = "_gen_rate_test_indep"
+    _sessions[sid] = {"gen_rate": {}, "ws_rate": {}}
+    try:
+        for _ in range(6):
+            _check_generation_rate(sid, "tok3", limit=6, window=60)
+        # gen_rate は上限に達しているが、ws_rate 側は別バケットなので影響を受けない
+        assert _check_ws_rate(sid, "tok3", limit=60, window=60) is True
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_try_acquire_generation_lock_prevents_double_acquire():
+    """同一トークンからの多重取得を防ぐこと。"""
+    from def_kari.api.routes.session import _try_acquire_generation_lock, _release_generation_lock, _sessions
+    sid = "_gen_lock_test"
+    _sessions[sid] = {"gen_inflight": set()}
+    try:
+        assert _try_acquire_generation_lock(sid, "tok4") is True
+        assert _try_acquire_generation_lock(sid, "tok4") is False  # 既に取得中
+        _release_generation_lock(sid, "tok4")
+        assert _try_acquire_generation_lock(sid, "tok4") is True  # 解放後は再取得できる
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_try_acquire_generation_lock_independent_per_token():
+    """トークンごとに独立してロックされること。"""
+    from def_kari.api.routes.session import _try_acquire_generation_lock, _sessions
+    sid = "_gen_lock_test_indep"
+    _sessions[sid] = {"gen_inflight": set()}
+    try:
+        assert _try_acquire_generation_lock(sid, "tokA") is True
+        assert _try_acquire_generation_lock(sid, "tokB") is True  # 別トークンは影響を受けない
+    finally:
+        _sessions.pop(sid, None)
+
+
 # ── WebSocket エンドポイント ─────────────────────────────────────────
 # Phase 2（JWT認証追加）完了後にここにWSテストを追加する
