@@ -603,6 +603,15 @@ export default function SettingsTab({
           />
         </div>
         <div className="settings-row">
+          <label title={t('settings.label.dailyGenerationLimit.title')}>{t('settings.label.dailyGenerationLimit')}</label>
+          <input
+            type="number" min={0} max={10000}
+            className="settings-number"
+            value={get('session_daily_generation_limit', 0)}
+            onChange={e => set('session_daily_generation_limit', Number(e.target.value))}
+          />
+        </div>
+        <div className="settings-row">
           <label>{t('settings.label.keeperJudgmentMode')}</label>
           <select
             value={get('keeper_judgment_mode', 'inline')}

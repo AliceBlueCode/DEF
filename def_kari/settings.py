@@ -55,6 +55,7 @@ PERSISTED_KEYS = [
     "tts_voicevox_cpu_mode",
     "jwt_secret",
     "disconnect_timeout_sec",
+    "session_daily_generation_limit",
 ]
 
 

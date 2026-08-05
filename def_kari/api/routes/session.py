@@ -57,6 +57,12 @@ from def_kari.gm.context_builder import (
 )
 from def_kari.gm.gm_agent import _gm_agent
 from def_kari.safety.character_audit import audit_character_json
+from def_kari.safety.audit_log import (
+    record_generation_event,
+    record_rate_limit_violation,
+    reset_violations as _reset_audit_violations,
+)
+from def_kari.safety.content_filter import contains_blocked_content
 
 router = APIRouter()
 
@@ -205,6 +211,56 @@ def _check_generation_rate(session_id: str, key: str, limit: int = 6, window: in
     while q and q[0] < now - window:
         q.popleft()
     return len(q) <= limit
+
+
+def _check_daily_generation_limit(session_id: str) -> bool:
+    """True=許可、False=本日のセッション単位上限に到達（9.2 Layer 2「コスト上限
+    キルスイッチ」）。
+
+    `_check_generation_rate`は1分単位のスライディングウィンドウで連打を防ぐが、
+    「1日あたりの合計コスト」には上限が無かった。ホストが設定タブで
+    `session_daily_generation_limit`（デフォルト0=無制限）を設定すると、
+    そのセッションの生成系エンドポイント呼び出し回数が1日の上限に達した時点で
+    以降を拒否するキルスイッチとして機能する。日付はサーバーのローカル日付
+    （`date.today()`）で判定し、日付が変わればカウンターを自動リセットする。
+    """
+    from def_kari.settings import load_settings
+    limit = int(load_settings().get("session_daily_generation_limit", 0) or 0)
+    if limit <= 0:
+        return True
+    sess = _sessions.get(session_id)
+    if not sess:
+        return True
+    today = datetime.date.today().isoformat()
+    if sess.get("daily_gen_date") != today:
+        sess["daily_gen_date"] = today
+        sess["daily_gen_count"] = 0
+    if sess.get("daily_gen_count", 0) >= limit:
+        return False
+    sess["daily_gen_count"] = sess.get("daily_gen_count", 0) + 1
+    return True
+
+
+def _check_circuit_breaker(session_id: str) -> bool:
+    """True=生成許可、False=サーキットブレーカー作動中（9.3 Layer 3）。
+
+    短時間に大量のレート制限違反（`audit_log.record_rate_limit_violation`が閾値超過を
+    検知した場合）が発生したセッションは、ホストが明示的に解除するまで生成系エンドポイント
+    全体を停止する。`_check_generation_rate`等の個別チェックより先に呼ぶことで、
+    ブレーカー作動後は無駄にレート制限バケットへ記録すら行わせない。
+    """
+    sess = _sessions.get(session_id)
+    if not sess:
+        return True
+    return not sess.get("circuit_broken", False)
+
+
+def _record_violation_and_maybe_trip(event: str, session_id: str, ip: str, key: str) -> None:
+    """レート制限違反を監査ログに記録し、閾値超過ならそのセッションのブレーカーを落とす。"""
+    if record_rate_limit_violation(event, session_id, ip, key):
+        sess = _sessions.get(session_id)
+        if sess:
+            sess["circuit_broken"] = True
 
 
 def _try_acquire_generation_lock(session_id: str, key: str) -> bool:
@@ -1574,6 +1630,8 @@ def start_session(req: SessionStartRequest, request: Request):
     client_ip = _resolve_client_ip(request)
     if not _check_session_create_rate(client_ip):
         raise HTTPException(429, "Too many session creation requests")
+    if contains_blocked_content(req.topic):
+        raise HTTPException(400, "This topic cannot be used.")
 
     from def_kari.settings import load_settings as _load_s
     _s = _load_s()
@@ -2465,6 +2523,21 @@ async def ai_pause(session_id: str, _auth: dict = Depends(require_keeper)):
     return {"status": "ok"}
 
 
+@router.post("/{session_id}/circuit_breaker/reset")
+def reset_circuit_breaker(session_id: str, auth: dict = Depends(require_host)):
+    """9.3 Layer 3: サーキットブレーカーが作動したセッションを、ホストの明示的な操作で
+    再開する（`_check_circuit_breaker`参照）。作動中は誰が操作しているか分からない
+    異常な連打の最中である可能性があるため、ホストが監査ログ（`data/private/logs/audit.log`）
+    を確認した上で意図的に解除する運用を前提とする。keeperではなくhostのみに限定。
+    """
+    sess = _sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    sess["circuit_broken"] = False
+    _reset_audit_violations(session_id)
+    return {"status": "ok"}
+
+
 class AutoAdvanceRequest(BaseModel):
     enabled: bool
 
@@ -3163,6 +3236,8 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
     gen_key = _auth.get("jti") or str(_auth)
     if not _check_ws_rate(session_id, gen_key):
         raise HTTPException(429, "Too many requests. Please wait a moment.")
+    if req.text and contains_blocked_content(req.text):
+        raise HTTPException(400, "This message cannot be sent.")
 
     session = _sessions.get(session_id)
     if not session:
@@ -3306,11 +3381,18 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
     発生しうった）。
     """
     gen_key = _auth.get("jti") or str(_auth)
-    if not _check_generation_rate(session_id, gen_key):
-        raise HTTPException(429, "Too many vote requests. Please wait a moment.")
     client_ip = _resolve_client_ip(request)
+    if not _check_circuit_breaker(session_id):
+        raise HTTPException(423, "Generation for this session is paused due to unusual activity. Ask the host to review the audit log and reset it.")
+    if not _check_generation_rate(session_id, gen_key):
+        _record_violation_and_maybe_trip("vote_deliberate", session_id, client_ip, gen_key)
+        raise HTTPException(429, "Too many vote requests. Please wait a moment.")
     if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=20):
+        _record_violation_and_maybe_trip("vote_deliberate", session_id, client_ip, gen_key)
         raise HTTPException(429, "Too many vote requests from this network. Please wait a moment.")
+    if not _check_daily_generation_limit(session_id):
+        raise HTTPException(429, "This session has reached its daily generation limit.")
+    record_generation_event("vote_deliberate", session_id, client_ip, gen_key)
 
     session = _sessions.get(session_id)
     if not session:
@@ -3501,11 +3583,18 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
     念のため軽めの上限を残す。
     """
     gen_key = _auth.get("jti") or str(_auth)
-    if not _check_generation_rate(session_id, gen_key):
-        raise HTTPException(429, "Too many vote requests. Please wait a moment.")
     client_ip = _resolve_client_ip(request)
+    if not _check_circuit_breaker(session_id):
+        raise HTTPException(423, "Generation for this session is paused due to unusual activity. Ask the host to review the audit log and reset it.")
+    if not _check_generation_rate(session_id, gen_key):
+        _record_violation_and_maybe_trip("vote_commit", session_id, client_ip, gen_key)
+        raise HTTPException(429, "Too many vote requests. Please wait a moment.")
     if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=20):
+        _record_violation_and_maybe_trip("vote_commit", session_id, client_ip, gen_key)
         raise HTTPException(429, "Too many vote requests from this network. Please wait a moment.")
+    if not _check_daily_generation_limit(session_id):
+        raise HTTPException(429, "This session has reached its daily generation limit.")
+    record_generation_event("vote_commit", session_id, client_ip, gen_key)
 
     session = _sessions.get(session_id)
     if not session:
@@ -4031,13 +4120,20 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest, re
     jti単位より緩め）を素通りできないバケットとして併設し、jti単位のバイパスを防ぐ。
     """
     gen_key = _auth.get("jti") or str(_auth)
-    if not _check_generation_rate(session_id, gen_key):
-        raise HTTPException(429, "Too many image generation requests. Please wait a moment.")
     client_ip = _resolve_client_ip(request)
+    if not _check_circuit_breaker(session_id):
+        raise HTTPException(423, "Generation for this session is paused due to unusual activity. Ask the host to review the audit log and reset it.")
+    if not _check_generation_rate(session_id, gen_key):
+        _record_violation_and_maybe_trip("generate_session_image", session_id, client_ip, gen_key)
+        raise HTTPException(429, "Too many image generation requests. Please wait a moment.")
     if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=20):
+        _record_violation_and_maybe_trip("generate_session_image", session_id, client_ip, gen_key)
         raise HTTPException(429, "Too many image generation requests from this network. Please wait a moment.")
+    if not _check_daily_generation_limit(session_id):
+        raise HTTPException(429, "This session has reached its daily generation limit.")
     if not _try_acquire_generation_lock(session_id, gen_key):
         raise HTTPException(429, "An image is already being generated for you. Please wait for it to finish.")
+    record_generation_event("generate_session_image", session_id, client_ip, gen_key)
     try:
         return _generate_session_image_impl(session_id, req)
     finally:
