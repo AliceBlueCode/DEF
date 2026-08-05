@@ -89,3 +89,28 @@ def test_vote_commit_requires_keeper_not_just_player():
     resp = client.post(f"/api/session/{sid}/vote/commit", json={"keeper_vote": True}, headers=_auth(player_token))
     assert resp.status_code == 403
     assert resp.json()["detail"] == "Keeper role required"
+
+
+def test_generate_image_jti_bypass_blocked_by_ip_limit(monkeypatch):
+    """8.6: jti単位のレート制限は、joinをやり直して使い捨てトークンを取得し続ければ
+    見かけ上は毎回「制限内」になるが、同一IPからの呼び出しはIPベースの上限
+    （1分あたり20回）に引っかかって最終的に429になること。"""
+    from def_kari.api.routes import session as session_module
+
+    monkeypatch.setattr(
+        session_module, "_generate_session_image_impl",
+        lambda session_id, req: {"url": "/api/t2i/image/stub.png"},
+    )
+
+    sid, _host_token = _start_session()
+    session_module._sessions[sid]["initiative"] = ["char_a"]
+
+    statuses = []
+    for i in range(21):
+        # 毎回新しいjti（=joinをやり直した体）で叩く
+        player_token = session_module.issue_player_jwt(sid, "player", "char_a")
+        resp = client.post(f"/api/session/{sid}/generate-image", json={}, headers=_auth(player_token))
+        statuses.append(resp.status_code)
+
+    assert statuses[:20].count(429) == 0, "最初の20回はjti単位では制限内のはずが429になった"
+    assert statuses[20] == 429, "21回目はIPベースの上限で429になるはず"

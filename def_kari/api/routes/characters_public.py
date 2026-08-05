@@ -16,7 +16,7 @@ router = APIRouter()
 
 @router.get("/{character_id}/icon")
 def get_character_icon(character_id: str):
-    d = find_char_dir(character_id)
+    d = find_char_dir(character_id, public_only=True)
     if d:
         icon = d / "icon.png"
         if icon.exists():
@@ -26,7 +26,7 @@ def get_character_icon(character_id: str):
 
 @router.get("/{character_id}/standing")
 def get_character_standing(character_id: str):
-    d = find_char_dir(character_id)
+    d = find_char_dir(character_id, public_only=True)
     if d:
         standing = d / "standing.png"
         if standing.exists():

@@ -11,6 +11,8 @@
 ルーターが public_app に追加された際、許可リストに無ければ即座に失敗する。
 """
 
+from unittest.mock import patch
+
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -108,6 +110,36 @@ def test_characters_icon_and_standing_reachable():
     assert r_standing.status_code == 200
 
 
+def test_characters_public_icon_excludes_private_dir(tmp_path):
+    """8.18対策: characters_public.py（public_app、無認証）はdata/private/charactersを
+    検索対象にしないこと。以前はcharacters_commonの_CHAR_DIRSをそのまま共有しており、
+    character_idさえ分かればレーティングゲートを無視してprivate/NSFW画像を取得できた。
+    """
+    from def_kari.api.routes import characters_common
+
+    private_dir = tmp_path / "private"
+    public_dir = tmp_path / "public"
+    private_dir.mkdir()
+    public_dir.mkdir()
+
+    char_id = "secret_char_001"
+    char_dir = private_dir / char_id
+    char_dir.mkdir()
+    (char_dir / "icon.png").write_bytes(b"fake-png-bytes")
+
+    with patch.object(characters_common, "_PUBLIC_CHAR_DIRS", [public_dir]), \
+         patch.object(characters_common, "_CHAR_DIRS", [public_dir, private_dir]):
+        # public_only=True（characters_public.py相当）: privateディレクトリは見えない
+        assert characters_common.find_char_dir(char_id, public_only=True) is None
+        # public_only=False（characters.py相当、ローカル専用）: 従来どおり見える
+        assert characters_common.find_char_dir(char_id, public_only=False) == char_dir
+
+        # HTTPレベルでも確認: public_appでは画像が見つからない
+        resp = client.get(f"/api/characters/{char_id}/icon")
+        assert resp.status_code == 200
+        assert resp.json() == {"error": "Icon not found"}
+
+
 def test_t2i_generation_not_reachable_but_image_delivery_is():
     """T2I生成（POST /）は到達不能、画像配信（GET /image/{filename}）は到達可能であること。"""
     assert client.post("/api/t2i/", json={"prompt": "x"}).status_code == 404
@@ -158,6 +190,38 @@ def test_session_local_only_endpoints_not_reachable():
 
     assert client.delete("/api/session/saved/nonexistent.json").status_code == 404
     assert client.post("/api/session/load", json={"filename": "nonexistent.json"}).status_code == 405
+
+
+def test_session_rule_write_not_reachable_but_read_is():
+    """8.3対策: PUT /rules/{rule_id}（無認証書き込み）はpublic_appから到達不能であること。
+    GET /rules・GET /rules/{rule_id}（読み取り専用、ゲストのルール一覧表示に必要）は
+    引き続き到達可能であること。
+
+    以前はGET/PUTとも無認証のままsession.routerに残っており、rule_idの名前空間内なら
+    誰でもdata/public/session_rules/{rule_id}.jsonを新規作成・上書きできた
+    （全ユーザー共有のグローバルなルール定義ライブラリの汚染・改ざん）。
+    """
+    r_put = client.put("/api/session/rules/test_rule_id", json={"content": "{}"})
+    assert r_put.status_code == 405  # GET /rules/{rule_id}と同じパスパターンだがPUTは未登録
+
+    assert client.get("/api/session/rules").status_code == 200
+    assert client.get("/api/session/rules/nonexistent").status_code == 200  # {"error": "..."}を返す通常の応答
+
+
+def test_full_app_can_still_write_rules():
+    """回帰確認: main.py側ではPUT /rules/{rule_id}が引き続き機能すること（ホストの
+    ローカルUIでのセッションルール編集機能を壊していないか）。"""
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _RULE_DIRS
+    full_client = TestClient(app)
+    rule_id = "_isolation_test_rule"
+    try:
+        resp = full_client.put(f"/api/session/rules/{rule_id}", json={"content": f'{{"id": "{rule_id}"}}'})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+    finally:
+        for d in _RULE_DIRS:
+            (d / f"{rule_id}.json").unlink(missing_ok=True)
 
 
 def test_session_dead_code_endpoints_removed_everywhere():

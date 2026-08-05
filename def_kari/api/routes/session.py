@@ -424,6 +424,84 @@ def _record_invite_fail(client_ip: str) -> None:
     _invite_fail_rate.setdefault(client_ip, deque()).append(time.monotonic())
 
 
+# セッション作成（/start）は無認証のため、IPベースの単純なスライディングウィンドウで
+# レート制限する（8.5対策）。招待コードの「失敗」概念が無く_check_invite_rateとは
+# 性質が違うため別バケットにする。友達数人とのオンラインセッション立ち上げでは
+# 短時間に何度も叩くことは想定されないため、1分あたり20回で十分な余裕を持たせた。
+_session_create_rate: dict[str, deque] = {}
+_SESSION_CREATE_LIMIT = 20
+_SESSION_CREATE_WINDOW = 60.0
+_session_create_rate_last_cleanup: dict[str, float] = {"t": 0.0}
+_SESSION_CREATE_RATE_CLEANUP_INTERVAL = 300.0
+
+
+def _cleanup_session_create_rate_state() -> None:
+    """失効したセッション作成レート制限エントリを間引く（_cleanup_invite_rate_stateと同じパターン）。"""
+    now = time.monotonic()
+    if now - _session_create_rate_last_cleanup["t"] < _SESSION_CREATE_RATE_CLEANUP_INTERVAL:
+        return
+    _session_create_rate_last_cleanup["t"] = now
+    for ip in list(_session_create_rate.keys()):
+        recent = [t for t in _session_create_rate[ip] if t > now - _SESSION_CREATE_WINDOW]
+        if recent:
+            _session_create_rate[ip] = deque(recent)
+        else:
+            del _session_create_rate[ip]
+
+
+def _check_session_create_rate(client_ip: str) -> bool:
+    """True=許可、False=制限超過（1分あたり20回）。"""
+    _cleanup_session_create_rate_state()
+    now = time.monotonic()
+    q = _session_create_rate.setdefault(client_ip, deque())
+    q.append(now)
+    while q and q[0] < now - _SESSION_CREATE_WINDOW:
+        q.popleft()
+    return len(q) <= _SESSION_CREATE_LIMIT
+
+
+def _evict_oldest_session() -> None:
+    """`_MAX_SESSIONS`到達時、最も古いセッションを後片付けしながら追い出す（8.5対策）。
+
+    以前は`_sessions.popitem(last=False)`で無条件に破棄しており、WS接続・
+    バックグラウンドタスク（ai_task/idle_shutdown_task/disconnect_skip_tasks）・
+    招待コードのグローバルレジストリが後片付けされないまま残っていた
+    （進行中の正当なセッションが巻き込まれた場合、参加者は突然「セッションが
+    見つかりません」になり、孤立したタスク・WS接続が残留する）。
+    `_end_session`と同じ後片付けを行うが、本関数は同期コンテキスト
+    （/start・/loadのハンドラ）から呼ばれるため、タスクキャンセル等
+    同期的に完結する処理はここで即座に行い、WSクローズ（非同期処理）だけは
+    `_ws_broadcast_handler`と同じパターンでバックグラウンドに委ねる。
+    """
+    session_id, session = _sessions.popitem(last=False)
+    for key in ("ai_task", "idle_shutdown_task"):
+        if (t := session.get(key)) and not t.done():
+            t.cancel()
+    for t in session.get("disconnect_skip_tasks", {}).values():
+        if not t.done():
+            t.cancel()
+    for token in list(session.get("players", {}).keys()):
+        _ws_send_locks.pop(token, None)
+    for code in list(session.get("invite_codes", {}).keys()):
+        _invite_registry.pop(code, None)
+    _cleanup_revoked_jtis(session_id, session=session)
+
+    connections = list(session.get("ws_connections", {}).values())
+    if connections:
+        async def _close_all() -> None:
+            for ws in connections:
+                try:
+                    await ws.close(code=1001)  # 1001 = Going Away（サーバー都合の切断）
+                except Exception:
+                    pass
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_close_all())
+        except RuntimeError:
+            if _main_loop and _main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(_close_all(), _main_loop)
+
+
 # ── FastAPI Dependency ────────────────────────────────────────────────
 
 from fastapi import Header, HTTPException, Depends, Request
@@ -1422,7 +1500,7 @@ class SaveRuleRequest(BaseModel):
     content: str
 
 
-@router.put("/rules/{rule_id}")
+@local_router.put("/rules/{rule_id}")
 def save_session_rule(rule_id: str, req: SaveRuleRequest):
     if not re.match(r'^[A-Za-z0-9_\-]+$', rule_id):
         return {"error": "Invalid rule ID"}
@@ -1474,7 +1552,11 @@ class KeeperMessageRequest(BaseModel):
 
 
 @router.post("/start")
-def start_session(req: SessionStartRequest):
+def start_session(req: SessionStartRequest, request: Request):
+    client_ip = _resolve_client_ip(request)
+    if not _check_session_create_rate(client_ip):
+        raise HTTPException(429, "Too many session creation requests")
+
     from def_kari.settings import load_settings as _load_s
     _s = _load_s()
     apt = req.actions_per_turn or _s.get("session_actions_per_turn", 2)
@@ -1497,7 +1579,7 @@ def start_session(req: SessionStartRequest):
     name_map = {cid: all_name_map[cid] for cid in player_ids}
 
     if len(_sessions) >= _MAX_SESSIONS:
-        _sessions.popitem(last=False)
+        _evict_oldest_session()
     _rule_data = _load_session_rules().get(req.rule_set, {})
     rules = _rule_data.get("rules", [])
     scene = _rule_data.get("scene", "")
@@ -1614,14 +1696,26 @@ class AvailableSlotsRequest(BaseModel):
 
 
 @router.post("/available-slots")
-def get_available_slots(req: AvailableSlotsRequest):
-    """招待コードで入れるセッションの人間スロット一覧を返す（参加前プレビュー）。"""
+def get_available_slots(req: AvailableSlotsRequest, request: Request):
+    """招待コードで入れるセッションの人間スロット一覧を返す（参加前プレビュー）。
+
+    招待コードの正誤を判定するオラクルとして機能するため、join_session同様に
+    _check_invite_rate/_record_invite_failでレート制限する（8.4対策。以前はここが
+    無防備で、_check_invite_rateを経由せず本エンドポイントだけを連打すればS-1の
+    ブルートフォース対策を完全にバイパスできた）。
+    """
+    client_ip = _resolve_client_ip(request)
+    if not _check_invite_rate(client_ip):
+        raise HTTPException(429, "Too many failed attempts")
+
     code = req.invite_code.strip().upper()
     session_id = _invite_registry.get(code)
     if not session_id:
+        _record_invite_fail(client_ip)
         raise HTTPException(404, "Invalid invite code")
     sess = _sessions.get(session_id)
     if not sess:
+        _record_invite_fail(client_ip)
         raise HTTPException(404, "Session not found")
     invite_info = sess["invite_codes"].get(code, {})
     if invite_info.get("used") and not sess.get("online_mode"):
@@ -3741,7 +3835,7 @@ def load_session(req: SessionLoadRequest):
         "human_char_ids": meta.get("human_char_ids", []),
     }
     if len(_sessions) >= _MAX_SESSIONS:
-        _sessions.popitem(last=False)
+        _evict_oldest_session()
     _sessions[new_id] = session
     return {
         "session_id": new_id,
@@ -3824,17 +3918,26 @@ class SessionGenerateImageRequest(BaseModel):
 
 
 @router.post("/{session_id}/generate-image")
-def generate_session_image(session_id: str, req: SessionGenerateImageRequest, _auth: dict = Depends(require_player)):
+def generate_session_image(session_id: str, req: SessionGenerateImageRequest, request: Request, _auth: dict = Depends(require_player)):
     """レート制限＋in-flight排他制御を課した上で実際の生成処理へ委譲する。
 
     generate-image は課金API呼び出し・GPU時間を消費する実コストの高い
     操作であるため、WS発言用の `_check_ws_rate` とは別の専用バケットで
     頻度を制限し（1参加者あたり6回/分）、加えて同一参加者からの
     多重同時実行（in-flight）を防ぐ。
+
+    jti単位の制限に加えてIPベースの制限も併用する（8.6対策）。/joinは同一招待コードの
+    使い回しがオンラインセッションの仕様上OKで、そのたびに新しいjtiのトークンが
+    発行されるため、jti単位の制限だけでは正規の招待コード保持者がjoinを繰り返して
+    使い捨てトークンで際限なく回避できてしまう。IP単位の上限（1分あたり20回、
+    jti単位より緩め）を素通りできないバケットとして併設し、jti単位のバイパスを防ぐ。
     """
     gen_key = _auth.get("jti") or str(_auth)
     if not _check_generation_rate(session_id, gen_key):
         raise HTTPException(429, "Too many image generation requests. Please wait a moment.")
+    client_ip = _resolve_client_ip(request)
+    if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=20):
+        raise HTTPException(429, "Too many image generation requests from this network. Please wait a moment.")
     if not _try_acquire_generation_lock(session_id, gen_key):
         raise HTTPException(429, "An image is already being generated for you. Please wait for it to finish.")
     try:

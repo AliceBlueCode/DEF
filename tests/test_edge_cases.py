@@ -223,6 +223,113 @@ def test_join_10_failures_locks_ip():
 
 
 @pytest.mark.asyncio
+async def test_start_session_rate_limited_after_20_per_minute():
+    """8.5対策: /startは1分あたり20回を超えると429になること。
+
+    以前は完全無認証・レート制限無しで、招待コードすら不要な第三者が空リクエストを
+    _MAX_SESSIONS回叩くだけで進行中の正当なセッションを強制的に押し出せた。
+    """
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _session_create_rate
+    _session_create_rate.clear()
+    client = TestClient(app)
+    try:
+        for _ in range(20):
+            resp = client.post("/api/session/start", json={"character_ids": []})
+            assert resp.status_code == 200
+        resp = client.post("/api/session/start", json={"character_ids": []})
+        assert resp.status_code == 429
+    finally:
+        _session_create_rate.clear()
+
+
+def test_evict_oldest_session_cleans_up_before_removal():
+    """8.5対策: _MAX_SESSIONS到達時の追い出しが、popitemの前にタスクキャンセル・
+    招待コードレジストリ削除まで行うこと（以前は後片付け無しの生popitemで、
+    孤立したタスク・招待コードのレジストリエントリが残っていた）。"""
+    import asyncio
+    from def_kari.api.routes.session import _sessions, _evict_oldest_session, _invite_registry
+
+    sid = "_evict_test_session"
+
+    async def _noop():
+        await asyncio.sleep(999)
+
+    async def _setup_and_run():
+        task = asyncio.ensure_future(_noop())
+        _sessions[sid] = {
+            "id": sid,
+            "ai_task": task,
+            "idle_shutdown_task": None,
+            "disconnect_skip_tasks": {},
+            "players": {},
+            "invite_codes": {"SFW-EVT-001": {"rating": "SFW", "used": False}},
+            "ws_connections": {},
+        }
+        _invite_registry["SFW-EVT-001"] = sid
+        _sessions.move_to_end(sid, last=False)  # _sessionsは他テストの残骸を含みうるグローバル
+                                                 # OrderedDictなので、popitem(last=False)が対象を
+                                                 # 取り出すよう先頭に固定する
+        _evict_oldest_session()
+        await asyncio.gather(task, return_exceptions=True)  # cancel()の反映を待つ
+        return task
+
+    try:
+        task = asyncio.run(_setup_and_run())
+        assert sid not in _sessions
+        assert "SFW-EVT-001" not in _invite_registry
+        assert task.cancelled()
+    finally:
+        _sessions.pop(sid, None)
+        _invite_registry.pop("SFW-EVT-001", None)
+
+
+def test_available_slots_while_ip_locked_429():
+    """8.4対策: IPロック中はavailable-slotsも429になること（joinと同じロックを共有）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _invite_fail_rate, _invite_locked_until
+    _invite_fail_rate.clear()
+    _invite_locked_until.clear()
+    client = TestClient(app)
+    _invite_locked_until["testclient"] = time.monotonic() + 3600
+    try:
+        resp = client.post("/api/session/available-slots", json={"invite_code": "SFW-ABC-234"})
+        assert resp.status_code == 429
+    finally:
+        _invite_fail_rate.clear()
+        _invite_locked_until.clear()
+
+
+def test_available_slots_10_failures_locks_ip_and_blocks_join():
+    """8.4対策: available-slotsだけを連打してもjoinと同じ失敗カウンターが積み上がり、
+    10回失敗すると11回目はavailable-slots・join両方とも429になること。
+
+    以前は_check_invite_rateがjoin_sessionでしか呼ばれず、available-slots（招待コードの
+    正誤を判定するオラクル）だけを連打すればS-1のブルートフォース対策を完全にバイパス
+    できた。
+    """
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _invite_fail_rate, _invite_locked_until
+    _invite_fail_rate.clear()
+    _invite_locked_until.clear()
+    client = TestClient(app)
+    try:
+        for _ in range(10):
+            client.post("/api/session/available-slots", json={"invite_code": "SFW-YYY-888"})
+        resp = client.post("/api/session/available-slots", json={"invite_code": "SFW-YYY-888"})
+        assert resp.status_code == 429
+        # joinも同じIPロックの対象になっていること
+        resp_join = client.post("/api/session/join", json={"invite_code": "SFW-YYY-888"})
+        assert resp_join.status_code == 429
+    finally:
+        _invite_fail_rate.clear()
+        _invite_locked_until.clear()
+
+
+@pytest.mark.asyncio
 async def test_invite_on_ended_session_404():
     """終了済みセッションに invite を発行しようとすると 404。"""
     from fastapi.testclient import TestClient

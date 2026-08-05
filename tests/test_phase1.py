@@ -126,6 +126,28 @@ def test_check_generation_rate_independent_from_ws_rate():
         _sessions.pop(sid, None)
 
 
+def test_check_generation_rate_ip_key_independent_from_jti_key():
+    """8.6対策: IPベースのキー（ip:接頭辞）はjtiベースのキーとは独立したバケットで
+    動作しつつ、同じ_check_generation_rate関数・同じgen_rate辞書を共有すること
+    （generate_session_imageがjtiキーとIPキーの両方をチェックする実装の前提）。"""
+    from def_kari.api.routes.session import _check_generation_rate, _sessions
+    sid = "_gen_rate_test_ip_key"
+    _sessions[sid] = {"gen_rate": {}}
+    try:
+        for _ in range(6):
+            _check_generation_rate(sid, "jti_a", limit=6, window=60)
+        assert _check_generation_rate(sid, "jti_a", limit=6, window=60) is False  # jti単位で制限超過
+
+        # 別のjti（joinをやり直して使い捨てトークンを得た体）は制限内に見える
+        assert _check_generation_rate(sid, "jti_b", limit=6, window=60) is True
+        # しかしIPキーは呼び出しごとに積み上がるため、jtiを変え続けても最終的に制限される
+        for _ in range(20):
+            _check_generation_rate(sid, "ip:203.0.113.5", limit=20, window=60)
+        assert _check_generation_rate(sid, "ip:203.0.113.5", limit=20, window=60) is False
+    finally:
+        _sessions.pop(sid, None)
+
+
 def test_try_acquire_generation_lock_prevents_double_acquire():
     """同一トークンからの多重取得を防ぐこと。"""
     from def_kari.api.routes.session import _try_acquire_generation_lock, _release_generation_lock, _sessions

@@ -31,6 +31,21 @@ def _stub_character_audit():
 
 
 @pytest.fixture(autouse=True)
+def _reset_session_create_rate():
+    """/startのIPベースレート制限（8.5対策、1分あたり20回）状態をテストごとにクリアする。
+
+    TestClientのリクエストは全て"testclient"という同一ホスト名から来るため、
+    このグローバル辞書をクリアしないとテストスイート全体で単一のバケットを
+    共有してしまい、/startを呼ぶ既存テストが後半になるほど429で落ちる
+    （実際に発生した事故、2026-08-05）。
+    """
+    from def_kari.api.routes.session import _session_create_rate
+    _session_create_rate.clear()
+    yield
+    _session_create_rate.clear()
+
+
+@pytest.fixture(autouse=True)
 def _block_real_llm_calls():
     """テスト環境ではLLMバックエンドへの実ネットワーク呼び出しを一切許可しない。
 
