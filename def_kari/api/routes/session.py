@@ -59,6 +59,14 @@ from def_kari.safety.character_audit import audit_character_json
 
 router = APIRouter()
 
+# ローカル専用エンドポイント（デバッグ・セーブ/ロード）専用のルーター。
+# `router`はpublic_main.pyに丸ごとマウントされるため、フル機能アプリ（main.py）専用の
+# 操作をここに含めると外部公開されてしまう（8.8「session.router丸ごとマウントに起因する
+# 無認証エンドポイントの公開漏れ」参照）。main.pyはrouterとlocal_routerの両方をマウントし、
+# public_main.pyはrouterのみマウントする（3章「安全な部分だけ別ルーターに分離する」原則の
+# session.py自身への適用）。
+local_router = APIRouter()
+
 _BASE_DATA = Path(__file__).parent.parent.parent.parent / "data"
 _SESSION_PROMPTS_PATH = _BASE_DATA / "session_prompts.json"
 _session_prompts_cache: dict = {}
@@ -101,8 +109,26 @@ _NON_SERIALIZABLE_KEYS = frozenset({
 
 
 def _session_for_json(session: dict) -> dict:
-    """autosave や GET レスポンス用: シリアライズ不可能なフィールドを除いたコピーを返す。"""
+    """autosave用: シリアライズ不可能なフィールドを除いたコピーを返す。復元に必要な
+    情報（host_token等）はすべて残す。外部レスポンスには使わないこと
+    （`_session_for_public_json`参照）。"""
     return {k: v for k, v in session.items() if k not in _NON_SERIALIZABLE_KEYS}
+
+
+# GET /{session_id}（無認証）で外部に公開してはいけない機密フィールド。
+# _NON_SERIALIZABLE_KEYS（JSON化できるか）とは別軸の「公開してよいか」の判定。
+# 2026-08-04の攻撃者視点監査で、host_token/invited_gm_token/players（{token: char_id}、
+# キーが全参加者の認証トークン）/invite_codes/token_to_participant（{token: participant_id}）
+# が無認証GETで丸ごと露出していたことが発覚した（8.1参照）。
+_PUBLIC_EXCLUDED_KEYS = frozenset({
+    "host_token", "invited_gm_token", "players", "invite_codes", "token_to_participant",
+})
+
+
+def _session_for_public_json(session: dict) -> dict:
+    """GETレスポンス専用: `_session_for_json`に加えて認証トークン・招待コード等の
+    機密フィールドも除外したコピーを返す。"""
+    return {k: v for k, v in _session_for_json(session).items() if k not in _PUBLIC_EXCLUDED_KEYS}
 
 
 def _handle_flag_updated(session_id: str, event: dict) -> None:
@@ -437,8 +463,15 @@ def _resolve_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def require_host(authorization: str = Header(...)) -> dict:
-    """role == host のみ通す Dependency。"""
+def require_host(session_id: str, authorization: str = Header(...)) -> dict:
+    """role == host かつ、そのJWTがこのsession_id用に発行されたものであることを両方チェックするDependency。
+
+    `session_id`はURLパスパラメータ名と一致させることで、FastAPIが呼び出し元エンドポイントの
+    パスパラメータをそのまま注入する。このDependencyを使う全ルートは`{session_id}`という
+    パスパラメータを持つ前提（2026-08-04のBOLA監査でsession_idスコープ検証の欠如が発覚し、
+    再発防止のためDependency自体に組み込んだ。個別エンドポイントでの`auth.get("session_id")
+    != session_id`チェックはこの一本化に伴い削除済み）。
+    """
     token = authorization.removeprefix("Bearer ").strip()
     try:
         payload = verify_jwt(token)
@@ -446,11 +479,13 @@ def require_host(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Invalid or expired token")
     if payload.get("role") != "host":
         raise HTTPException(403, "Host role required")
+    if payload.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
     return payload
 
 
-def require_player(authorization: str = Header(...)) -> dict:
-    """role == host / player / gm を通す Dependency（observer は 403）。"""
+def require_player(session_id: str, authorization: str = Header(...)) -> dict:
+    """role == host / player / gm を通すDependency（observer は403）。session_idスコープも検証する（require_host参照）。"""
     token = authorization.removeprefix("Bearer ").strip()
     try:
         payload = verify_jwt(token)
@@ -458,11 +493,13 @@ def require_player(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Invalid or expired token")
     if payload.get("role") not in ("host", "player", "gm"):
         raise HTTPException(403, "Player role required")
+    if payload.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
     return payload
 
 
-def require_keeper(authorization: str = Header(...)) -> dict:
-    """role == host / gm を通す Dependency（player / observer は 403）。
+def require_keeper(session_id: str, authorization: str = Header(...)) -> dict:
+    """role == host / gm を通すDependency（player / observer は403）。session_idスコープも検証する（require_host参照）。
     オンラインセッションで専任キーパー(gm)がゲーム進行を操作できるようにする。"""
     token = authorization.removeprefix("Bearer ").strip()
     try:
@@ -471,6 +508,8 @@ def require_keeper(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Invalid or expired token")
     if payload.get("role") not in ("host", "gm"):
         raise HTTPException(403, "Keeper role required")
+    if payload.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
     return payload
 
 
@@ -1430,11 +1469,6 @@ class SessionNextRequest(BaseModel):
     model: str = ""
 
 
-class SessionHumanMessage(BaseModel):
-    session_id: str
-    message: str
-
-
 class KeeperMessageRequest(BaseModel):
     text: str
 
@@ -1561,8 +1595,6 @@ class InviteRequest(BaseModel):
 @router.post("/{session_id}/invite")
 def create_invite(session_id: str, req: InviteRequest, auth: dict = Depends(require_host)):
     """招待コードを発行する（ホストのみ）。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -1841,8 +1873,6 @@ class AiTakeoverRequest(BaseModel):
 @router.post("/{session_id}/ai_takeover")
 def ai_takeover(session_id: str, req: AiTakeoverRequest, auth: dict = Depends(require_host)):
     """退室したプレイヤーのキャラ枠を AI に引き継ぐ（ホストのみ）。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -1855,8 +1885,12 @@ def ai_takeover(session_id: str, req: AiTakeoverRequest, auth: dict = Depends(re
     return {"status": "ok", "character_id": req.character_id, "human_char_ids": human_ids}
 
 
-@router.post("/next")
 def next_turn(req: SessionNextRequest):
+    """AIターンを1回進める内部ロジック。以前は`POST /api/session/next`として無認証で
+    公開されており、session_idさえ分かればkeeper権限を経ずにLLM呼び出しを無制限に
+    実行できてしまっていた（8.8参照）。フロントからは未使用だったためエンドポイントは
+    廃止したが、`_execute_ai_turn`が内部関数として直接呼び出すためこの関数自体は残す。
+    """
     session = _sessions.get(req.session_id)
     if not session:
         return {"error": "Session not found"}
@@ -2347,8 +2381,6 @@ async def set_auto_advance(session_id: str, req: AutoAdvanceRequest, _auth: dict
 @router.post("/{session_id}/end")
 async def end_session_by_host(session_id: str, auth: dict = Depends(require_host)):
     """ホストがセッションを明示的に終了する。参加者全員に SESSION_ENDED を通知してから後片付けする。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2377,8 +2409,6 @@ class LobbyConfigRequest(BaseModel):
 @router.patch("/{session_id}/host_role")
 def update_host_role(session_id: str, is_keeper: bool, auth: dict = Depends(require_host)):
     """ロビー中にホストの役割（キーパー専任 or プレイヤー）をリアルタイム更新する。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2389,8 +2419,6 @@ def update_host_role(session_id: str, is_keeper: bool, auth: dict = Depends(requ
 @router.post("/{session_id}/lobby_config")
 def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depends(require_host)):
     """ロビー設定を更新する（最大プレイヤー数・ホストキャラ）。セッション開始前にホストが呼ぶ。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2439,8 +2467,6 @@ class LobbyModeRequest(BaseModel):
 @router.patch("/{session_id}/lobby/mode")
 def set_lobby_trpg_mode(session_id: str, req: LobbyModeRequest, auth: dict = Depends(require_host)):
     """ロビー中にセッションモード（通常/TRPG）を切り替える。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2457,8 +2483,6 @@ class LobbyKeeperSourceRequest(BaseModel):
 @router.patch("/{session_id}/lobby/keeper_source")
 def set_lobby_keeper_source(session_id: str, req: LobbyKeeperSourceRequest, auth: dict = Depends(require_host)):
     """ロビー中にキーパー担当をAI自動進行か人間参加待ちかに切り替える。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2483,8 +2507,6 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = 
     /start 時に確定する派生データ（rules/scene・skill_pool・npc_state）もここで再構築する。
     省略されたフィールドは変更しない。ロビー解除後は 409。
     """
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2526,8 +2548,6 @@ class LobbyAIRequest(BaseModel):
 @router.post("/{session_id}/lobby/add_ai")
 def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(require_host)):
     """ロビーに AI キャラクターを追加する（ホストのみ）。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2570,8 +2590,6 @@ def lobby_set_keeper_char(session_id: str, req: LobbyKeeperCharRequest, auth: di
     character_id が空文字列なら解除。解除しても無名AIキーパー（汎用「🎩 Keeper」表示）として
     自動進行は継続する（TRPGモードの ai_keeper_narrate 参照）。
     """
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2609,8 +2627,6 @@ def lobby_set_keeper_char(session_id: str, req: LobbyKeeperCharRequest, auth: di
 @router.post("/{session_id}/lobby/remove_ai")
 def lobby_remove_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(require_host)):
     """ロビーから AI キャラクターを削除する（ホストのみ）。"""
-    if auth.get("session_id") != session_id:
-        raise HTTPException(403, "Token session mismatch")
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
@@ -2628,30 +2644,6 @@ def lobby_remove_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(r
         "name_map": dict(sess["name_map"]),
     })
     return {"status": "ok", "initiative": sess["initiative"], "name_map": dict(sess["name_map"])}
-
-
-@router.post("/human")
-def human_message(req: SessionHumanMessage):
-    session = _sessions.get(req.session_id)
-    if not session:
-        return {"error": "Session not found"}
-    current = _get_current_speaker(session)
-    char_name = session.get("name_map", {}).get(current, current) if current else "Player"
-    session["history"].append({
-        "role": "user",
-        "content": req.message,
-        "character_id": current or "human",
-        "emotion": "",
-    })
-    _game_event_bus.emit(req.session_id, "HUMAN_TURN_COMPLETED", {
-        "character_id": current or "human",
-        "character_name": char_name,
-        "text": req.message,
-        "emotion": "",
-        "tags": [],
-    })
-    _autosave(req.session_id)
-    return {"status": "ok"}
 
 
 @router.post("/{session_id}/keeper")
@@ -2884,223 +2876,6 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
         "total": result["total"],
         "modifier": result["modifier"],
         "judgment": judgment,
-    }
-
-
-class JudgmentAllocateRequest(BaseModel):
-    character_id: str
-    stat: str
-    backend: str = DEFAULT_LLM_BACKEND
-
-
-@router.post("/{session_id}/judgment/allocate")
-def judgment_allocate(session_id: str, req: JudgmentAllocateRequest):
-    """スキル値未設定の判定でキャラAIにポイント配分を決定させる。
-
-    配分値をセッションの skill_values に書き込み、skill_pool から減算する。
-    スキル値が既に設定済みの場合はLLMを呼ばずそのまま返す。
-    """
-    session = _sessions.get(session_id)
-    if not session:
-        return {"error": "Session not found"}
-
-    skill_values = session.setdefault("skill_values", {})
-    char_skills = skill_values.setdefault(req.character_id, {})
-
-    if req.stat in char_skills:
-        return {
-            "character_id": req.character_id,
-            "stat": req.stat,
-            "allocated": char_skills[req.stat],
-            "skill_pool": session.get("skill_pool", {}).get(req.character_id, 0),
-            "already_set": True,
-        }
-
-    skill_pool = session.setdefault("skill_pool", {})
-    pool = skill_pool.get(req.character_id, 0)
-    if pool <= 0:
-        return {
-            "character_id": req.character_id,
-            "character_name": session.get("name_map", {}).get(req.character_id, req.character_id),
-            "stat": req.stat,
-            "allocated": 0,
-            "skill_pool": 0,
-            "already_set": False,
-            "label": "",
-        }
-    max_alloc = min(100, pool)
-    name_map = session.get("name_map", {})
-    char_name = name_map.get(req.character_id, req.character_id)
-
-    _s = load_settings()
-    _lang = _s.get("user_language", "ja") or "ja"
-
-    recent = "\n".join(
-        h["content"] for h in session.get("history", [])[-6:]
-        if h.get("content")
-    )
-
-    if _lang == "ja":
-        alloc_prompt = (
-            f"あなたは「{req.stat}」のスキル判定を行います。\n"
-            f"スキルポイントプール残量: {pool}点\n"
-            f"今回の最大配分: {max_alloc}点（上限100点）\n"
-            f"最近の状況:\n{recent}\n\n"
-            f"何点配分しますか？ 0〜{max_alloc}の整数のみ答えてください。数字以外は不要です。"
-        )
-    else:
-        alloc_prompt = (
-            f"You are making a '{req.stat}' skill check.\n"
-            f"Skill point pool remaining: {pool}\n"
-            f"Maximum allocation this check: {max_alloc} (cap 100)\n"
-            f"Recent context:\n{recent}\n\n"
-            f"How many points do you allocate? Answer with an integer 0–{max_alloc} only."
-        )
-
-    profiles = load_profiles()
-    char = get_character(req.character_id, profiles)
-    backend_id = session.get("char_backends", {}).get(req.character_id) or req.backend
-    if backend_id not in LLM_BACKENDS:
-        backend_id = DEFAULT_LLM_BACKEND
-
-    allocated = 0
-    try:
-        chat_fn = LLM_BACKENDS[backend_id]["chat"]
-        model = _resolve_model(backend_id)
-        persona = (char or {}).get("persona_description", "")
-        messages = [
-            {"role": "system", "content": persona} if persona else
-            {"role": "system", "content": "You are a TRPG character deciding skill point allocation."},
-            {"role": "user", "content": alloc_prompt},
-        ]
-        from def_kari.resources.vram_lock import get_vram_lock
-        _vl = get_vram_lock()
-        _vl.acquire()
-        try:
-            reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 16})
-        finally:
-            _vl.release()
-        import re as _re
-        _m = _re.search(r'\d+', reply or "")
-        allocated = int(_m.group()) if _m else 0
-        allocated = max(0, min(max_alloc, allocated))
-    except Exception:
-        allocated = 0
-
-    char_skills[req.stat] = allocated
-    skill_pool[req.character_id] = max(0, pool - allocated)
-
-    _label = f"🎯 {char_name}: {req.stat} に{allocated}点配分（プール残{skill_pool[req.character_id]}点）"
-    if _lang != "ja":
-        _label = f"🎯 {char_name}: allocated {allocated} pts to {req.stat} (pool remaining: {skill_pool[req.character_id]})"
-
-    session["history"].append({
-        "role": "user",
-        "content": _label,
-        "character_id": req.character_id,
-        "skill_allocation": {"stat": req.stat, "allocated": allocated},
-    })
-    _autosave(session_id)
-    return {
-        "character_id": req.character_id,
-        "character_name": char_name,
-        "stat": req.stat,
-        "allocated": allocated,
-        "skill_pool": skill_pool[req.character_id],
-        "already_set": False,
-        "label": _label,
-    }
-
-
-class JudgmentRollRequest(BaseModel):
-    character_id: str
-    stat: str
-    roll: int
-    stat_value: int = 0
-    success_text: str = ""
-    failure_text: str = ""
-
-
-@router.post("/{session_id}/judgment/roll")
-def judgment_roll(session_id: str, req: JudgmentRollRequest):
-    """ダイスロール結果を受け取り、成否判定してセッション履歴に注入する。
-
-    stat_value が 0 の場合はキャラシートから自動取得する。
-    成功条件: roll <= stat_value
-    """
-    session = _sessions.get(session_id)
-    if not session:
-        return {"error": "Session not found"}
-
-    stat_value = req.stat_value
-    if stat_value == 0:
-        # skill_values（セッション中に配分済み）を優先
-        _sv = session.get("skill_values", {}).get(req.character_id, {})
-        if req.stat in _sv:
-            stat_value = _sv[req.stat]
-        else:
-            # フォールバック: キャラシートのstat値
-            _cgs = session.get("char_game_sheets", {})
-            _sheet_id = _cgs.get(req.character_id, "")
-            if _sheet_id:
-                _profiles = load_profiles()
-                _char = get_character(req.character_id, _profiles)
-                if _char:
-                    stat_value = (
-                        _char.get("game_rules_sheets", {})
-                        .get(_sheet_id, {})
-                        .get("stats", {})
-                        .get(req.stat, {})
-                        .get("current", 0)
-                    )
-
-    success: bool | None = (req.roll <= stat_value) if stat_value > 0 else None
-
-    name_map = session.get("name_map", {})
-    char_name = name_map.get(req.character_id, req.character_id)
-
-    _s = load_settings()
-    _lang = _s.get("user_language", "ja") or "ja"
-
-    if _lang == "ja":
-        if success is None:
-            result_text = f"🎲 {char_name}: {req.stat}判定 出目{req.roll}"
-        elif success:
-            outcome = req.success_text or "成功"
-            result_text = f"🎲 {char_name}: {req.stat}判定 出目{req.roll}/{stat_value} → 成功（{outcome}）"
-        else:
-            outcome = req.failure_text or "失敗"
-            result_text = f"🎲 {char_name}: {req.stat}判定 出目{req.roll}/{stat_value} → 失敗（{outcome}）"
-    else:
-        if success is None:
-            result_text = f"🎲 {char_name}: {req.stat} check roll {req.roll}"
-        elif success:
-            outcome = req.success_text or "Success"
-            result_text = f"🎲 {char_name}: {req.stat} {req.roll}/{stat_value} → Success ({outcome})"
-        else:
-            outcome = req.failure_text or "Failure"
-            result_text = f"🎲 {char_name}: {req.stat} {req.roll}/{stat_value} → Failure ({outcome})"
-
-    session["history"].append({
-        "role": "user",
-        "content": result_text,
-        "character_id": req.character_id,
-        "judgment": {
-            "stat": req.stat,
-            "roll": req.roll,
-            "stat_value": stat_value,
-            "success": success,
-        },
-    })
-    _autosave(session_id)
-    return {
-        "character_id": req.character_id,
-        "character_name": char_name,
-        "stat": req.stat,
-        "roll": req.roll,
-        "stat_value": stat_value,
-        "success": success,
-        "result_text": result_text,
     }
 
 
@@ -3572,7 +3347,7 @@ def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(req
 
 
 @router.post("/{session_id}/vote/commit")
-async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Depends(require_player)):
+async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Depends(require_keeper)):
     """キーパー票を受け取り、AI票と合算して集計・効果適用する。"""
     session = _sessions.get(session_id)
     if not session:
@@ -3870,12 +3645,12 @@ def get_npc_state(session_id: str, npc_id: str):
     return {"npc_id": npc_id, "state": npc_state.get(npc_id, {"knowledge": [], "relationship": {}})}
 
 
-@router.get("/debug")
+@local_router.get("/debug")
 def get_session_debug():
     return _last_session_debug
 
 
-@router.get("/saved")
+@local_router.get("/saved")
 def list_saved_sessions():
     files = list_session_mode_files()
     result = []
@@ -3899,7 +3674,7 @@ class SessionLoadRequest(BaseModel):
     filename: str
 
 
-@router.delete("/saved/{filename}")
+@local_router.delete("/saved/{filename}")
 def delete_saved_session(filename: str):
     if not _SAFE_FILENAME_RE.match(filename):
         return {"error": "Invalid filename"}
@@ -3914,7 +3689,7 @@ def delete_saved_session(filename: str):
     return {"error": "File not found"}
 
 
-@router.post("/load")
+@local_router.post("/load")
 def load_session(req: SessionLoadRequest):
     if not _SAFE_FILENAME_RE.match(req.filename):
         return {"error": "Invalid filename"}
@@ -4287,7 +4062,7 @@ def get_session(session_id: str):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
-    return {"session": _session_for_json(session)}
+    return {"session": _session_for_public_json(session)}
 
 
 class StatSyncRequest(BaseModel):

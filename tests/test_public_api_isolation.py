@@ -135,6 +135,51 @@ def test_chat_novel_thought_not_reachable():
     assert client.get("/api/thought/").status_code == 404
 
 
+def test_session_local_only_endpoints_not_reachable():
+    """8.8対策: debug/saved/load（session.local_router）がpublic_appから機密情報を
+    返さないこと。
+
+    以前はsession.router丸ごとマウントに巻き込まれて公開されており、直近のセッションの
+    LLM生応答（/debug）・保存済みセッションの全履歴（/load）を認証なしで読めていた。
+    local_routerはpublic_appにマウントされていないため、これらのパスはGET /{session_id}
+    （session.router側、GETのみ登録）のワイルドカードにフォールバックする。単一セグメント
+    のパス（/debug・/saved）は"session_idが見つからない"という通常のエラーになり（200+
+    {"error": "Session not found"}）、複数セグメントのパス（/saved/{filename}）や
+    GET以外のメソッド（POST /load）はどのパターンにもマッチせず404/405になる。
+    いずれの場合も本来のdebug情報・セッション一覧・履歴は一切返らない。
+    """
+    r_debug = client.get("/api/session/debug")
+    assert r_debug.status_code == 200
+    assert r_debug.json() == {"error": "Session not found"}  # _last_session_debugの中身が漏れていない
+
+    r_saved = client.get("/api/session/saved")
+    assert r_saved.status_code == 200
+    assert r_saved.json() == {"error": "Session not found"}  # 保存済みセッション一覧が漏れていない
+
+    assert client.delete("/api/session/saved/nonexistent.json").status_code == 404
+    assert client.post("/api/session/load", json={"filename": "nonexistent.json"}).status_code == 405
+
+
+def test_session_dead_code_endpoints_removed_everywhere():
+    """8.8対策: フロント未使用だったhuman/judgment/allocate/judgment/rollは
+    デッドコードとして削除済みであること（main.py側でも到達不能）。
+    next（POST /api/session/next）も同様にルーティングは廃止したが、next_turn関数
+    自体はAIターン自動進行の内部実装として_execute_ai_turnから直接呼ばれるため
+    session.py内に残しており、他のテストで別途動作確認済み。
+
+    /next・/humanは単一セグメントパスのため、他のGET /{session_id}ワイルドカードに
+    フォールバックして405（POSTは許可されていない）になる。/judgment/*は複数セグメントの
+    パスなのでどのパターンにもマッチせず404になる。挙動が違うのはFastAPIのルーティング
+    仕様上の自然な結果で、どちらも元のロジックには到達しない。
+    """
+    from def_kari.api.main import app
+    full_client = TestClient(app)
+    assert full_client.post("/api/session/next", json={"session_id": "x"}).status_code == 405
+    assert full_client.post("/api/session/human", json={"session_id": "x", "message": "hi"}).status_code == 405
+    assert full_client.post("/api/session/x/judgment/allocate", json={"character_id": "y", "stat": "z"}).status_code == 404
+    assert full_client.post("/api/session/x/judgment/roll", json={"character_id": "y", "stat": "z", "roll": 50}).status_code == 404
+
+
 def test_session_join_flow_reachable():
     """参加フローの主要エンドポイントは到達可能であること（session.router 丸ごとマウント）。"""
     assert client.post("/api/session/available-slots", json={"invite_code": "SFW-AAA-111"}).status_code in (200, 404)
@@ -154,3 +199,12 @@ def test_full_app_still_has_all_routers():
     full_client = TestClient(app)
     assert full_client.get("/api/settings/api-keys").status_code == 200
     assert full_client.get("/api/characters/").status_code == 200
+
+
+def test_full_app_still_has_session_local_router():
+    """回帰確認: main.py側ではsession.local_router（debug/saved/load）が引き続き
+    到達可能であること（ローカル専用UI: DebugTab.tsx/SessionTab.tsxの機能を壊していないか）。"""
+    from def_kari.api.main import app
+    full_client = TestClient(app)
+    assert full_client.get("/api/session/debug").status_code == 200
+    assert full_client.get("/api/session/saved").status_code == 200
