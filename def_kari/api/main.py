@@ -108,6 +108,21 @@ class SessionBodySizeLimitMiddleware(BaseHTTPMiddleware):
             content_length = request.headers.get("content-length")
             if content_length is not None and int(content_length) > _SESSION_BODY_SIZE_LIMIT:
                 return JSONResponse({"error": "Request body too large"}, status_code=413)
+            if content_length is None:
+                # 8.15対策: Content-Lengthを詐称・省略されると（chunked transfer等）上の
+                # チェックを素通りできていた。ストリームを実際に読んで累積サイズを検証する。
+                # Content-Lengthが正しく送られている通常のケースでは二重読み込みを避ける
+                # ため、ヘッダーが無い場合のみこの経路を通る。
+                body = b""
+                async for chunk in request.stream():
+                    body += chunk
+                    if len(body) > _SESSION_BODY_SIZE_LIMIT:
+                        return JSONResponse({"error": "Request body too large"}, status_code=413)
+
+                async def _receive() -> dict:
+                    return {"type": "http.request", "body": body, "more_body": False}
+
+                request._receive = _receive
         return await call_next(request)
 
 
@@ -125,8 +140,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class TestBackendCSRFMiddleware(BaseHTTPMiddleware):
+    """test-backend（SSRF相当の機能、settings.py）へのCSRF対策（8.16）。
+
+    CSRFトークンによる保護が無く、text/plainのform enctype等を使ったsimple requestは
+    CORSのプリフライトを回避できてしまうため（CSRF経由のブラインドSSRF、第三者レビュー
+    報告書10-2参照）、Content-Typeがapplication/jsonであることをルーティング解決前に
+    ミドルウェアで検証する。エンドポイント内（Pydanticモデルのボディパース後）で
+    チェックしても、パースが本体実行より先に走るため手遅れ。これによりブラウザは
+    本リクエストの前にCORSプリフライトを発行せざるを得なくなり、CORS許可オリジン
+    （localhost:3000/5173限定）によって外部ページからの呼び出しがブロックされる。
+    宛先IPのプライベートレンジ拒否は本機能の主目的（ホストのローカルLAN上の
+    ComfyUI/A1111等への疎通確認）と衝突するため採用しない。
+    """
+
+    async def dispatch(self, request, call_next):
+        if request.url.path == "/api/settings/test-backend" and request.method == "POST":
+            content_type = request.headers.get("content-type", "")
+            if not content_type.startswith("application/json"):
+                return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
+        return await call_next(request)
+
+
 app.add_middleware(SessionBodySizeLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(TestBackendCSRFMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],

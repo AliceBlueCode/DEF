@@ -7,7 +7,17 @@ token_to_participantの削除やJWT無効化（revoke_token）を行っておら
 """
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
+
+
+def _fake_request():
+    """vote_commit（8.9でIPベースのレート制限用にrequest引数が必須になった）に
+    渡す最小限のダミーRequest。DEF_BEHIND_CLOUDFLARE_TUNNELは未設定のテスト環境では
+    request.client.hostのみが実際に参照される。"""
+    req = Mock()
+    req.client.host = "127.0.0.1"
+    req.headers = {}
+    return req
 
 
 def _make_pending_vote(target_id: str, saved_turn: int = 0, saved_round: int = 1) -> dict:
@@ -60,7 +70,7 @@ async def test_expel_vote_removes_human_player_completely():
     }
     try:
         req = VoteCommitRequest(keeper_vote=True)  # 可決させる
-        await vote_commit(sid, req, _auth={})
+        await vote_commit(sid, req, _fake_request(), _auth={})
 
         sess = _sessions[sid]
         assert "char_b" not in sess["initiative"]
@@ -99,7 +109,7 @@ async def test_expel_vote_of_ai_character_does_not_touch_players():
     }
     try:
         req = VoteCommitRequest(keeper_vote=True)
-        await vote_commit(sid, req, _auth={})
+        await vote_commit(sid, req, _fake_request(), _auth={})
 
         sess = _sessions[sid]
         assert "char_ai" not in sess["initiative"]
@@ -141,7 +151,7 @@ async def test_expel_vote_rejected_keeps_player():
     }
     try:
         req = VoteCommitRequest(keeper_vote=False)  # 否決させる（人間票はkeeper_voteが直接使われる）
-        await vote_commit(sid, req, _auth={})
+        await vote_commit(sid, req, _fake_request(), _auth={})
 
         sess = _sessions[sid]
         assert "char_b" in sess["initiative"]

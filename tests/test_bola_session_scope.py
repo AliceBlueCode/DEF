@@ -114,3 +114,132 @@ def test_generate_image_jti_bypass_blocked_by_ip_limit(monkeypatch):
 
     assert statuses[:20].count(429) == 0, "最初の20回はjti単位では制限内のはずが429になった"
     assert statuses[20] == 429, "21回目はIPベースの上限で429になるはず"
+
+
+def test_vote_deliberate_rate_limited():
+    """8.9: vote/deliberateにレート制限が無く、AIキャラがN人いるセッションなら
+    1回の連打でN倍のLLM呼び出しが発生しうった問題。initiativeを空にしたセッションで
+    LLM呼び出しを起こさずレート制限だけを検証する（6回/分、7回目で429）。"""
+    from def_kari.api.routes.session import issue_player_jwt
+
+    sid, _host_token = _start_session()  # character_ids=[]なのでinitiativeは空
+
+    player_token = issue_player_jwt(sid, "player", "char_a")
+    statuses = []
+    for _ in range(7):
+        resp = client.post(
+            f"/api/session/{sid}/vote/deliberate",
+            json={"vote_type": "topic_change", "detail": "", "target_id": "", "proposer_id": "", "proposer_text": ""},
+            headers=_auth(player_token),
+        )
+        statuses.append(resp.status_code)
+
+    assert statuses[:6].count(429) == 0
+    assert statuses[6] == 429
+
+
+def test_human_turn_rate_limited():
+    """8.10: human_turn（TTS合成を伴う）にレート制限が無かった問題。
+    WS発言と同じ基準（60回/分）を適用したので、61回叩くと61回目が429になること。"""
+    from def_kari.api.routes.session import issue_player_jwt
+
+    sid, _host_token = _start_session()  # initiativeは空なのでturn関連のロジックには到達しない
+
+    player_token = issue_player_jwt(sid, "player", "char_a")
+    statuses = []
+    for _ in range(61):
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "skip"},
+            headers=_auth(player_token),
+        )
+        statuses.append(resp.status_code)
+
+    assert statuses[:60].count(429) == 0
+    assert statuses[60] == 429
+
+
+def test_events_and_npc_state_require_keeper():
+    """8.12: GET /events・GET /npc/{npc_id}/stateはGM専用情報を含みうるのに無認証だった。
+    require_keeper保護後、無認証は401、一般プレイヤーは403、host/gmは200になること。"""
+    from def_kari.api.routes.session import issue_player_jwt
+
+    sid, host_token = _start_session()
+    player_token = issue_player_jwt(sid, "player", "char_a")
+
+    for path in (f"/api/session/{sid}/events", f"/api/session/{sid}/npc/npc_1/state"):
+        assert client.get(path).status_code == 422  # Authorizationヘッダー自体が無い（FastAPIのバリデーションエラー）
+        resp_player = client.get(path, headers=_auth(player_token))
+        assert resp_player.status_code == 403
+        assert resp_player.json()["detail"] == "Keeper role required"
+        assert client.get(path, headers=_auth(host_token)).status_code == 200
+
+
+def test_save_session_rejects_external_media_urls():
+    """8.20: image_url/audio_urlにURL検証が無く、外部URLを仕込めば<img>/<audio>読み込み時点で
+    閲覧者のIP・User-Agentが漏れ、window.openにnoopener/noreferrerが無ければReverse
+    Tabnabbingにも使えた。自サーバーの配信エンドポイント以外は422で拒否されること。"""
+    from def_kari.api.routes.session import _sessions
+
+    sid, host_token = _start_session()
+    _sessions[sid]["history"] = [{"role": "assistant", "content": "hi", "character_id": "char_a"}]
+
+    resp_evil = client.post(
+        f"/api/session/{sid}/save",
+        json={"media": [{"index": 0, "image_url": "https://evil.example.com/phish.png"}]},
+        headers=_auth(host_token),
+    )
+    assert resp_evil.status_code == 422
+
+    resp_ok = client.post(
+        f"/api/session/{sid}/save",
+        json={"media": [{"index": 0, "image_url": "/api/t2i/image/abc123.png", "audio_url": "/api/tts/audio/def456.wav"}]},
+        headers=_auth(host_token),
+    )
+    assert resp_ok.status_code == 200
+    assert _sessions[sid]["history"][0]["image_url"] == "/api/t2i/image/abc123.png"
+
+
+def test_expelled_character_json_cannot_rejoin_with_same_identity(monkeypatch):
+    """8.21: 投票expelで追放された参加者が、同じ招待コードで同一character_jsonの
+    まま/joinし直せば再入室できていた問題。追放時にフィンガープリントを記録し、
+    同一character_jsonでの再参加を拒否する。character_jsonの内容が違えば
+    （＝別人として振る舞えば）引き続き参加できること（過剰な制限になっていないか）も確認。"""
+    from def_kari.api.routes import session as session_module
+    from def_kari.api.routes.session import _sessions
+
+    monkeypatch.setattr(session_module, "_generate_visitor_images", lambda *a, **k: None)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d["invite_code"]
+    host_token = d["host_token"]
+    _sessions[sid]["max_players"] = 0
+
+    char_json = {"name": "TroubleMaker"}
+    join1 = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert join1.status_code == 200
+    char_id = join1.json()["character_id"]
+
+    # expel可決を直接セッション状態で再現（vote/deliberateのLLM呼び出しを避ける）
+    _sessions[sid]["human_char_ids"] = [char_id]
+    _sessions[sid]["_pending_vote"] = {
+        "vote_type": "expel", "detail": "", "target_id": char_id, "proposer_id": "_keeper",
+        "vote_label": "退場投票", "detail_text": "", "saved_turn": 0, "saved_round": 1,
+        "saved_action_count": 0, "deliberation_texts": {},
+    }
+    commit = client.post(f"/api/session/{sid}/vote/commit", json={"keeper_vote": True}, headers=_auth(host_token))
+    assert commit.status_code == 200
+    assert char_id not in _sessions[sid]["initiative"]
+
+    # 同じcharacter_jsonでの再参加は拒否される
+    rejoin_same = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert rejoin_same.status_code == 403
+
+    # 内容の違うcharacter_jsonなら引き続き参加できる（過剰制限になっていない）
+    rejoin_different = client.post(
+        "/api/session/join",
+        json={"invite_code": invite_code, "character_json": {"name": "SomeoneElse"}},
+    )
+    assert rejoin_different.status_code == 200

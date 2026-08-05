@@ -19,13 +19,16 @@ import os
 
 import uvicorn
 
-from def_kari.api.main import app
+from def_kari.api.main import app, _SESSION_BODY_SIZE_LIMIT
 from def_kari.api.public_main import public_app
 
 
 async def _run(local_host: str, local_port: int, public_host: str, public_port: int) -> None:
-    local_config = uvicorn.Config(app, host=local_host, port=local_port, log_level="info")
-    public_config = uvicorn.Config(public_app, host=public_host, port=public_port, log_level="info")
+    # 8.15対策: ws_max_sizeを指定しない場合uvicornのデフォルト(16MB)のままになり、
+    # HTTP側のSessionBodySizeLimitMiddleware（512KB）と釣り合わない上限になる。
+    # WS経由のメッセージにも同じ上限をかける。
+    local_config = uvicorn.Config(app, host=local_host, port=local_port, log_level="info", ws_max_size=_SESSION_BODY_SIZE_LIMIT)
+    public_config = uvicorn.Config(public_app, host=public_host, port=public_port, log_level="info", ws_max_size=_SESSION_BODY_SIZE_LIMIT)
     local_server = uvicorn.Server(local_config)
     public_server = uvicorn.Server(public_config)
     print(f"[dual_run] local (full API):   http://{local_host}:{local_port}")

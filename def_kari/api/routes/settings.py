@@ -634,6 +634,15 @@ class TestBackendRequest(BaseModel):
 
 @router.post("/test-backend")
 def test_backend(req: TestBackendRequest):
+    """バックエンド疎通確認（意図的にSSRF相当の機能を持つ、ホストのローカルLAN上の
+    ComfyUI/A1111等への到達性テスト）。main.py（ローカル専用）にのみ存在する。
+
+    CSRF対策（8.16）はTestBackendCSRFMiddleware（api/main.py）で行う。FastAPIは
+    TestBackendRequestのボディパースをこの関数本体の実行より前に行うため、
+    ここでContent-Typeを検証しても手遅れ（text/plain等の不正な形式は既に422で
+    弾かれた後か、運悪くdictとしてパースされた後）。ミドルウェアなら
+    ルーティング解決前にヘッダーだけを見て確実に弾ける。
+    """
     import time
     import urllib.request
     from urllib.parse import urlparse

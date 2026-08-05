@@ -2,6 +2,7 @@
 
 import time
 import pytest
+from unittest.mock import patch
 from starlette.websockets import WebSocketDisconnect
 
 
@@ -688,6 +689,36 @@ def test_character_json_xss_stored_as_is():
     sess = _sessions[sid]
     # バックエンド API は HTML エスケープしない → フロントが責任を持つことを明示
     assert sess["guest_chars"][char_id]["name"] == xss
+
+
+def test_join_character_json_rate_limited():
+    """8.11対策: オンラインセッションは同一招待コードの使い回しが仕様上OKなので、
+    正規の招待コード保持者がjoinを連打すればその都度guest_charが増え、
+    T2I生成（アイコン+立ち絵）が連打回数分トリガーされていた。IPベースの
+    レート制限（5回/分）で6回目以降を拒否する。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d["invite_code"]
+
+    from def_kari.api.routes.session import _sessions
+    _sessions[sid]["max_players"] = 0  # 無制限にし、キャパシティ制限ではなくレート制限だけを検証する
+
+    with patch("def_kari.api.routes.session._generate_visitor_images"):
+        statuses = []
+        for i in range(6):
+            resp = client.post("/api/session/join", json={
+                "invite_code": invite_code,
+                "character_json": {"name": f"Guest{i}"},
+            })
+            statuses.append(resp.status_code)
+
+    assert statuses[:5].count(429) == 0
+    assert statuses[5] == 429
 
 
 def test_character_json_large_memories_no_crash():

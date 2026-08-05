@@ -44,6 +44,13 @@ public_app = FastAPI(
     version=__version__,
     description="DEF(kari) — オンラインセッション公開用エンドポイントのみ",
     lifespan=_public_lifespan,
+    # 8.13対策: 攻撃対象の全エンドポイント一覧・リクエスト/レスポンススキーマを
+    # 認証なしで閲覧できる状態になっていた（攻撃の下調べを容易にするだけで実害は
+    # 無いが、無料で塞げる項目のため対応）。main.py（ローカル専用）側は開発時の
+    # 利便性のため引き続き有効のまま。
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 public_app.add_middleware(SessionBodySizeLimitMiddleware)

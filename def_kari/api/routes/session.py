@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -500,6 +501,23 @@ def _evict_oldest_session() -> None:
         except RuntimeError:
             if _main_loop and _main_loop.is_running():
                 asyncio.run_coroutine_threadsafe(_close_all(), _main_loop)
+
+
+def _character_json_fingerprint(character_json: dict) -> str:
+    """投票expelブラックリスト用のフィンガープリント（8.21対策）。
+
+    以前はexpel可決時にトークン・接続は無効化していたが招待コード自体はブラック
+    リスト化されず、オンラインセッションは同一招待コードの使い回しが仕様上OKなため、
+    追放された本人が招待コードを覚えている限り新しいguest_idで即座に再参加できた。
+    character_jsonの内容から決定的なハッシュを計算し、join_session側で同一の
+    character_jsonでの再参加を拒否する（id/player_typeはjoin_session側でサーバーが
+    後から付与するフィールドなので計算対象から除く）。character_jsonを少しでも
+    書き換えれば回避できる不完全な対策だが、対応方針どおり「招待コード自体は
+    失効させない（正当な再接続を巻き込まない）」範囲で塞げる限度として採用する。
+    """
+    payload = {k: v for k, v in character_json.items() if k not in ("id", "player_type")}
+    normalized = json.dumps(payload, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 # ── FastAPI Dependency ────────────────────────────────────────────────
@@ -1826,6 +1844,16 @@ def join_session(req: JoinRequest, request: Request):
         display_name = sess.get("name_map", {}).get(char_id, char_id)
     elif req.character_json:
         # オンラインセッション: 参加者がキャラJSONを持ち込む
+        # T2I生成（アイコン+立ち絵、2回/回）を伴うため連打をレート制限する（8.11対策）。
+        # _check_invite_rateは招待コード「失敗」時のみカウントするため、正しい招待コードでの
+        # 参加成功には何のブレーキも無く、_generate_visitor_imagesを連打できてしまっていた。
+        if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=5):
+            raise HTTPException(429, "Too many join requests from this network. Please wait a moment.")
+
+        # 投票expelで追放されたキャラと同一character_jsonでの再参加を拒否する（8.21対策）
+        if _character_json_fingerprint(req.character_json) in sess.get("expelled_char_fingerprints", []):
+            raise HTTPException(403, "This character has been removed from the session")
+
         role = "player"
         char_id = f"guest_{_uuid_mod.uuid4().hex[:8]}"
 
@@ -3124,7 +3152,18 @@ class HumanTurnRequest(BaseModel):
 
 @router.post("/{session_id}/human_turn")
 async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict = Depends(require_player)):
-    """人間プレイヤーのターンアクション（send / extend / skip）。"""
+    """人間プレイヤーのターンアクション（send / extend / skip）。
+
+    TTS合成（_start_background_tts）を伴うが、HTTP POST経由のため_check_ws_rate
+    （WebSocketメッセージ専用）の対象外でレート制限が無かった（8.10対策）。WS発言と
+    同じ基準（60回/分）を適用する。1ターン中に複数回のアクション（積む→送信等）を
+    行う通常のゲームプレイを妨げないよう、生成系専用のより厳しい制限
+    （_check_generation_rate、6回/分）ではなくこちらを使う。
+    """
+    gen_key = _auth.get("jti") or str(_auth)
+    if not _check_ws_rate(session_id, gen_key):
+        raise HTTPException(429, "Too many requests. Please wait a moment.")
+
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -3258,8 +3297,21 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
 
 
 @router.post("/{session_id}/vote/deliberate")
-def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(require_player)):
-    """弁明ラウンド: 全 AI キャラが意見を述べてセッションに保存し、結果を返す。"""
+def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: dict = Depends(require_player)):
+    """弁明ラウンド: 全 AI キャラが意見を述べてセッションに保存し、結果を返す。
+
+    initiative内の全AIキャラ分のLLM呼び出しを伴うため、generate-image（S-6）と
+    同じレート制限パターンを適用する（8.9対策。以前はこのエンドポイントに
+    レート制限が無く、AIキャラがN人いるセッションなら1回の連打でN倍のLLM呼び出しが
+    発生しうった）。
+    """
+    gen_key = _auth.get("jti") or str(_auth)
+    if not _check_generation_rate(session_id, gen_key):
+        raise HTTPException(429, "Too many vote requests. Please wait a moment.")
+    client_ip = _resolve_client_ip(request)
+    if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=20):
+        raise HTTPException(429, "Too many vote requests from this network. Please wait a moment.")
+
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -3441,8 +3493,20 @@ def vote_deliberate(session_id: str, req: VoteRequest, _auth: dict = Depends(req
 
 
 @router.post("/{session_id}/vote/commit")
-async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Depends(require_keeper)):
-    """キーパー票を受け取り、AI票と合算して集計・効果適用する。"""
+async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request, _auth: dict = Depends(require_keeper)):
+    """キーパー票を受け取り、AI票と合算して集計・効果適用する。
+
+    全AIキャラの投票判定でLLM呼び出しを伴うため、vote_deliberateと同じレート制限を
+    適用する（8.9対策）。require_keeper化（8.19）により招待ゲストからは呼べなくなったが、
+    念のため軽めの上限を残す。
+    """
+    gen_key = _auth.get("jti") or str(_auth)
+    if not _check_generation_rate(session_id, gen_key):
+        raise HTTPException(429, "Too many vote requests. Please wait a moment.")
+    client_ip = _resolve_client_ip(request)
+    if not _check_generation_rate(session_id, f"ip:{client_ip}", limit=20):
+        raise HTTPException(429, "Too many vote requests from this network. Please wait a moment.")
+
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -3580,6 +3644,14 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
                     except Exception:
                         pass
                 revoke_token(_expelled_token)
+            # 追放されたキャラのcharacter_jsonをブラックリストに記録し、同じ招待コードで
+            # 同一character_jsonの再参加を拒否できるようにする（8.21対策）。guest_charsに
+            # 存在しない対象（既存人間スロットのclaim_char_id等）は元々character_json持ち込み
+            # ではないため対象外。
+            _expelled_char_data = session.get("guest_chars", {}).get(target_id)
+            if _expelled_char_data:
+                _fp = _character_json_fingerprint(_expelled_char_data)
+                session.setdefault("expelled_char_fingerprints", []).append(_fp)
 
     # イベントバス通知（vote結果をゲームロジックレイヤーへ伝播）
     if passed:
@@ -3672,8 +3744,13 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, _auth: dict = Dep
 
 
 @router.get("/{session_id}/events")
-def get_session_events(session_id: str):
-    """セッションのゲームロジックイベントログを返す（Observer Agent用）。"""
+def get_session_events(session_id: str, _auth: dict = Depends(require_keeper)):
+    """セッションのゲームロジックイベントログを返す（Observer Agent用）。
+
+    FLAG_UPDATED等、gm_only: trueが付くイベントを含みうるため、require_keeperで
+    保護する（8.12対策。以前は無認証で、正規に招待コードで参加した一般プレイヤーが
+    GM専用の隠し情報を覗けてしまっていた）。フロントからは現状未使用。
+    """
     from def_kari.gm.events import game_event_bus
     return {"session_id": session_id, "events": game_event_bus.get_log(session_id)}
 
@@ -3730,8 +3807,13 @@ def update_npc_relationship(session_id: str, npc_id: str, req: NpcRelationshipRe
 
 
 @router.get("/{session_id}/npc/{npc_id}/state")
-def get_npc_state(session_id: str, npc_id: str):
-    """NPC の現在の動的状態を返す（GM確認用）。"""
+def get_npc_state(session_id: str, npc_id: str, _auth: dict = Depends(require_keeper)):
+    """NPC の現在の動的状態を返す（GM確認用）。
+
+    require_keeperで保護する（8.12対策。以前は無認証で、正規に招待コードで参加した
+    一般プレイヤーがNPCの意図・関係値等のGM専用情報をTRPGのゲーム性を壊す形で
+    覗けてしまっていた）。フロントからは現状未使用。
+    """
     session = _sessions.get(session_id)
     if not session:
         return {"error": "session not found"}
@@ -3858,6 +3940,22 @@ class SaveSessionMediaItem(BaseModel):
     index: int
     image_url: str = ""
     audio_url: str = ""
+
+    from pydantic import validator as _pv
+
+    @_pv("image_url", "audio_url")
+    @classmethod
+    def _validate_media_url(cls, v: str) -> str:
+        """8.20対策: image_url/audio_urlは自サーバーの配信エンドポイントのみ許可する。
+
+        以前はURL形式・オリジンの検証が一切無く、フロント（ChatTab.tsx/SessionTab.tsx）が
+        <img src>/<audio src>にそのまま使うため、外部URLを仕込まれると読み込み時点で
+        閲覧者のIPアドレス・User-Agentが漏れる。GM/ホスト権限（require_keeper）を持つ
+        参加者（あるいはそのトークンを奪われた場合）が他の全参加者に仕込める経路だった。
+        """
+        if v and not v.startswith(("/api/t2i/image/", "/api/tts/audio/")):
+            raise ValueError("image_url/audio_url must point to this server's own media endpoints")
+        return v
 
 class SaveSessionRequest(BaseModel):
     media: list[SaveSessionMediaItem] = []

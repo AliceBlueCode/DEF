@@ -601,7 +601,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
                         src={m.imageUrl}
                         alt=""
                         className="generated-image"
-                        onDoubleClick={() => window.open(m.imageUrl, '_blank')}
+                        onDoubleClick={() => window.open(m.imageUrl, '_blank', 'noopener,noreferrer')}
                         style={{ cursor: 'zoom-in' }}
                       />
                     )}

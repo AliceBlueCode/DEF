@@ -2940,7 +2940,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                       src={m.imageUrl}
                       alt="scene"
                       className="scene-image"
-                      onDoubleClick={() => window.open(m.imageUrl, '_blank')}
+                      onDoubleClick={() => window.open(m.imageUrl, '_blank', 'noopener,noreferrer')}
                       style={{ cursor: 'zoom-in' }}
                     />
                   )}

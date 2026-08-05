@@ -23,8 +23,15 @@ router = APIRouter()
 # Image.MAX_IMAGE_PIXELS のデフォルト保護で別途防がれている）。
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 
+# 8.14対策: Content-Typeヘッダーはクライアントが自由に設定できるため完全な防御には
+# ならないが、明らかに画像でないファイルを早期に弾く軽量なフィルタとして機能する。
+# 実体の検証は呼び出し元のImage.open(...).convert("RGB")が担う（多層防御）。
+_ALLOWED_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
 
 async def _read_upload_limited(file: UploadFile, max_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
+    if file.content_type not in _ALLOWED_IMAGE_CONTENT_TYPES:
+        raise HTTPException(415, f"Unsupported content type: {file.content_type}")
     content = await file.read(max_bytes + 1)
     if len(content) > max_bytes:
         raise HTTPException(413, f"File too large (max {max_bytes // (1024 * 1024)}MB)")

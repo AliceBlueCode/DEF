@@ -21,15 +21,14 @@ from def_kari.api.public_main import public_app
 client = TestClient(public_app)
 
 # 公開してよいパスプレフィックス（これ以外が現れたらテスト失敗）
+# /openapi.json・/docs・/redocは8.13対策でdocs_url等をNoneにして無効化したため
+# 登録されず、このリストにも含めない（test_docs_endpoints_not_reachableで別途確認）。
 _ALLOWED_PREFIXES = (
     "/api/session",
     "/api/characters",  # characters_public のみマウントされている前提（下のテストで別途検証）
     "/api/t2i",         # t2i_public のみ
     "/api/tts",         # tts_public のみ
     "/api/health",
-    "/openapi.json",
-    "/docs",
-    "/redoc",
 )
 
 
@@ -255,6 +254,22 @@ def test_session_join_flow_reachable():
 
 def test_health_reachable():
     assert client.get("/api/health").status_code == 200
+
+
+def test_docs_endpoints_not_reachable():
+    """8.13対策: /docs・/redoc・/openapi.jsonはpublic_appから到達不能であること。
+
+    以前はFastAPIのデフォルトドキュメント機能が有効なままで、攻撃対象の全エンドポイント
+    一覧・リクエスト/レスポンススキーマが認証なしで誰でも閲覧できた（攻撃の下調べを
+    容易にする）。main.py（ローカル専用）側は開発時の利便性のため引き続き有効。
+    """
+    assert client.get("/docs").status_code == 404
+    assert client.get("/redoc").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+    from def_kari.api.main import app
+    full_client = TestClient(app)
+    assert full_client.get("/docs").status_code == 200
 
 
 def test_full_app_still_has_all_routers():
