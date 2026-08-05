@@ -277,6 +277,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       },
     })
 
+  // レスポンスをJSONパースし、data.errorの形にそろえて返す。
+  // バックエンドは業務エラーを200+{error}、認証/権限/レート制限エラーをHTTPException(401/403/404/429等)+{detail}で
+  // 返すため、res.okを見ずにdata.errorだけをチェックするとHTTPException側を素通りしてしまう
+  // （例: 追放されJWTが失効したプレイヤーの操作が、実際は401で拒否されているのに成功したかのように見えるバグ）。
+  const parseJsonResponse = async (res: Response): Promise<any> => {
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok && !data.error) return { ...data, error: data.detail || `HTTP ${res.status}` }
+    return data
+  }
+
   const fetchSavedSessions = () => {
     fetch('/api/session/saved')
       .then(r => r.json())
@@ -853,7 +863,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     setAutoAdvance(false)
     autoAdvanceRef.current = false
     const res = await authFetch(`/api/session/${sessionId}/retake`, { method: 'POST' })
-    const data = await res.json()
+    const data = await parseJsonResponse(res)
     if (data.error) { console.error(data.error); return }
     const removed = data.removed ?? 0
     if (removed > 0) setMessages(prev => prev.slice(0, -removed))
@@ -933,7 +943,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backend }),
       })
-      const d = await res.json()
+      const d = await parseJsonResponse(res)
       if (d.error) { console.error(d.error); return null }
       return {
         text: d.text ?? '',
@@ -1064,7 +1074,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           is_skill: isSkill,
         }),
       })
-      const d = await res.json()
+      const d = await parseJsonResponse(res)
       if (d.error) { console.error(d.error); return null }
       return d
     } catch (e) {
@@ -1252,7 +1262,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         })
-        const data = await res.json()
+        const data = await parseJsonResponse(res)
         if (data.error) continue
         let text = `[${data.rolls?.join(', ')}] = ${data.total}`
         if (data.judgment) {
@@ -1659,7 +1669,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const skipCurrentTurn = async () => {
     if (!sessionId) return
     const res = await authFetch(`/api/session/${sessionId}/skip`, { method: 'POST' })
-    const data = await res.json()
+    const data = await parseJsonResponse(res)
     if (data.error) return
     if (data.counters) setCounters(capCounters(data.counters))
     setRound(data.round)
@@ -1695,7 +1705,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ action: 'generate_image', text: '', character_id: humanCharId }),
     })
-    const data = await res.json()
+    const data = await parseJsonResponse(res)
     if (data.error) return
     if (data.counters) setCounters(capCounters(data.counters))
     generateSceneImage()
@@ -1720,7 +1730,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ action, text, character_id: humanCharId }),
     })
-    const data = await res.json()
+    const data = await parseJsonResponse(res)
     if (data.error) {
       if (action === 'send' || action === 'skip') setWaitingForHuman(true)  // 失敗時は戻す
       return
@@ -1790,7 +1800,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vote_type: voteType, detail: voteDetail, target_id: voteTarget, proposer_id: humanCharId, proposer_text: voteProposerText }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (data.error) return
       if (data.counters) setCounters(capCounters(data.counters))
       if (data.deliberations && Array.isArray(data.deliberations)) {
@@ -1837,7 +1847,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
         body: JSON.stringify({ keeper_vote: keeperVote }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (data.error) return
       setMessages(prev => [
         ...prev.filter(m => !m.isKeeperVote),
@@ -1862,7 +1872,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     if (!sessionId) return
     try {
       const res = await authFetch(`/api/session/${sessionId}/scene/advance`, { method: 'POST' })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (data.error) { console.error('scene/advance:', data.error); return }
       if (typeof data.current_scene_index === 'number') setCurrentSceneIndex(data.current_scene_index)
       const sceneLabel = data.scene_title
@@ -1897,7 +1907,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backend, t2i_backend: t2iBackend }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (data.error) {
         setMessages(prev => prev.map(m => m._genId === genId ? { ...m, imageStatus: 'error', imageError: data.error } : m))
         setSceneImageStatus('error')

@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e:vote-expel": "node e2e/vote_expel.js",
+    "e2e:jwt-regen": "node e2e/jwt_regen.js",
+    "e2e:disconnect-timeout": "node e2e/disconnect_timeout.js"
   },
   "dependencies": {
     "react": "^19.2.7",
@@ -19,6 +22,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "oxlint": "^1.69.0",
+    "playwright": "^1.62.1",
     "typescript": "~6.0.2",
     "vite": "^8.1.0"
   }
