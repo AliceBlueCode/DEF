@@ -90,6 +90,36 @@ function reconstructMessages(
   })
 }
 
+// リロード後もセッションへ復帰できるよう、参加/作成が成功した時点の最小限の
+// 情報をsessionStorageへ書く(タブを閉じれば消える。localStorageではなく
+// sessionStorageなのは、複数タブでホスト/ゲストを別々に開くテスト等での
+// 汚染を避けるため)。App.tsxは同じキーを「起動時にsessionタブを開くか」の
+// 判定にのみ使い、値の中身は読まない。
+const SESSION_RESTORE_KEY = 'def_active_session'
+
+type SessionRestoreState = {
+  sessionId: string
+  token: string
+  role: 'host' | 'player' | 'observer' | 'gm'
+  charId: string
+  displayName: string
+}
+
+function saveSessionRestoreState(state: SessionRestoreState) {
+  try { sessionStorage.setItem(SESSION_RESTORE_KEY, JSON.stringify(state)) } catch { /* ignore */ }
+}
+
+function loadSessionRestoreState(): SessionRestoreState | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_RESTORE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+function clearSessionRestoreState() {
+  try { sessionStorage.removeItem(SESSION_RESTORE_KEY) } catch { /* ignore */ }
+}
+
 type Props = {
   characters: Character[]
   backend: string
@@ -265,6 +295,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const myRoleRef = useRef<'host' | 'player' | 'observer' | 'gm'>('host')
   const wsRef = useRef<WebSocket | null>(null)
   const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // sessionStorageからの自動復帰試行中フラグ。復帰時の最初の接続が4001(認証切れ)/
+  // 4004(セッション消滅)で閉じた場合は、無限に再接続を試み続けず諦めて通常の
+  // 作成/参加画面に戻す(トークン失効・ホストのセッション終了後にリロードした場合等)。
+  const isRestoringRef = useRef(false)
   const [standingFallback, setStandingFallback] = useState<Set<string>>(new Set())
   // 持ち込みキャラのアイコン/立ち絵がバックグラウンド生成完了した際、no-cacheな画像を再取得させるためのバージョン値
   const [iconVersion, setIconVersion] = useState<Record<string, number>>({})
@@ -351,6 +385,31 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       .catch(() => {})
   }
 
+  // ── マウント時のセッション復帰（リロード対策） ──────────────────
+  // sessionStorageに以前のセッション情報が残っていれば、作成/参加画面を経由せず
+  // 直接そのセッションへの接続を試みる。sessionIdがセットされると下のWS接続用
+  // useEffectが起動する。復帰後に何ターンか進んでいた場合の状態(round/counters等)
+  // はWS接続時に届くイベントで徐々に追いつく想定であり、ここでは接続の再開自体
+  // のみを担う(完全な状態スナップショット取得はしていない — 既知の制約)。
+  useEffect(() => {
+    if (sessionId) return
+    const restore = loadSessionRestoreState()
+    if (!restore) return
+    isRestoringRef.current = true
+    sessionIdRef.current = restore.sessionId
+    hostTokenRef.current = restore.token
+    myRoleRef.current = restore.role
+    setMyRole(restore.role)
+    if (restore.charId) {
+      myCharIdRef.current = restore.charId
+      setHumanCharId(restore.charId)
+      setHumanCharName(restore.displayName || restore.charId)
+    }
+    setLobbyActive(false)
+    setSessionId(restore.sessionId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── WebSocket 接続（sessionId 確定後に接続・exponential backoff 再接続）──
   // 初回接続前に既存の会話履歴を1回だけ取得する。リロード・途中参加・再接続時に
   // 会話が全部消える問題(2026-08-08発覚)への対応。WS再接続(ws.onclose→connect再実行)
@@ -368,11 +427,28 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         ws.send(JSON.stringify({ type: 'auth', token: hostTokenRef.current }))
       }
       ws.onmessage = (e) => {
+        // サーバーは認証成功後にしかメッセージを送らないため、何か1件でも
+        // 受信できた時点で復帰試行は成功とみなしてよい。
+        isRestoringRef.current = false
         try { void handleSessionEvent(JSON.parse(e.data as string)) } catch {}
       }
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         wsRef.current = null
         if (!sessionIdRef.current) return
+        // sessionStorageからの復帰試行における最初の接続が認証切れ(4001)/
+        // セッション消滅(4004)で閉じた場合は、無限リトライせず諦めて通常の
+        // 作成/参加画面に戻す。
+        if (isRestoringRef.current && retries === 0 && (event.code === 4001 || event.code === 4004)) {
+          isRestoringRef.current = false
+          clearSessionRestoreState()
+          sessionIdRef.current = ''
+          setSessionId('')
+          setMyRole('host')
+          myCharIdRef.current = ''
+          setHumanCharId('')
+          setHumanCharName('')
+          return
+        }
         const delay = Math.min(1000 * Math.pow(2, retries), 16000)
         retries++
         wsReconnectTimerRef.current = setTimeout(connect, delay)
@@ -877,7 +953,18 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     hostTokenRef.current = data.host_token ?? ''
     myRoleRef.current = 'host'
     setMyRole('host')
-    if (data.invite_code) setInviteCode(data.invite_code)
+    if (data.invite_code) {
+      setInviteCode(data.invite_code)
+      // オンライン(招待コード発行あり)セッションのみ復帰対象とする。ローカル
+      // セッションはそもそも他参加者がいないため、リロード後の自動復帰は不要。
+      saveSessionRestoreState({
+        sessionId: data.session_id,
+        token: data.host_token ?? '',
+        role: 'host',
+        charId: humanChar?.id ?? '',
+        displayName: humanChar?.name ?? '',
+      })
+    }
     const firstCharId = (data.initiative || [])[0]
     if (humanChar && firstCharId === humanChar.id) {
       setWaitingForHuman(true)
@@ -1494,6 +1581,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     // 自タブが受信して endSession() を再実行するループを防ぐ
     if (endingRef.current) return
     endingRef.current = true
+    clearSessionRestoreState()
     if (sessionId && messages.length > 0) {
       await saveCurrentSession()
     }
@@ -2637,6 +2725,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 setSessionId(sid)
                 myRoleRef.current = role
                 setMyRole(role)
+                saveSessionRestoreState({ sessionId: sid, token, role, charId: charId || '', displayName: displayName || '' })
                 console.log('[SessionTab] onJoined: isLobbyActive=', isLobbyActive, 'role=', role, 'charId=', charId)
                 setLobbyActive(isLobbyActive)
                 // プレイヤーとして参加した場合は自分のキャラIDをセット（コントロール表示を切り替える）

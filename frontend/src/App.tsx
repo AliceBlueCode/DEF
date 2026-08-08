@@ -35,6 +35,10 @@ const LS_KEY_TTS = 'def_tts_backend'
 const LS_KEY_CANDIDATES = 'def_candidate_count'
 const LS_KEY_THEME = 'def_theme'
 const LS_KEY_CHAR = 'def_selected_char'
+// SessionTab.tsxと同じキー文字列を使う(セッション参加/作成時に書き込み、
+// 終了/退室時に消去する)。リロード直後にsessionタブへ自動で戻すためだけに
+// ここで参照し、内容の読み書き自体はSessionTab.tsx側が担う。
+const SS_KEY_ACTIVE_SESSION = 'def_active_session'
 
 function AppInner() {
   const t = useT()
@@ -46,7 +50,9 @@ function AppInner() {
   const [selectedT2iBackend, setSelectedT2iBackend] = useState(() => localStorage.getItem(LS_KEY_T2I) || '')
   const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'openai_tts')
   const [candidateCount, setCandidateCount] = useState(() => Number(localStorage.getItem(LS_KEY_CANDIDATES)) || 3)
-  const [activeTab, setActiveTab] = useState<TabId>('chat')
+  const [activeTab, setActiveTab] = useState<TabId>(() =>
+    sessionStorage.getItem(SS_KEY_ACTIVE_SESSION) ? 'session' : 'chat'
+  )
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0)
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'dark'
