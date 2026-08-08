@@ -82,7 +82,14 @@ class TestLoadProfiles:
         assert "test_char_001" in result
         assert result["test_char_001"]["base_profile"]["name"] == "Test"
 
-    def test_empty_dirs_return_empty(self, tmp_path):
+    def test_empty_dirs_return_empty(self, tmp_path, monkeypatch):
+        # CHARACTER_REPO_PATH(S) を明示的に無効化する。def_kari/api/main.py が
+        # インポート時に.envを読み込みos.environにセットする副作用があるため、
+        # 先に他のテストがmainをインポート済みだと実環境のリポジトリパスが
+        # 残っていて_get_repo_paths()経由で実キャラクターを拾ってしまい、
+        # 「空なら空を返す」の前提が崩れる(2026-08-08、テスト再編時に発覚)。
+        monkeypatch.delenv("CHARACTER_REPO_PATH", raising=False)
+        monkeypatch.delenv("CHARACTER_REPO_PATHS", raising=False)
         with mock.patch(
             "def_kari.characters.CHARACTERS_DIR", tmp_path
         ), mock.patch(

@@ -2,7 +2,7 @@
 
 使用方法:
   cd e:\tools\DEF
-  python -m def_kari.test_trpg_phase4
+  python -m pytest tests/test_trpg_phase4.py
 """
 
 import json
@@ -123,7 +123,10 @@ def test_plan_action_returns_string_from_llm():
     import def_kari.gm.player_agent as pa_module
     import def_kari.llm.backend as backend_module
 
-    original_backends = backend_module.LLM_BACKENDS.copy()
+    # 既存の辞書オブジェクトへキーを追加・削除する(丸ごと別オブジェクトへ差し替えない)。
+    # tests/conftest.py の安全網フィクスチャは同じ LLM_BACKENDS オブジェクトへの
+    # 参照を保持したままchat関数を退避・復元するため、ここで別オブジェクトに
+    # 差し替えると "mock" キーだけがフィクスチャの復元対象から漏れてKeyErrorになる。
     backend_module.LLM_BACKENDS["mock"] = {
         "chat": lambda messages, system, **kwargs: "真実を問いただす",
         "default_model": "",
@@ -143,8 +146,7 @@ def test_plan_action_returns_string_from_llm():
         )
         assert result == "真実を問いただす", f"Expected plan string, got {result!r}"
     finally:
-        backend_module.LLM_BACKENDS = original_backends
-        pa_module.LLM_BACKENDS = original_backends
+        backend_module.LLM_BACKENDS.pop("mock", None)
 
     print("PASS: _plan_action returns LLM output as string")
 

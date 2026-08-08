@@ -2,7 +2,7 @@
 
 使用方法:
   cd e:\tools\DEF
-  python -m def_kari.test_trpg_phase3
+  python -m pytest tests/test_trpg_phase3.py
 """
 
 

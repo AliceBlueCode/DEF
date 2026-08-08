@@ -1,80 +1,14 @@
-"""Phase 2-3 CLI検証: workers, safety, historyがStreamlit無しで動作することを確認する。
+"""MVP初期(Phase 2-3)CLI検証: safety, historyがStreamlit無しで動作することを確認する。
+2026-08-08、def_kari/直下からtests/へ移動。workers系(test_tts_worker/test_t2i_worker/
+test_worker_runner)は死んでいたworkers.runner/t2i_worker/tts_workerのテストだった
+ため削除(モジュール自体も削除)。
 
 使用方法:
   cd e:\tools\DEF
-  python -m def_kari.test_phase2_3
+  python -m pytest tests/test_phase2_3.py
 """
 
-import os
-import json
-import queue
 import tempfile
-import threading
-
-
-def test_tts_worker():
-    from def_kari.workers.tts_worker import handle_tts_task
-
-    result_q = queue.Queue()
-    task = {"kind": "tts", "msg_id": "test-tts-001", "emotion": "happy", "text": "テスト"}
-    handle_tts_task(task, result_q)
-
-    event = result_q.get(timeout=5)
-    assert event["type"] == "TTS_COMPLETE"
-    assert event["payload"]["msg_id"] == "test-tts-001"
-    audio_path = event["payload"]["audio_path"]
-    assert audio_path and os.path.exists(audio_path)
-    os.remove(audio_path)
-    print("PASS: tts_worker")
-
-
-def test_t2i_worker():
-    from def_kari.workers.t2i_worker import handle_image_task
-
-    result_q = queue.Queue()
-    vram_lock = threading.Lock()
-    task = {
-        "kind": "image",
-        "msg_id": "test-t2i-001",
-        "emotion": "sad",
-        "image_prompt_en": "1girl, beach, sunset",
-        "t2i_width": 256,
-        "t2i_height": 256,
-    }
-    handle_image_task(task, result_q, vram_lock)
-
-    events = []
-    while not result_q.empty():
-        events.append(result_q.get_nowait())
-
-    assert any(e["type"] == "SYSTEM_NOTIFICATION" and "acquired" in e["payload"].get("message", "") for e in events)
-    assert any(e["type"] == "IMAGE_COMPLETE" for e in events)
-    assert any(e["type"] == "SYSTEM_NOTIFICATION" and "released" in e["payload"].get("message", "") for e in events)
-    assert not vram_lock.locked()
-
-    img_event = next(e for e in events if e["type"] == "IMAGE_COMPLETE")
-    img_path = img_event["payload"]["image_path"]
-    assert os.path.exists(img_path)
-    os.remove(img_path)
-    print("PASS: t2i_worker")
-
-
-def test_worker_runner():
-    from def_kari.workers.runner import start_worker
-
-    task_q = queue.Queue()
-    result_q = queue.Queue()
-    vram_lock = threading.Lock()
-
-    t = start_worker(task_q, result_q, vram_lock)
-    assert t.is_alive()
-
-    task_q.put({"kind": "tts", "msg_id": "runner-001", "emotion": "neutral", "text": "test"})
-    event = result_q.get(timeout=10)
-    assert event["type"] == "TTS_COMPLETE"
-    if event["payload"].get("audio_path") and os.path.exists(event["payload"]["audio_path"]):
-        os.remove(event["payload"]["audio_path"])
-    print("PASS: worker_runner")
 
 
 def test_safety_filters():
@@ -162,8 +96,5 @@ def test_history_store():
 
 if __name__ == "__main__":
     test_safety_filters()
-    test_tts_worker()
-    test_t2i_worker()
-    test_worker_runner()
     test_history_store()
     print("\nPhase 2-3 CLI tests: all passed.")

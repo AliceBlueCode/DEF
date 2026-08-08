@@ -1,8 +1,10 @@
-"""Phase 4 CLIテスト: 今日追加した機能のユニットテスト。
+"""MVP初期(Phase 4)CLIテスト: 当時追加した機能のユニットテスト。
+2026-08-08、def_kari/直下からtests/へ移動(同名の tests/test_phase4.py は
+v4.0マルチプレイヤー実装の別系統のテストで中身は無関係なため、衝突回避のため改名)。
 
 使用方法:
   cd e:\tools\DEF
-  python -m def_kari.test_phase4
+  python -m pytest tests/test_mvp_phase4.py
 """
 
 import os

@@ -1,48 +1,11 @@
-"""Phase 1 CLI検証: Streamlit無しでLLM応答・翻訳・タグ抽出が動作することを確認する。
+"""MVP初期(Phase 1)CLI検証: Streamlit無しでLLM応答・翻訳・タグ抽出が動作することを確認する。
+2026-08-08、def_kari/直下からtests/へ移動(test_events/test_dispatcherは死んでいた
+core.events/core.dispatcherのテストだったため削除。それに伴いモジュール自体も削除)。
 
 使用方法:
   cd e:\tools\DEF
-  python -m def_kari.test_phase1
+  python -m pytest tests/test_mvp_phase1.py
 """
-
-import sys
-
-
-def test_events():
-    from def_kari.core.events import make_event, EVENT_TTS_COMPLETE
-
-    event = make_event(EVENT_TTS_COMPLETE, {"msg_id": "test-123", "audio_path": "test.wav"})
-    assert event["type"] == EVENT_TTS_COMPLETE
-    assert event["payload"]["msg_id"] == "test-123"
-    assert "id" in event
-    assert "timestamp" in event
-    print("PASS: events")
-
-
-def test_dispatcher():
-    import queue
-    from def_kari.core.events import make_event, EVENT_TTS_COMPLETE
-    from def_kari.core.dispatcher import drain_events, apply_event
-
-    q = queue.Queue()
-    q.put(make_event(EVENT_TTS_COMPLETE, {"msg_id": "m1", "audio_path": "a.wav"}))
-    q.put(make_event(EVENT_TTS_COMPLETE, {"msg_id": "m2", "audio_path": "b.wav"}))
-
-    events = drain_events(q)
-    assert len(events) == 2
-    assert q.empty()
-
-    history = [
-        {"id": "m1", "state": "TTS Running", "audio_path": None},
-        {"id": "m2", "state": "TTS Running", "audio_path": None},
-    ]
-    for e in events:
-        apply_event(e, history)
-    assert history[0]["audio_path"] == "a.wav"
-    assert history[0]["state"] == "TTS Completed"
-    assert history[1]["audio_path"] == "b.wav"
-    print("PASS: dispatcher")
-
 
 def test_model_registry():
     from def_kari.models.registry import load_model_master, get_prompt_language, get_model_type, get_quirks
@@ -99,8 +62,7 @@ def test_llm_backend_registry():
 
 
 def test_translation():
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent / "translation"))
-    from translation_factory import create_provider
+    from def_kari.translation.translation_factory import create_provider
 
     p = create_provider("library")
     assert p.provider_name == "library"
@@ -111,9 +73,8 @@ def test_translation():
 
 
 def test_image_prompt():
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent / "image_prompt"))
-    from tag_extractor import extract_flat_tags
-    from prompt_generator import generate_prompt_from_text
+    from def_kari.image_prompt.tag_extractor import extract_flat_tags
+    from def_kari.image_prompt.prompt_generator import generate_prompt_from_text
 
     noise_tags = extract_flat_tags(
         "Of course I think tests are important. Let's make sure everything works."
@@ -143,8 +104,6 @@ def test_llm_client_offline():
 
 
 if __name__ == "__main__":
-    test_events()
-    test_dispatcher()
     test_model_registry()
     test_llm_schema()
     test_llm_prompts()
