@@ -38,6 +38,58 @@ type SavedSession = {
   trpg_scenario_title?: string
 }
 
+// 生の history 配列(セーブファイル読み込み・GET /{session_id}どちらも同じ形)から
+// 表示用の SessionMessage[] を組み立てる。loadSavedSession() と、接続時の
+// 履歴取得の両方から使う共通ロジック。
+function reconstructMessages(
+  history: any[],
+  nameMap: Record<string, string>,
+  charMap: Record<string, Character>,
+): SessionMessage[] {
+  // _dice 旧データ用: "🎲 CharName【stat】..." からキャラ名を逆引き
+  const reverseNameMap: Record<string, string> = {}
+  for (const [id, n] of Object.entries(nameMap)) reverseNameMap[n] = id
+
+  return history.map(h => {
+    if (h.character_id === 'human') {
+      return { character_id: 'human', character_name: 'You', text: h.content, emotion: '', tags: [], isHuman: true }
+    }
+    if (h.character_id === '_scene_image') {
+      return {
+        character_id: '__scene__',
+        character_name: '',
+        text: '',
+        emotion: '',
+        tags: [],
+        isSceneImage: true,
+        imageStatus: h.image_url ? 'done' : 'error',
+        imageUrl: (h.image_url as string) || undefined,
+      } as SessionMessage
+    }
+    let cid: string = h.character_id || ''
+    // 旧セーブデータ互換: _dice → コンテンツからキャラ名を解析して実IDに変換
+    if (cid === '_dice') {
+      const m = h.content.match(/^🎲\s+(.+?)(?:【|$)/)
+      const parsedName = m?.[1]?.trim()
+      const resolvedId = parsedName ? reverseNameMap[parsedName] : undefined
+      if (resolvedId) cid = resolvedId
+    }
+    const name = cid === '_keeper' ? '🎩 Keeper' : (nameMap[cid] || cid)
+    const prefix = name + ': '
+    const text = h.content.startsWith(prefix) ? h.content.slice(prefix.length) : h.content
+    return {
+      character_id: cid,
+      character_name: name,
+      text,
+      emotion: h.emotion || '',
+      tags: h.tags || [],
+      imageColor: charMap[cid]?.image_color,
+      imageUrl: (h.image_url as string) || undefined,
+      audioUrl: (h.audio_url as string) || undefined,
+    }
+  })
+}
+
 type Props = {
   characters: Character[]
   backend: string
@@ -163,6 +215,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [inviteCode, setInviteCode] = useState('')
   const [extraNameMap, setExtraNameMap] = useState<Record<string, string>>({})
   const [messages, setMessages] = useState<SessionMessage[]>([])
+  // 接続時に取得した既存履歴のうち、直近分以外を隠しておく置き場(ChatTab.tsxの
+  // hiddenHistory/hasMoreと同じ考え方)。リロード・途中参加時に会話が全部消える
+  // 問題(2026-08-08発覚)への対応。
+  const [hiddenSessionHistory, setHiddenSessionHistory] = useState<SessionMessage[]>([])
+  const initialHistoryFetchedForRef = useRef('')
   const [loading, setLoading] = useState(false)
   const [sessionStarting, setSessionStarting] = useState(false)
   const [lobbyMode, setLobbyMode] = useState(false)
@@ -295,9 +352,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   }
 
   // ── WebSocket 接続（sessionId 確定後に接続・exponential backoff 再接続）──
+  // 初回接続前に既存の会話履歴を1回だけ取得する。リロード・途中参加・再接続時に
+  // 会話が全部消える問題(2026-08-08発覚)への対応。WS再接続(ws.onclose→connect再実行)
+  // 側では取得しない — 取得済みのmessagesをそのまま保持し続ければ十分なため。
   useEffect(() => {
     if (!sessionId) return
     let retries = 0
+    let cancelled = false
     const connect = () => {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const ws = new WebSocket(`${proto}//${window.location.host}/api/session/${sessionId}/ws`)
@@ -317,8 +378,34 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         wsReconnectTimerRef.current = setTimeout(connect, delay)
       }
     }
-    connect()
+
+    const RECENT_COUNT = 20
+    const connectAfterInitialHistory = async () => {
+      if (initialHistoryFetchedForRef.current !== sessionId) {
+        initialHistoryFetchedForRef.current = sessionId
+        try {
+          const res = await fetch(`/api/session/${sessionId}`)
+          const data = await res.json()
+          const history: any[] = data.session?.history || []
+          if (history.length > 0 && !cancelled) {
+            const nameMap: Record<string, string> = data.session?.name_map || {}
+            const charMapForHistory = Object.fromEntries(characters.map(c => [c.id, c]))
+            const reconstructed = reconstructMessages(history, nameMap, charMapForHistory)
+            if (reconstructed.length > RECENT_COUNT) {
+              setHiddenSessionHistory(reconstructed.slice(0, -RECENT_COUNT))
+              setMessages(reconstructed.slice(-RECENT_COUNT))
+            } else {
+              setMessages(reconstructed)
+            }
+          }
+        } catch { /* 取得失敗時は履歴なしで通常接続に進む(fail-open) */ }
+      }
+      if (!cancelled) connect()
+    }
+    void connectAfterInitialHistory()
+
     return () => {
+      cancelled = true
       if (wsReconnectTimerRef.current !== null) {
         clearTimeout(wsReconnectTimerRef.current)
         wsReconnectTimerRef.current = null
@@ -1337,48 +1424,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
 
       const nameMap: Record<string, string> = data.name_map || {}
       const history: any[] = data.history || []
-      // _dice 旧データ用: "🎲 CharName【stat】..." からキャラ名を逆引き
-      const reverseNameMap: Record<string, string> = {}
-      for (const [id, n] of Object.entries(nameMap)) reverseNameMap[n] = id
-
-      const reconstructed: SessionMessage[] = history.map(h => {
-        if (h.character_id === 'human') {
-          return { character_id: 'human', character_name: 'You', text: h.content, emotion: '', tags: [], isHuman: true }
-        }
-        if (h.character_id === '_scene_image') {
-          return {
-            character_id: '__scene__',
-            character_name: '',
-            text: '',
-            emotion: '',
-            tags: [],
-            isSceneImage: true,
-            imageStatus: h.image_url ? 'done' : 'error',
-            imageUrl: (h.image_url as string) || undefined,
-          } as SessionMessage
-        }
-        let cid: string = h.character_id || ''
-        // 旧セーブデータ互換: _dice → コンテンツからキャラ名を解析して実IDに変換
-        if (cid === '_dice') {
-          const m = h.content.match(/^🎲\s+(.+?)(?:【|$)/)
-          const parsedName = m?.[1]?.trim()
-          const resolvedId = parsedName ? reverseNameMap[parsedName] : undefined
-          if (resolvedId) cid = resolvedId
-        }
-        const name = cid === '_keeper' ? '🎩 Keeper' : (nameMap[cid] || cid)
-        const prefix = name + ': '
-        const text = h.content.startsWith(prefix) ? h.content.slice(prefix.length) : h.content
-        return {
-          character_id: cid,
-          character_name: name,
-          text,
-          emotion: h.emotion || '',
-          tags: h.tags || [],
-          imageColor: charMap[cid]?.image_color,
-          imageUrl: (h.image_url as string) || undefined,
-          audioUrl: (h.audio_url as string) || undefined,
-        }
-      })
+      const reconstructed: SessionMessage[] = reconstructMessages(history, nameMap, charMap)
 
       sessionIdRef.current = data.session_id
       setSessionId(data.session_id)
@@ -2900,6 +2946,16 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         </div>
 
         {/* メッセージ履歴 */}
+        {hiddenSessionHistory.length > 0 && (
+          <div className="load-more-wrap">
+            <button className="load-more-btn" onClick={() => {
+              setMessages(prev => [...hiddenSessionHistory, ...prev])
+              setHiddenSessionHistory([])
+            }}>
+              {t('session.history.showBtn', { n: hiddenSessionHistory.length })}
+            </button>
+          </div>
+        )}
         <div className="session-messages">
           {messages.map((m, i) => {
             if (m.character_id === '_keeper') {

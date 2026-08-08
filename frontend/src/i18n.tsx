@@ -88,6 +88,7 @@ const ja: Record<string, string> = {
   // Session — header
   'session.header.saveTitle': 'セッションを保存',
   'session.header.endBtn': 'セッション終了',
+  'session.history.showBtn': '📜 それ以前の会話を表示 ({n}件)',
   'session.save.saving': '保存中...',
   'session.save.done': '保存完了',
   'session.save.failed': '保存失敗',
@@ -639,6 +640,7 @@ const en: Record<string, string> = {
   // Session — header
   'session.header.saveTitle': 'Save session',
   'session.header.endBtn': 'End Session',
+  'session.history.showBtn': '📜 Show earlier conversation ({n})',
   'session.save.saving': 'Saving...',
   'session.save.done': 'Saved',
   'session.save.failed': 'Save failed',
