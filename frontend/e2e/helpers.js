@@ -87,6 +87,9 @@ export async function createOnlineSession(browser, { characterName = 'ChatGPT', 
 }
 
 // 招待コードでプレイヤーとして参加する(キャラJSON持ち込み)。
+// ゲストは以後ターン待ちの間WS受信のみで能動的な認証済みリクエストを出さない
+// ことがあるため(trackAuthTokensでは拾えない場合がある)、join応答のplayer_token
+// をここで直接捕まえて返す。
 export async function joinAsPlayer(browser, inviteCode, { charJsonPath = GUEST_CHAR_JSON, viewport = { width: 1400, height: 900 } } = {}) {
   const ctx = await browser.newContext({ viewport })
   const page = await ctx.newPage()
@@ -102,12 +105,78 @@ export async function joinAsPlayer(browser, inviteCode, { charJsonPath = GUEST_C
   await page.waitForTimeout(200)
   await page.locator('input[type=file][accept=".json"]').setInputFiles(charJsonPath)
   await page.waitForTimeout(200)
+  const joinResponsePromise = page.waitForResponse(res => res.url().endsWith('/api/session/join'), { timeout: 15000 })
   await page.getByRole('button', { name: '参加する' }).click()
+  const joinResponse = await joinResponsePromise
+  let playerToken = null
+  try {
+    playerToken = (await joinResponse.json()).player_token || null
+  } catch { /* ignore */ }
   await page.waitForTimeout(1200)
-  return { ctx, page }
+  return { ctx, page, playerToken }
 }
 
 export async function startSession(hostPage) {
   await hostPage.getByRole('button', { name: 'セッション開始' }).click()
   await hostPage.waitForTimeout(1800)
+}
+
+// バックエンドのWS直接URL（フロントのViteプロキシを経由しない生WebSocket接続用）。
+export const WS_URL = 'ws://127.0.0.1:8511'
+
+// ページが送信するAuthorizationヘッダーからBearerトークンを継続的に収集する。
+// createOnlineSession/joinAsPlayer が返した直後(何らかの認証済みリクエストが
+// 飛ぶ前)に呼ぶこと。tokens配列は以後リアルタイムに追記される。
+export function trackAuthTokens(page) {
+  const tokens = []
+  page.on('request', req => {
+    const auth = req.headers()['authorization']
+    if (auth && auth.startsWith('Bearer ')) {
+      const t = auth.slice(7)
+      if (!tokens.includes(t)) tokens.push(t)
+    }
+  })
+  return tokens
+}
+
+// トークンが1件以上採取されるまで待つ。
+export async function waitForToken(tokens, timeoutMs = 8000) {
+  const t0 = Date.now()
+  while (tokens.length === 0) {
+    if (Date.now() - t0 > timeoutMs) throw new Error('no auth token captured in time')
+    await new Promise(r => setTimeout(r, 100))
+  }
+  return tokens[tokens.length - 1]
+}
+
+// 生WebSocketをページコンテキスト内で開く。first-message authでtokenを送る
+// (tokenがnullなら送らない＝未認証接続のテスト用)。戻り値はハンドルID。
+export async function openRawWs(page, sessionId, token) {
+  return page.evaluate(({ sessionId, token, wsUrl }) => {
+    const id = `raw_${Math.random().toString(36).slice(2)}`
+    const ws = new WebSocket(`${wsUrl}/api/session/${sessionId}/ws`)
+    window.__rawWs = window.__rawWs || {}
+    window.__rawWsLog = window.__rawWsLog || {}
+    window.__rawWs[id] = ws
+    window.__rawWsLog[id] = { messages: [], closeCode: null, closed: false, opened: false }
+    ws.onopen = () => {
+      window.__rawWsLog[id].opened = true
+      if (token !== null) ws.send(JSON.stringify({ type: 'auth', token }))
+    }
+    ws.onmessage = e => window.__rawWsLog[id].messages.push(e.data)
+    ws.onclose = e => { window.__rawWsLog[id].closed = true; window.__rawWsLog[id].closeCode = e.code }
+    return id
+  }, { sessionId, token, wsUrl: WS_URL })
+}
+
+export async function rawWsSend(page, id, obj) {
+  await page.evaluate(({ id, obj }) => window.__rawWs[id].send(JSON.stringify(obj)), { id, obj })
+}
+
+export async function rawWsState(page, id) {
+  return page.evaluate(id => window.__rawWsLog[id], id)
+}
+
+export async function rawWsClose(page, id) {
+  await page.evaluate(id => { try { window.__rawWs[id].close() } catch {} }, id)
 }

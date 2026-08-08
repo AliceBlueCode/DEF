@@ -1,0 +1,10 @@
+{
+  "name": "テストR18ゲスト",
+  "persona_description": "E2Eテスト用のダミーキャラクター(R18想定)。",
+  "content_policy": {
+    "rating_sexual": "hentai",
+    "rating_violence": "extreme"
+  },
+  "rating_sexual": "hentai",
+  "rating_violence": "extreme"
+}

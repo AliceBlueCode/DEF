@@ -10,7 +10,15 @@
     "preview": "vite preview",
     "e2e:vote-expel": "node e2e/vote_expel.js",
     "e2e:jwt-regen": "node e2e/jwt_regen.js",
-    "e2e:disconnect-timeout": "node e2e/disconnect_timeout.js"
+    "e2e:disconnect-timeout": "node e2e/disconnect_timeout.js",
+    "e2e:ws-auth": "node e2e/ws_auth.js",
+    "e2e:message-sync": "node e2e/message_sync.js",
+    "e2e:ai-turn-dedup": "node e2e/ai_turn_dedup.js",
+    "e2e:keepalive": "node e2e/keepalive.js",
+    "e2e:rate-limit": "node e2e/rate_limit.js",
+    "e2e:host-disconnect": "node e2e/host_disconnect_resilience.js",
+    "e2e:all-disconnect-autostop": "node e2e/all_disconnect_autostop.js",
+    "e2e:invite-rating": "node e2e/invite_rating.js"
   },
   "dependencies": {
     "react": "^19.2.7",
