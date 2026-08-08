@@ -2,7 +2,7 @@ import os
 
 import requests
 
-from translation_provider import TranslationProvider
+from def_kari.translation.translation_provider import TranslationProvider
 
 _LANG_MAP = {
     "en": "EN",

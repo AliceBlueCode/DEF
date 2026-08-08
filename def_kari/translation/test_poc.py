@@ -16,7 +16,7 @@ import sys
 
 
 def test_interface():
-    from translation_provider import TranslationProvider
+    from def_kari.translation.translation_provider import TranslationProvider
 
     class DummyProvider(TranslationProvider):
         def translate(self, text, source, target, adapter_options=None):
@@ -74,7 +74,7 @@ def test_factory():
 
 def test_custom_registration():
     from translation_factory import register_provider, create_provider
-    from translation_provider import TranslationProvider
+    from def_kari.translation.translation_provider import TranslationProvider
 
     class UpperCaseProvider(TranslationProvider):
         def translate(self, text, source, target, adapter_options=None):

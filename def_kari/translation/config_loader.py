@@ -3,8 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from translation_provider import TranslationProvider
-from translation_factory import create_provider
+from def_kari.translation.translation_provider import TranslationProvider
+from def_kari.translation.translation_factory import create_provider
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
 

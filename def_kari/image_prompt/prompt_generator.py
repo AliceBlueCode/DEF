@@ -33,5 +33,5 @@ def generate_prompt(structured_tags: dict[str, list[str]]) -> str:
 
 def generate_prompt_from_text(text: str) -> str:
     """英語テキストからタグ抽出→プロンプト生成をワンステップで実行する。"""
-    from tag_extractor import extract_visual_tags
+    from def_kari.image_prompt.tag_extractor import extract_visual_tags
     return generate_prompt(extract_visual_tags(text))

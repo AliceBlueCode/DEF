@@ -11,6 +11,7 @@
       └── relationship/  ← 関係性・感情値（Phase 5以降）
 """
 
+import itertools
 import json
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,12 @@ _CHAR_DIRS = [
     _BASE / "data" / "private" / "characters",
     _BASE / "data" / "visitors",  # 持ち込みキャラ（guest_*）の副本。session.py:_autosave_visitors 参照
 ]
+
+# save_episodic()のファイル名サフィックス用プロセス内連番。datetime.now()の
+# 実効分解能がWindowsではマイクロ秒より粗く、短時間の連続呼び出しでタイムスタンプが
+# 衝突し得るため、単調増加する連番で保存順を保証する(乱数サフィックスだと
+# タイムスタンプが衝突した際の順序が不定になりload_episodic()のソート順が崩れる)。
+_save_seq = itertools.count()
 
 
 def _char_base_dir(char_id: str) -> Path | None:
@@ -50,7 +57,7 @@ def load_episodic(char_id: str, limit: int = 5) -> list[dict]:
 
 
 def save_episodic(char_id: str, entry: dict) -> bool:
-    """エピソード記憶を保存する。ファイル名は ISO 日時（秒精度）。
+    """エピソード記憶を保存する。ファイル名は ISO日時(マイクロ秒) + 単調増加連番。
 
     Returns:
         True if saved successfully, False otherwise.
@@ -61,7 +68,8 @@ def save_episodic(char_id: str, entry: dict) -> bool:
     episodic_dir = base / "memory" / "episodic"
     episodic_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    path = episodic_dir / f"{ts}.json"
+    seq = next(_save_seq)
+    path = episodic_dir / f"{ts}_{seq:08d}.json"
     try:
         path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
         return True

@@ -1,4 +1,4 @@
-from translation_provider import TranslationProvider
+from def_kari.translation.translation_provider import TranslationProvider
 
 
 class LibraryTranslationProvider(TranslationProvider):

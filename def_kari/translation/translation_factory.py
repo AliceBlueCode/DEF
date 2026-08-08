@@ -1,4 +1,4 @@
-from translation_provider import TranslationProvider
+from def_kari.translation.translation_provider import TranslationProvider
 
 _REGISTRY: dict[str, type[TranslationProvider]] = {}
 
@@ -17,10 +17,10 @@ def create_provider(name: str, **kwargs) -> TranslationProvider:
 
 
 def _register_defaults() -> None:
-    from library_provider import LibraryTranslationProvider
-    from deepl_provider import DeepLTranslationProvider
-    from llm_provider import LlmTranslationProvider
-    from argos_provider import ArgosTranslationProvider
+    from def_kari.translation.library_provider import LibraryTranslationProvider
+    from def_kari.translation.deepl_provider import DeepLTranslationProvider
+    from def_kari.translation.llm_provider import LlmTranslationProvider
+    from def_kari.translation.argos_provider import ArgosTranslationProvider
     register_provider("library", LibraryTranslationProvider)
     register_provider("deepl", DeepLTranslationProvider)
     register_provider("llm", LlmTranslationProvider)
