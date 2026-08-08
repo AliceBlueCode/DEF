@@ -3211,6 +3211,11 @@ class HumanTurnRequest(BaseModel):
     action: str  # "send" | "extend" | "skip" | "interrupt" | "generate_image"
     text: str = ""
     character_id: str = ""  # interrupt 時に発言者IDを指定
+    # send/skip の多重送信対策(2026-08-08)。クライアントは直近に受け取った
+    # WAITING_FOR_HUMAN イベントの round をそのまま送り返す。デフォルト値(-1)は
+    # 実在のroundと一致しないため、対応していない/未取得のクライアントは
+    # send/skipで常に拒否される(下のhuman_turn_action参照)。
+    expected_round: int = -1
 
     from pydantic import validator as _pv
 
@@ -3254,6 +3259,51 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
     name_map = session["name_map"]
     counters = session.setdefault("counters", {})
     char_name = name_map.get(current_char_id, current_char_id)
+
+    # ── ターン所有権チェック(2026-08-08修正) ────────────────────────
+    # send/extend/skip は「今まさに initiative[turn] の人間キャラの番である」ことを
+    # 前提に session["turn"] を進める。だが従来はcurrent_char_idが本当に人間枠か・
+    # 呼び出しトークンがそのキャラ本人かを一切検証していなかった。そのため同一
+    # クライアントからの二重送信(ネットワーク再試行・連打・スクリプトでの連打)が
+    # 後続の別キャラ(他プレイヤーやAI含む)のターンまで次々と消費してしまっていた
+    # (frontend/e2e/ai_turn_dedup.js で実証。8並列送信→4件処理されRoundが進む)。
+    #
+    # 当初「turnの読み取りから書き戻しまでの間に割り込まれるTOCTOU」と誤診断していたが、
+    # human_turn_action は async def ながら本体に await が一切無く、asyncioの協調
+    # スケジューリング上この関数は呼ばれたら他コルーチンに横入りされず単一
+    # イベントループ上でアトミックに完走する。実体はレースではなく、この認可漏れ
+    # そのものだった(重複送信は真の並行処理ではなく、逐次的に全件処理されていた)。
+    #
+    # host/gm はゲームマスターとして人間キャラを兼任する場合があるが、トークン発行時に
+    # char_idを持たない(issue_player_jwt呼び出し側を参照)ため、ここでは対象外のまま
+    # 維持する(host_tokenでの人間ターン送信は従来通り許可＝既存テスト・挙動を壊さない)。
+    # host/gmが他人の人間キャラのターンを送信できてしまう点は既知の残課題としてTODO.mdへ。
+    if req.action in ("send", "extend", "skip"):
+        if current_char_id not in session.get("human_char_ids", []):
+            raise HTTPException(409, "It is not currently a human player's turn")
+        if _auth.get("role") == "player" and _auth.get("char_id") != current_char_id:
+            raise HTTPException(409, "It is not your turn")
+        # ── ターンの多重完了ガード(2026-08-08修正) ────────────────────
+        # send/skip はターン(引いてはround)を進める「確定」操作。上のオーナーシップ
+        # チェックだけでは、initiativeに人間が1人しかいない(AI不在の)セッションで
+        # 同一クライアントが同じ送信を連打した場合を防げない: _run_ai_turns側の
+        # 巻き戻り(turn>=len(initiative)時にround+1・turn=0)はLLM呼び出しを伴わず
+        # 同一イベントループtick内で即座に完了し、次の巻き戻り後もcurrent_char_idは
+        # 依然として同じ本人のキャラのままなので、オーナーシップは何度でも一致して
+        # しまう(frontend/e2e/ai_turn_dedup.js で実証)。
+        #
+        # そこでWAITING_FOR_HUMANイベントで配布したroundをクライアントに送り返させ、
+        # サーバー側の現在roundと一致する場合のみ「確定」操作を許可する。1件目の
+        # send/skipが処理された時点でroundは進む(または次のWAITING_FOR_HUMANで
+        # 新しいroundが配布されるまでは)ため、同じexpected_roundを使った残りの
+        # 重複リクエストは以後すべて不一致で拒否される。extendはターンを進めない
+        # 「積む」操作で、1ターン中に複数回呼ばれるのが正規の使い方のためチェック対象外。
+        #
+        # 既知の残課題: designated_next(GM指名による割り込み)で同一roundのまま
+        # current_char_idが同じ人間キャラに再度回ってくる稀なケースはこのroundだけの
+        # 比較では区別できない。実害は小さいためTODO.mdへ別途記録する。
+        if req.action in ("send", "skip") and req.expected_round != session["round"]:
+            raise HTTPException(409, "This turn has already been completed (stale request)")
 
     if req.action == "interrupt":
         if not req.text.strip():

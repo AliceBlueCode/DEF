@@ -212,7 +212,7 @@ def test_human_turn_send_creates_ai_task():
                  patch("def_kari.api.routes.session._start_background_tts", return_value=""):
                 resp = client.post(
                     f"/api/session/{sid}/human_turn",
-                    json={"action": "send", "text": "Hello world"},
+                    json={"action": "send", "text": "Hello world", "expected_round": sess["round"]},
                     headers={"Authorization": f"Bearer {host_token}"},
                 )
                 assert resp.status_code == 200

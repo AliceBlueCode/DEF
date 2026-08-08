@@ -1862,7 +1862,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     const res = await fetch(`/api/session/${sessionId}/human_turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
-      body: JSON.stringify({ action, text, character_id: humanCharId }),
+      // expected_round: 直近のWAITING_FOR_HUMANで受け取ったroundをそのまま送り返す
+      // (send/skipの多重送信対策。session.pyのhuman_turn_action参照)。
+      body: JSON.stringify({ action, text, character_id: humanCharId, expected_round: round }),
     })
     const data = await parseJsonResponse(res)
     if (data.error) {

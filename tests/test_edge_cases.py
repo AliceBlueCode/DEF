@@ -467,7 +467,7 @@ def test_human_turn_send_empty_text_error():
 
     resp = client.post(
         f"/api/session/{sid}/human_turn",
-        json={"action": "send", "text": "   "},  # 空白のみ
+        json={"action": "send", "text": "   ", "expected_round": sess["round"]},  # 空白のみ
         headers={"Authorization": f"Bearer {host_token}"},
     )
     assert resp.status_code == 200
