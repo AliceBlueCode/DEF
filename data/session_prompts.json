@@ -26,5 +26,9 @@
     "en": "🗳 Vote Result: {vote_label}{detail_text} — For {yes_count} / Against {no_count} ({vote_detail_str}) → {outcome}"
   },
   "vote_passed":   { "ja": "✅ 可決", "en": "✅ Passed" },
-  "vote_rejected": { "ja": "❌ 否決", "en": "❌ Rejected" }
+  "vote_rejected": { "ja": "❌ 否決", "en": "❌ Rejected" },
+  "keeper_handoff_notice": {
+    "ja": "🎩 キーパーが退場したため、AIキーパー（無名）に交代しました",
+    "en": "🎩 The Keeper has left; handing over to the anonymous AI Keeper"
+  }
 }

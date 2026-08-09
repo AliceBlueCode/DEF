@@ -19,6 +19,8 @@ _LOCAL_TTS_BACKENDS = {"voicevox", "kokoro", "irodori"}
 
 ASSET_DIR = (Path(__file__).parent.parent.parent.parent / "assets").resolve()
 
+_VRAM_LOCK_TIMEOUT_SECONDS = float(os.environ.get("DEF_VRAM_LOCK_TIMEOUT", "60"))
+
 
 class TTSRequest(BaseModel):
     text: str
@@ -31,17 +33,16 @@ def synthesize_and_save(text: str, character_id: str, backend: str = "voicevox")
 
     session.py の AIターン自動読み上げから使う。`POST /` → `POST /save` の
     2段階（従来は各クライアントが個別に叩いていた）を1回のサーバー内呼び出しに集約する。
+
+    vram_lockは呼び出し元（_synthesize_turn_audio_sync）が既にタイムアウト付きで
+    取得済みの前提。ここで再度取得すると同一スレッドによる非再入ロックの
+    自己デッドロックになる（2026-08-09発覚）。
     """
     profiles = load_profiles()
     char = get_character(character_id, profiles)
     speaker_id = get_tts_speaker_id(char, backend)
     text = apply_name_reading(text, char)
-    _vram_lock = get_vram_lock()
-    _vram_lock.acquire()
-    try:
-        audio_bytes = synthesize(text, speaker_id, backend)
-    finally:
-        _vram_lock.release()
+    audio_bytes = synthesize(text, speaker_id, backend)
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"tts_{uuid.uuid4().hex}.wav"
     (ASSET_DIR / filename).write_bytes(audio_bytes)
@@ -55,17 +56,17 @@ def generate_tts(req: TTSRequest):
     speaker_id = get_tts_speaker_id(char, req.backend)
     text = apply_name_reading(req.text, char)
 
+    from fastapi import HTTPException
+    _vram_lock = get_vram_lock()
+    if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+        raise HTTPException(status_code=503, detail=f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
     try:
-        _vram_lock = get_vram_lock()
-        _vram_lock.acquire()
-        try:
-            audio_bytes = synthesize(text, speaker_id, req.backend)
-        finally:
-            _vram_lock.release()
-        return Response(content=audio_bytes, media_type="audio/wav")
+        audio_bytes = synthesize(text, speaker_id, req.backend)
     except Exception as e:
-        from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _vram_lock.release()
+    return Response(content=audio_bytes, media_type="audio/wav")
 
 
 @router.get("/status")

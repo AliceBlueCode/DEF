@@ -3792,11 +3792,20 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
     passed = yes_count > no_count
 
     _expelled_participant_id = ""
+    _keeper_handed_off = False
     if passed:
         if vote_type == "topic_change" and detail:
             session["topic"] = detail
         elif vote_type == "expel" and target_id:
             session["initiative"] = [c for c in initiative if c != target_id]
+            if target_id == session.get("keeper_char_id"):
+                # 自治規約62行目: 「キーパーが退場した場合はAIキーパーへ交代してセッションを
+                # 継続する」。空文字列にするとai_keeper_narrate()が自動的に汎用の
+                # 無名AIキーパー（🎩 Keeper）にフォールバックする（lobby_set_keeper_charの
+                # 解除と同じ仕組み）ため、他に配線は不要。
+                session["keeper_char_id"] = ""
+                session["keeper_char_name"] = ""
+                _keeper_handed_off = True
             # 対象が人間プレイヤーの場合、initiativeから外すだけでは接続・トークンが
             # 生きたまま残り続ける（leave_session相当の後始末が漏れていた）。
             # char_id→tokenを逆引きし、players/ws_connections/token_to_participant
@@ -3873,6 +3882,8 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
         yes_count=yes_count, no_count=no_count,
         vote_detail_str=vote_detail_str, outcome=outcome,
     )
+    if _keeper_handed_off:
+        result_text += "\n" + _sp("keeper_handoff_notice", _v_lang)
     session["history"].append({
         "role": "user",
         "content": result_text,
