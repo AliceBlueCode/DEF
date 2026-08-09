@@ -1,0 +1,19 @@
+[
+  {"danbooru": "1girl", "e621": "solo, female"},
+  {"danbooru": "2girls", "e621": "duo, female"},
+  {"danbooru": "3girls", "e621": "trio, female"},
+  {"danbooru": "6+girls", "e621": "group, female"},
+  {"danbooru": "1boy", "e621": "solo, male"},
+  {"danbooru": "2boys", "e621": "duo, male"},
+  {"danbooru": "3boys", "e621": "trio, male"},
+  {"danbooru": "6+boys", "e621": "group, male"},
+  {"danbooru": "straight-on", "e621": "front view"},
+  {"danbooru": "from side", "e621": "side view"},
+  {"danbooru": "from behind", "e621": "rear view"},
+  {"danbooru": "from above", "e621": "high-angle view"},
+  {"danbooru": "from below", "e621": "low-angle view"},
+  {"danbooru": "multiple views", "e621": "multiple poses, multiple positions"},
+  {"danbooru": "safe", "e621": "rating_safe"},
+  {"danbooru": "explicit", "e621": "rating_explicit"},
+  {"danbooru": "nsfw", "e621": "rating_explicit"}
+]

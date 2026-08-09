@@ -583,6 +583,60 @@ class TestFixMissingCommas:
         assert parsed["b"] == "2"
 
 
+from def_kari.llm.client import _normalize_tag_format
+
+
+class TestNormalizeTagFormat:
+    """data/t2i_tag_format_map.jsonを使ったdanbooru<->e621のタグ正規化
+    (2026-08-09、ユーザーが実測で作ったAnimagine XL/Pony Diffusion XL対応表を移植)。"""
+
+    def test_e621_requested_converts_danbooru_tags(self):
+        parsed = {"image_prompt_en": "1girl, from side, blue hair"}
+        result = _normalize_tag_format(parsed, "e621")
+        assert result["image_prompt_en"] == "solo, female, side view, blue hair"
+
+    def test_danbooru_requested_converts_e621_tags(self):
+        parsed = {"image_prompt_en": "solo, female, blue hair"}
+        result = _normalize_tag_format(parsed, "danbooru")
+        assert result["image_prompt_en"] == "1girl, blue hair"
+
+    def test_unknown_tags_pass_through_unchanged(self):
+        parsed = {"image_prompt_en": "1girl, cherry blossoms, smiling"}
+        result = _normalize_tag_format(parsed, "e621")
+        assert result["image_prompt_en"] == "solo, female, cherry blossoms, smiling"
+
+    def test_natural_language_format_not_touched(self):
+        """tag_formatがdanbooru/e621以外(natural/other)ならタグ変換の対象外。"""
+        parsed = {"image_prompt_en": "1girl, from side"}
+        result = _normalize_tag_format(parsed, "natural")
+        assert result["image_prompt_en"] == "1girl, from side"
+
+    def test_empty_prompt_no_crash(self):
+        parsed = {"image_prompt_en": ""}
+        result = _normalize_tag_format(parsed, "e621")
+        assert result["image_prompt_en"] == ""
+
+    def test_missing_prompt_key_no_crash(self):
+        parsed = {}
+        result = _normalize_tag_format(parsed, "e621")
+        assert result.get("image_prompt_en") in (None, "")
+
+    def test_case_insensitive_lookup(self):
+        parsed = {"image_prompt_en": "1Girl, Straight-On"}
+        result = _normalize_tag_format(parsed, "e621")
+        assert result["image_prompt_en"] == "solo, female, front view"
+
+    def test_rating_tags_convert_both_ways(self):
+        # safe/rating_safeは1対1なので双方向とも決定論的。explicit/nsfwは
+        # 両方ともrating_explicitへ多対1で対応しており、e621→danbooru方向は
+        # 最後に読み込まれたエントリが優先される(既知の制約、完全な網羅は
+        # 狙わないという設計方針の一部)。
+        to_e621 = _normalize_tag_format({"image_prompt_en": "safe"}, "e621")
+        assert to_e621["image_prompt_en"] == "rating_safe"
+        to_danbooru = _normalize_tag_format({"image_prompt_en": "rating_safe"}, "danbooru")
+        assert to_danbooru["image_prompt_en"] == "safe"
+
+
 # ---------------------------------------------------------------------------
 # 3. Safety filters
 # ---------------------------------------------------------------------------

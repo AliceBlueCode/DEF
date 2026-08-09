@@ -5,6 +5,7 @@
 
 import json
 import re
+from pathlib import Path
 
 import requests
 
@@ -15,6 +16,8 @@ from def_kari.llm.schema import EMOTIONS, VALIDATOR
 MAX_CHAT_HISTORY_TURNS = 10
 DEFAULT_OPTIONS = {"num_predict": 512}
 LIGHTWEIGHT_OPTIONS = {"num_predict": 128, "num_ctx": 1024}
+
+_TAG_FORMAT_MAP_PATH = Path(__file__).parent.parent.parent / "data" / "t2i_tag_format_map.json"
 
 _THINK_CLOSED_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL)
@@ -220,6 +223,93 @@ def _prepend_name_tags(parsed: dict, image_name_tags: str) -> dict:
     return parsed
 
 
+_tag_format_map_cache: dict[str, list[tuple[tuple[str, ...], str]]] | None = None
+
+
+def _load_tag_format_map() -> dict[str, list[tuple[tuple[str, ...], str]]]:
+    """data/t2i_tag_format_map.jsonから{danbooru: e621}の対応表を読み込み、
+    danbooru→e621・e621→danbooruの双方向の照合リストに変換してキャッシュする。
+
+    値は「1girl」→「solo, female」のように複数語(複数セグメント)になりうる
+    ため、キー側もタプル化したセグメント列で持ち、_normalize_tag_format側で
+    スライディングウィンドウ照合する(単純な1セグメントdictだと逆方向変換時に
+    「solo, female」を1つのタグとして拾えない)。segment数の多い順に並べておき、
+    より長い一致を優先させる(例: 将来「multiple girls, solo」のような3語以上の
+    対応が増えても、短い部分一致に食われないように)。
+    """
+    global _tag_format_map_cache
+    if _tag_format_map_cache is not None:
+        return _tag_format_map_cache
+    forward: list[tuple[tuple[str, ...], str]] = []
+    backward: list[tuple[tuple[str, ...], str]] = []
+    try:
+        entries = json.loads(_TAG_FORMAT_MAP_PATH.read_text(encoding="utf-8"))
+        for entry in entries:
+            d = str(entry.get("danbooru", "")).strip().lower()
+            e = str(entry.get("e621", "")).strip().lower()
+            if not d or not e:
+                continue
+            d_segs = tuple(s.strip() for s in d.split(",") if s.strip())
+            e_segs = tuple(s.strip() for s in e.split(",") if s.strip())
+            if d_segs and e_segs:
+                forward.append((d_segs, e.strip()))
+                backward.append((e_segs, d.strip()))
+    except Exception:
+        pass
+    forward.sort(key=lambda pair: len(pair[0]), reverse=True)
+    backward.sort(key=lambda pair: len(pair[0]), reverse=True)
+    _tag_format_map_cache = {"danbooru_to_e621": forward, "e621_to_danbooru": backward}
+    return _tag_format_map_cache
+
+
+def _apply_tag_lookup(segments: list[str], lookup: list[tuple[tuple[str, ...], str]]) -> list[str]:
+    """セグメント列の先頭から順に、lookup(長い一致優先)にマッチする箇所を
+    置換後の値へ差し替える。マッチしないセグメントはそのまま素通しする。"""
+    lowered = [s.lower() for s in segments]
+    result: list[str] = []
+    i = 0
+    n = len(segments)
+    while i < n:
+        matched = False
+        for keys, replacement in lookup:
+            k = len(keys)
+            if k <= n - i and tuple(lowered[i:i + k]) == keys:
+                result.append(replacement)
+                i += k
+                matched = True
+                break
+        if not matched:
+            result.append(segments[i])
+            i += 1
+    return result
+
+
+def _normalize_tag_format(parsed: dict, tag_format: str) -> dict:
+    """image_prompt_enのタグを、要求されたtag_format(danbooru/e621)の語彙に
+    寄せる。LLMは指示文のラベル(「Danbooruタグ形式で」等)だけを頼りに出力する
+    ため、逆側の語彙のタグが混ざって返ってくることがある(data/t2i_tag_format_map.json
+    参照、ユーザーが実際にAnimagine XL/Pony Diffusion XLで検証した対応表)。
+
+    tag_formatがdanbooru/e621以外(natural/other、自然文が期待される)の場合は
+    対象外——タグ単位の語彙変換という発想自体がそぐわないため。
+    完全な網羅は狙わず、既知の対応がある語だけをその場で置換する
+    (未知のタグはそのまま素通し。TODO.md「T2I tag_format変換精度向上」参照)。
+    """
+    if tag_format not in ("danbooru", "e621"):
+        return parsed
+    prompt = parsed.get("image_prompt_en", "")
+    if not prompt:
+        return parsed
+    tag_map = _load_tag_format_map()
+    lookup = tag_map["e621_to_danbooru"] if tag_format == "danbooru" else tag_map["danbooru_to_e621"]
+    if not lookup:
+        return parsed
+    segments = [t.strip() for t in prompt.split(",") if t.strip()]
+    converted = _apply_tag_lookup(segments, lookup)
+    parsed["image_prompt_en"] = ", ".join(converted)
+    return parsed
+
+
 def _call_llm(
     user_text: str,
     history: list[dict] | None = None,
@@ -367,14 +457,14 @@ def generate_structured_reply(
     ok, parsed, errors = _try_parse_and_validate(raw)
     attempts.append({"stage": "LLMリクエスト", "raw": raw, "errors": errors})
     if ok:
-        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), lora), "attempts": attempts}
+        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_normalize_tag_format(_ensure_appearance_tags(parsed, appearance_tags), tag_format), image_name_tags), lora), "attempts": attempts}
 
     # 段1: 自動補正後の再パース
     fixed = _autofix(raw)
     ok, parsed, errors = _try_parse_and_validate(fixed)
     attempts.append({"stage": "段1. 自動補正後の再パース", "raw": fixed, "errors": errors})
     if ok:
-        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), lora), "attempts": attempts}
+        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_normalize_tag_format(_ensure_appearance_tags(parsed, appearance_tags), tag_format), image_name_tags), lora), "attempts": attempts}
 
     # 段2: 補正パターン変更による再パース
     fallback_extract = re.sub(r"^[^{]*", "", raw, count=1)
@@ -383,7 +473,7 @@ def generate_structured_reply(
     ok, parsed, errors = _try_parse_and_validate(fallback_extract)
     attempts.append({"stage": "段2. 補正パターン変更による再パース", "raw": fallback_extract, "errors": errors})
     if ok:
-        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), lora), "attempts": attempts}
+        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_normalize_tag_format(_ensure_appearance_tags(parsed, appearance_tags), tag_format), image_name_tags), lora), "attempts": attempts}
 
     # 段3: プレーンテキスト形式からの抽出
     plain_result = _try_parse_plain_format(raw)
@@ -391,7 +481,7 @@ def generate_structured_reply(
         ok, parsed, errors = plain_result
         attempts.append({"stage": "段3. プレーンテキスト形式からの抽出", "raw": raw, "errors": errors})
         if ok:
-            return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), lora), "attempts": attempts}
+            return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_normalize_tag_format(_ensure_appearance_tags(parsed, appearance_tags), tag_format), image_name_tags), lora), "attempts": attempts}
     else:
         attempts.append({"stage": "段3. プレーンテキスト形式からの抽出", "raw": raw, "errors": ["プレーンテキスト形式に該当せず"]})
 
@@ -404,7 +494,7 @@ def generate_structured_reply(
             emotion = _estimate_emotion(dialogue)
         parsed = {"dialogue": dialogue, "emotion": emotion, "image_prompt_en": "", "tags": []}
         attempts.append({"stage": "段4. 生テキストをdialogueとして使用(最終安全網)", "raw": final_raw, "errors": []})
-        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_ensure_appearance_tags(parsed, appearance_tags), image_name_tags), lora), "attempts": attempts}
+        return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_normalize_tag_format(_ensure_appearance_tags(parsed, appearance_tags), tag_format), image_name_tags), lora), "attempts": attempts}
 
     return {"success": False, "result": None, "attempts": attempts}
 
