@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import ChatTab from './components/ChatTab'
 import CharacterTab from './components/CharacterTab'
 import SessionTab from './components/SessionTab'
@@ -53,6 +53,22 @@ function AppInner() {
   const [activeTab, setActiveTab] = useState<TabId>(() =>
     sessionStorage.getItem(SS_KEY_ACTIVE_SESSION) ? 'session' : 'chat'
   )
+  // 「ユーザーがSettingsTabで実際に変更した」場合だけサーバー設定への書き戻しを
+  // 行うためのフラグ。複数タブ/複数プロファイルを開いていると、単にタブを開いた
+  // (≠明示的にバックエンドを変更した)だけで各タブが自分のlocalStorageキャッシュ
+  // 値をサーバーへPOSTし直し、他のタブや過去のセッションが意図して設定した
+  // デフォルトを黙って上書きしてしまっていた(2026-08-09発覚)。
+  // 当初はuseRefで「マウント後1回目のeffectだけスキップ」する案を試したが、
+  // React StrictMode(main.tsxで有効)が開発時にeffectを意図的に二重発火させる
+  // ため、1回目でrefをtrueにした直後の2回目の発火でPOSTしてしまい機能しなかった。
+  // マウントのタイミングから推測するのではなく、変更のトリガー元(onXxxBackendChange
+  // 経由の明示的な呼び出しか否か)を直接フラグで持つ方式にした。
+  const llmUserChangedRef = useRef(false)
+  const t2iUserChangedRef = useRef(false)
+  const ttsUserChangedRef = useRef(false)
+  const handleLlmBackendChange = (v: string) => { llmUserChangedRef.current = true; setSelectedBackend(v) }
+  const handleT2iBackendChange = (v: string) => { t2iUserChangedRef.current = true; setSelectedT2iBackend(v) }
+  const handleTtsBackendChange = (v: string) => { ttsUserChangedRef.current = true; setSelectedTtsBackend(v) }
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0)
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'dark'
@@ -98,6 +114,7 @@ function AppInner() {
   useEffect(() => {
     if (!selectedBackend) return
     localStorage.setItem(LS_KEY_LLM, selectedBackend)
+    if (!llmUserChangedRef.current) return
     fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -108,6 +125,7 @@ function AppInner() {
   useEffect(() => {
     if (!selectedT2iBackend) return
     localStorage.setItem(LS_KEY_T2I, selectedT2iBackend)
+    if (!t2iUserChangedRef.current) return
     fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -118,6 +136,7 @@ function AppInner() {
   useEffect(() => {
     if (!selectedTtsBackend) return
     localStorage.setItem(LS_KEY_TTS, selectedTtsBackend)
+    if (!ttsUserChangedRef.current) return
     fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -174,11 +193,11 @@ function AppInner() {
           <div style={{ display: activeTab === 'settings' ? 'contents' : 'none' }}>
             <SettingsTab
               llmBackend={selectedBackend}
-              onLlmBackendChange={setSelectedBackend}
+              onLlmBackendChange={handleLlmBackendChange}
               t2iBackend={selectedT2iBackend}
-              onT2iBackendChange={setSelectedT2iBackend}
+              onT2iBackendChange={handleT2iBackendChange}
               ttsBackend={selectedTtsBackend}
-              onTtsBackendChange={setSelectedTtsBackend}
+              onTtsBackendChange={handleTtsBackendChange}
               candidateCount={candidateCount}
               onCandidateCountChange={setCandidateCount}
               theme={theme}
