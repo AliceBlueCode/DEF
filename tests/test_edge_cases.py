@@ -617,6 +617,131 @@ def test_character_json_non_numeric_skill_values_no_crash():
     assert resp.status_code == 200
 
 
+# ── 招待コードのレーティング照合（マルチプレイ設計書§3.2） ──────────────
+# R18キャラはSFWセッションで拒否、R18コードでSFWキャラを持ち込んだら通過。
+
+def test_character_json_rating_exceeds_sfw_invite_rejected():
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    client = TestClient(app)
+    sid, _, code = _start_with_invite(client, rating="SFW")
+
+    resp = client.post("/api/session/join", json={
+        "invite_code": code,
+        "character_json": {
+            "name": "TooSpicy",
+            "content_policy": {"rating_sexual": "hentai"},
+        },
+    })
+    assert resp.status_code == 400
+    assert "rating" in resp.json()["detail"].lower()
+
+
+def test_character_json_rating_within_r18_invite_accepted():
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    client = TestClient(app)
+    sid, _, code = _start_with_invite(client, rating="R18")
+
+    resp = client.post("/api/session/join", json={
+        "invite_code": code,
+        "character_json": {
+            "name": "JustFine",
+            "content_policy": {"rating_sexual": "nsfw"},
+        },
+    })
+    assert resp.status_code == 200
+
+
+def test_character_json_versioned_format_rating_checked():
+    """versioned形式（{version_key: {base_profile: {...}}}）でも同様にチェックされること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    client = TestClient(app)
+    sid, _, code = _start_with_invite(client, rating="SFW")
+
+    resp = client.post("/api/session/join", json={
+        "invite_code": code,
+        "character_json": {
+            "v1": {
+                "base_profile": {
+                    "name": "VersionedSpicy",
+                    "content_policy": {"rating_violence": "extreme"},
+                }
+            }
+        },
+    })
+    assert resp.status_code == 400
+
+
+def test_character_json_missing_content_policy_defaults_to_general():
+    """content_policyが無い持ち込みキャラはgeneral/general扱いでSFWでも通過する。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    client = TestClient(app)
+    sid, _, code = _start_with_invite(client, rating="SFW")
+
+    resp = client.post("/api/session/join", json={
+        "invite_code": code,
+        "character_json": {"name": "NoPolicyAtAll"},
+    })
+    assert resp.status_code == 200
+
+
+def test_claim_char_id_rating_exceeds_invite_rejected():
+    """既存ロスターキャラ（claim_char_id経由）でも同じレーティング照合が働くこと。"""
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+    sid, _, code = _start_with_invite(client, rating="SFW")
+
+    _sessions[sid]["initiative"] = ["char_hentai_roster"]
+    _sessions[sid]["human_char_ids"] = ["char_hentai_roster"]
+    _sessions[sid]["name_map"]["char_hentai_roster"] = "RosterChar"
+
+    fake_char = {"id": "char_hentai_roster", "content_policy": {"rating_sexual": "hentai"}}
+    with patch("def_kari.api.routes.session.get_character", return_value=fake_char):
+        resp = client.post("/api/session/join", json={
+            "invite_code": code,
+            "claim_char_id": "char_hentai_roster",
+        })
+    assert resp.status_code == 400
+
+
+def test_generate_session_image_blocked_for_guest_char_over_rating():
+    """セッション内T2I生成でも、持ち込みキャラが参加時のレーティング上限を
+    超えている場合はブロックされること（本来join時に弾かれるはずのキャラが、
+    何らかの経緯でguest_charsに残っていた場合の二重の防御線）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+    sid, host_token, code = _start_with_invite(client, rating="SFW")
+
+    sess = _sessions[sid]
+    sess["initiative"] = ["guest_over_rating"]
+    sess["name_map"]["guest_over_rating"] = "OverRating"
+    sess["history"] = [{
+        "role": "assistant", "content": "OverRating: hello", "character_id": "guest_over_rating",
+        "emotion": "neutral", "tags": [],
+    }]
+    # guest_chars/guest_char_ratings は本来join_session内で一緒にセットされるが、
+    # ここではjoinフローを経由せず直接状態を作ってT2I側の防御線だけを検証する。
+    sess["guest_chars"] = {"guest_over_rating": {"name": "OverRating", "content_policy": {"rating_sexual": "hentai"}}}
+    sess["guest_char_ratings"] = {"guest_over_rating": "SFW"}
+
+    resp = client.post(
+        f"/api/session/{sid}/generate-image",
+        json={},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert resp.status_code == 200  # エンドポイント自体はエラーレスポンスを200で返す設計
+    assert "error" in resp.json()
+    assert "rating" in resp.json()["error"].lower()
+
+
 def test_character_json_null_values_no_crash():
     """全フィールド null のキャラデータでもクラッシュしない。"""
     from fastapi.testclient import TestClient

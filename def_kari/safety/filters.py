@@ -67,6 +67,44 @@ def is_flagged(tags: list[str] | None, allowed_sexual: list[str] | None = None, 
     return False
 
 
+# 招待コードのレーティング(SFW/R15/R18/UNL)ごとに許容するcontent_policyの値。
+# 基本設計書「性的表現/暴力表現フィルタリング強度」の対応表と同じ並び
+# (全年齢=SFW/R15/R18/無制限=UNL)をそのまま使う。
+_INVITE_RATING_ALLOWED_SEXUAL = {
+    "SFW": ["general"],
+    "R15": ["general", "sfw"],
+    "R18": ["general", "sfw", "nsfw"],
+    "UNL": ["general", "sfw", "nsfw", "hentai"],
+}
+_INVITE_RATING_ALLOWED_VIOLENCE = {
+    "SFW": ["general"],
+    "R15": ["general", "violence"],
+    "R18": ["general", "violence", "gore"],
+    "UNL": ["general", "violence", "gore", "extreme"],
+}
+
+
+def character_rating_exceeds_invite(content_policy: dict | None, session_rating: str) -> bool:
+    """キャラクター自身のcontent_policy(rating_sexual/rating_violence)が、
+    招待コードのレーティング上限を超えているかを判定する(マルチプレイ設計書
+    §3.2「招待コードのレーティング」の期待挙動: R18キャラはSFWセッションで拒否)。
+
+    is_flagged()が「生成された発言の一時的なtags」対セッション設定の
+    allowed_sexual/allowed_violence(ユーザーが自由に変えられる個人の表示設定)を
+    比較する関数なのに対し、こちらは「キャラクター自身が申告しているレーティング」
+    対「招待コード発行時に固定されたレーティング上限」を比較する、参加資格の
+    ゲートとして働く別の関心事。ローカル/ソロ利用の生成そのものは対象外
+    (README記載のCreator First Principleに反しないよう、オンラインセッションの
+    参加・セッション内生成にのみ適用する)。
+    """
+    content_policy = content_policy or {}
+    allowed_sexual = _INVITE_RATING_ALLOWED_SEXUAL.get(session_rating, _INVITE_RATING_ALLOWED_SEXUAL["SFW"])
+    allowed_violence = _INVITE_RATING_ALLOWED_VIOLENCE.get(session_rating, _INVITE_RATING_ALLOWED_VIOLENCE["SFW"])
+    char_sexual = content_policy.get("rating_sexual") or "general"
+    char_violence = content_policy.get("rating_violence") or "general"
+    return char_sexual not in allowed_sexual or char_violence not in allowed_violence
+
+
 def effective_level(global_level: str, flagged: bool, unlocked: bool) -> str:
     if not flagged:
         return SAFETY_OFF

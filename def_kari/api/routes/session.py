@@ -46,6 +46,7 @@ from def_kari.llm.client import generate_structured_reply  # vote/deliberate で
 from def_kari.gm.player_agent import _player_agent
 from def_kari.image_prompt.emotion_tags import apply_emotion_tags
 from def_kari.settings import load_settings
+from def_kari.safety.filters import character_rating_exceeds_invite
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
 from def_kari.gm.context_builder import (
     load_trpg_rulebook as _load_trpg_rulebook,
@@ -574,6 +575,21 @@ def _character_json_fingerprint(character_json: dict) -> str:
     payload = {k: v for k, v in character_json.items() if k not in ("id", "player_type")}
     normalized = json.dumps(payload, sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _extract_content_policy_from_json(character_json: dict) -> dict:
+    """flat形式・versioned形式（base_profile入れ子）の両方からcontent_policyを抽出する。
+
+    _extract_audit_text（character_audit.py）と同じ両形式判定パターンを踏襲。
+    アップロードされた生のcharacter_jsonが対象で、load_profiles()を経由していない
+    ため、キャラクター側の_get_bp()は使えない（あちらは既にflat化済みの前提）。
+    """
+    if not isinstance(character_json, dict):
+        return {}
+    for v in character_json.values():
+        if isinstance(v, dict) and isinstance(v.get("base_profile"), dict):
+            return v["base_profile"].get("content_policy", {}) or {}
+    return character_json.get("content_policy", {}) or {}
 
 
 # ── FastAPI Dependency ────────────────────────────────────────────────
@@ -1897,6 +1913,11 @@ def join_session(req: JoinRequest, request: Request):
             raise HTTPException(400, "Character is not a human slot")
         if req.claim_char_id in claimed:
             raise HTTPException(409, "Slot already taken")
+        # 招待コードのレーティング上限とキャラクター自身の申告レーティングを照合する
+        # （マルチプレイ設計書§3.2の期待挙動: R18キャラはSFWセッションで拒否）。
+        _claim_char = get_character(req.claim_char_id, load_profiles())
+        if character_rating_exceeds_invite(_claim_char.get("content_policy", {}), session_rating):
+            raise HTTPException(400, "This character's rating exceeds the invite code's rating")
         role = "player"
         char_id = req.claim_char_id
         display_name = sess.get("name_map", {}).get(char_id, char_id)
@@ -1914,6 +1935,13 @@ def join_session(req: JoinRequest, request: Request):
 
         role = "player"
         char_id = f"guest_{_uuid_mod.uuid4().hex[:8]}"
+
+        # 招待コードのレーティング上限とキャラクター自身の申告レーティングを照合する
+        # （マルチプレイ設計書§3.2の期待挙動: R18キャラはSFWセッションで拒否）。
+        # LLM審査より先に行う軽量・決定論的なチェックのため、審査のLLM呼び出しより前に置く。
+        _brought_content_policy = _extract_content_policy_from_json(req.character_json)
+        if character_rating_exceeds_invite(_brought_content_policy, session_rating):
+            raise HTTPException(400, "This character's rating exceeds the invite code's rating")
 
         # LLM審査（jailbreak/プロンプトインジェクション対策、多層防御の1枚。fail-open）
         audit_result = audit_character_json(
@@ -1938,6 +1966,13 @@ def join_session(req: JoinRequest, request: Request):
         char_data["id"] = char_id
         char_data["player_type"] = "human"
         sess.setdefault("guest_chars", {})[char_id] = char_data
+        # このキャラが参加を許された時点のレーティング上限を記録しておく。同一セッションが
+        # レーティングの異なる複数の招待コードを発行できる仕様のため、セッション全体で
+        # 一つの上限に決め打ちできない（3.2節参照）。セッション内T2I生成時にこの上限を
+        # 再度参照する（_generate_session_image_impl参照）。guest_chars本体に混ぜて持たせると
+        # _character_json_fingerprint（追放後の再参加ブロック判定）の計算対象に混入してしまう
+        # ため（id/player_typeしか除外していない）、別辞書として持つ。
+        sess.setdefault("guest_char_ratings", {})[char_id] = session_rating
         _autosave_visitors(sess)
         # アイコン・立ち絵をバックグラウンドで生成（参加処理はこれを待たない。fail-silent）
         threading.Thread(
@@ -4236,6 +4271,17 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
         _scene_char_id = _random.choice(_pc_ids)
     else:
         _scene_char_id = last_round[-1].get("character_id") if last_round else None
+
+    # 持ち込みキャラ(guest_chars)については、参加時に許可された招待コードの
+    # レーティング上限をセッション内T2I生成でも引き続き適用する（join_session参照）。
+    # ロスターキャラ（ホストが用意した既存キャラ）は対象外——ホストが自ら
+    # 選んだキャラのため、ここでは持ち込みキャラの取り込み経路のみを塞ぐ。
+    _guest_char_data = session.get("guest_chars", {}).get(_scene_char_id)
+    if _guest_char_data:
+        _scene_content_policy = _extract_content_policy_from_json(_guest_char_data)
+        _scene_session_rating = session.get("guest_char_ratings", {}).get(_scene_char_id, "SFW")
+        if character_rating_exceeds_invite(_scene_content_policy, _scene_session_rating):
+            return {"error": "Image generation blocked: this character's rating exceeds the rating it joined under"}
 
     if t2i_prompt_mode == "passthrough":
         # LLM不使用: history の image_prompt_en を直接流用

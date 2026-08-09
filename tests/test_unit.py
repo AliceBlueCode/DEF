@@ -587,6 +587,7 @@ class TestFixMissingCommas:
 # 3. Safety filters
 # ---------------------------------------------------------------------------
 from def_kari.safety.filters import (
+    character_rating_exceeds_invite,
     detect_tags_from_text,
     effective_level,
     is_flagged,
@@ -665,6 +666,41 @@ class TestIsFlagged:
             allowed_sexual=["general"],
             allowed_violence=["general"],
         ) is False
+
+
+class TestCharacterRatingExceedsInvite:
+    """マルチプレイ設計書§3.2の期待挙動: R18キャラはSFWセッションで拒否、
+    SFWキャラはR18コードで通過。"""
+
+    def test_r18_character_rejected_by_sfw_invite(self):
+        cp = {"rating_sexual": "hentai", "rating_violence": "general"}
+        assert character_rating_exceeds_invite(cp, "SFW") is True
+
+    def test_sfw_character_passes_r18_invite(self):
+        cp = {"rating_sexual": "general", "rating_violence": "general"}
+        assert character_rating_exceeds_invite(cp, "R18") is False
+
+    def test_exact_boundary_passes(self):
+        # R18招待コードはnsfwまで許容(hentaiのみ超過)
+        cp = {"rating_sexual": "nsfw", "rating_violence": "general"}
+        assert character_rating_exceeds_invite(cp, "R18") is False
+
+    def test_violence_axis_checked_independently(self):
+        # 性的表現は範囲内でも、暴力表現だけが超過していれば拒否
+        cp = {"rating_sexual": "general", "rating_violence": "extreme"}
+        assert character_rating_exceeds_invite(cp, "R18") is True
+
+    def test_unl_invite_allows_everything(self):
+        cp = {"rating_sexual": "hentai", "rating_violence": "extreme"}
+        assert character_rating_exceeds_invite(cp, "UNL") is False
+
+    def test_missing_content_policy_defaults_to_general(self):
+        assert character_rating_exceeds_invite({}, "SFW") is False
+        assert character_rating_exceeds_invite(None, "SFW") is False
+
+    def test_unknown_session_rating_defaults_to_sfw_cap(self):
+        cp = {"rating_sexual": "sfw", "rating_violence": "general"}
+        assert character_rating_exceeds_invite(cp, "not_a_real_rating") is True
 
 
 class TestEffectiveLevel:
