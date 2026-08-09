@@ -223,6 +223,78 @@ def test_human_turn_send_creates_ai_task():
                 client.portal.call(lambda: asyncio.wait_for(sess["ai_task"], timeout=2))
 
 
+# ── vote_deliberate: LLM応答のtagsが握りつぶされずに伝播すること ──────
+# (2026-08-09発覚: dialogue/emotionはparsed.get()で取り出すのにtagsだけ
+# 常に[]決め打ちになっており、実際にnsfw/violence等のcontent_policyタグが
+# 付いた弁明でもhide+reveal・音声フィルタが一切効かなかった)
+
+def test_vote_deliberate_propagates_tags_from_llm_result():
+    """generate_structured_replyがtagsを返したら、deliberationsレスポンスと
+    session["history"]の両方にそのtagsがそのまま反映されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+
+    client = TestClient(app)
+    start = client.post("/api/session/start", json={"character_ids": []})
+    d = start.json()
+    sid = d["session_id"]
+    host_token = d["host_token"]
+
+    sess = _sessions[sid]
+    sess["initiative"] = ["char_ai"]
+    sess["name_map"]["char_ai"] = "AIキャラ"
+    # char_ai は human_char_ids に入れない = AIキャラ扱い（LLM生成パスを通す）
+
+    mock_result = {
+        "success": True,
+        "result": {"dialogue": "そういう話は苦手です……", "emotion": "embarrassed", "tags": ["nsfw"]},
+    }
+    with patch("def_kari.api.routes.session.generate_structured_reply", return_value=mock_result), \
+         patch("def_kari.api.routes.session._start_background_tts", return_value=""):
+        resp = client.post(
+            f"/api/session/{sid}/vote/deliberate",
+            json={"vote_type": "topic_change", "detail": "", "target_id": "", "proposer_id": "", "proposer_text": ""},
+            headers={"Authorization": f"Bearer {host_token}"},
+        )
+    assert resp.status_code == 200
+    deliberations = resp.json()["deliberations"]
+    ai_entry = next(x for x in deliberations if x["character_id"] == "char_ai")
+    assert ai_entry["tags"] == ["nsfw"]
+
+    history_entry = next(h for h in sess["history"] if h.get("character_id") == "char_ai")
+    assert history_entry["tags"] == ["nsfw"]
+
+
+def test_vote_deliberate_defaults_to_empty_tags_on_failure():
+    """LLM呼び出しが失敗（例外）した場合はtagsが空配列になること（決め打ちの[]から
+    parsed.get('tags', [])への変更で、except節のフォールバックも壊れていないことの確認）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+
+    client = TestClient(app)
+    start = client.post("/api/session/start", json={"character_ids": []})
+    d = start.json()
+    sid = d["session_id"]
+    host_token = d["host_token"]
+
+    sess = _sessions[sid]
+    sess["initiative"] = ["char_ai"]
+    sess["name_map"]["char_ai"] = "AIキャラ"
+
+    with patch("def_kari.api.routes.session.generate_structured_reply", side_effect=RuntimeError("boom")), \
+         patch("def_kari.api.routes.session._start_background_tts", return_value=""):
+        resp = client.post(
+            f"/api/session/{sid}/vote/deliberate",
+            json={"vote_type": "topic_change", "detail": "", "target_id": "", "proposer_id": "", "proposer_text": ""},
+            headers={"Authorization": f"Bearer {host_token}"},
+        )
+    assert resp.status_code == 200
+    ai_entry = next(x for x in resp.json()["deliberations"] if x["character_id"] == "char_ai")
+    assert ai_entry["tags"] == []
+
+
 # ── keeper_skip 競合修正（_skip_gen）─────────────────────────────────
 
 @pytest.mark.asyncio

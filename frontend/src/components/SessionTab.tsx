@@ -767,8 +767,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         const delibData = await delibRes.json()
         if (delibData.counters) setCounters(capCounters(delibData.counters))
         if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
-          for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
-            setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: [] }])
+          for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[] }[]) {
+            setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: d.tags || [] }])
           }
         }
         setMessages(prev => [...prev, { character_id: '_keeper', character_name: 'キーパー', text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`, emotion: '', tags: [], isKeeperVote: true }])
@@ -1186,8 +1186,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         })
         const delibData = await delibRes.json()
         if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
-          for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
-            setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: [] }])
+          for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[] }[]) {
+            setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: d.tags || [] }])
           }
         }
         setMessages(prev => [...prev, {
@@ -1951,13 +1951,13 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       if (data.error) return
       if (data.counters) setCounters(capCounters(data.counters))
       if (data.deliberations && Array.isArray(data.deliberations)) {
-        for (const d of data.deliberations as { character_id: string; character_name: string; text: string; emotion: string }[]) {
+        for (const d of data.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[] }[]) {
           setMessages(prev => [...prev, {
             character_id: d.character_id,
             character_name: d.character_name,
             text: d.text,
             emotion: d.emotion || '',
-            tags: [],
+            tags: d.tags || [],
             imageColor: charMap[d.character_id]?.image_color,
           }])
           // TTSはサーバー側（vote_deliberate）で合成済み。再生するかどうかだけクライアントが判断する
@@ -1965,8 +1965,10 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
           const ttsUrl: string | null = (d as { audio_url?: string }).audio_url || null
           if (ttsUrl) {
             const shouldPlay = d.character_id === humanCharId ? ttsHumanEnabledRef.current : ttsEnabledRef.current
+            const isBlocked = d.character_id !== humanCharId && safetyLevelRef.current !== 'off' &&
+              isContentBlocked(d.tags || [], allowedSexualRef.current, allowedViolenceRef.current)
             setMessages(prev => { const last = prev.length - 1; return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m) })
-            if (shouldPlay) await playAudio(ttsUrl)
+            if (shouldPlay && !isBlocked) await playAudio(ttsUrl)
           }
         }
       }

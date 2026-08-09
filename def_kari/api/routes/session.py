@@ -3590,11 +3590,13 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
                 _delib_lock.release()
             dialogue = ""
             emotion = "neutral"
+            tags: list = []
             had_dialogue = False
             if result.get("success") and result.get("result"):
                 parsed = result["result"]
                 dialogue = parsed.get("dialogue", "")
                 emotion = parsed.get("emotion", "neutral")
+                tags = parsed.get("tags", []) or []
             if dialogue:
                 had_dialogue = True
             else:
@@ -3602,6 +3604,7 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
         except Exception:
             dialogue = _sp("no_deliberation", _v_lang) or "(弁明なし)"
             emotion = "neutral"
+            tags = []
             had_dialogue = False
 
         session["history"].append({
@@ -3609,13 +3612,14 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
             "content": f"{char_name}: {dialogue}",
             "character_id": char_id,
             "emotion": emotion,
-            "tags": [],
+            "tags": tags,
         })
         deliberations.append({
             "character_id": char_id,
             "character_name": char_name,
             "text": dialogue,
             "emotion": emotion,
+            "tags": tags,
             "audio_request_id": _start_background_tts(session_id, dialogue, char_id) if had_dialogue else "",
         })
         session["_pending_vote"]["deliberation_texts"][char_id] = dialogue
