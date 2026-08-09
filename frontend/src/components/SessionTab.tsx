@@ -277,6 +277,12 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [allowedSexual, setAllowedSexual] = useState<string[]>(['sfw'])
   const [allowedViolence, setAllowedViolence] = useState<string[]>(['violence'])
   const [safetyLevel, setSafetyLevel] = useState('off')
+  // WSイベントハンドラ(handleSessionEvent)はsessionId確定時に一度だけ張られるクロージャの
+  // ため、その中で最新の安全設定を読むにはstateではなくrefが要る(ttsEnabledRefと同じ理由)。
+  // 音声の自動再生をtags/レーティングでブロックする判定に使う。
+  const allowedSexualRef = useRef<string[]>(['sfw'])
+  const allowedViolenceRef = useRef<string[]>(['violence'])
+  const safetyLevelRef = useRef('off')
   const [autoAdvance, setAutoAdvance] = useState(false)
   const autoAdvanceRef = useRef(false)
   const [autoStopMsg, setAutoStopMsg] = useState<string | null>(null)
@@ -678,12 +684,17 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
     if (event.type === 'TURN_AUDIO_READY') {
       const { character_id, round: r, turn: t, url } = event.payload ?? {}
-      setMessages(prev => prev.map(m =>
-        m.character_id === character_id && m.turnRound === r && m.turnTurn === t
-          ? { ...m, audioUrl: url }
-          : m
-      ))
-      if (url && ttsEnabledRef.current) void playAudio(url)
+      let matchedTags: string[] | undefined
+      setMessages(prev => prev.map(m => {
+        if (m.character_id !== character_id || m.turnRound !== r || m.turnTurn !== t) return m
+        matchedTags = m.tags
+        return { ...m, audioUrl: url }
+      }))
+      // safetyLevel/許容タグ範囲外なら、表示側のhide+revealと同様に自動再生も止める
+      // (テキスト・画像はhide+revealで既に対応済みだったが、音声だけ抜けていた・2026-08-09対応)。
+      const audioBlocked = safetyLevelRef.current !== 'off' && !!matchedTags &&
+        isContentBlocked(matchedTags, allowedSexualRef.current, allowedViolenceRef.current)
+      if (url && ttsEnabledRef.current && !audioBlocked) void playAudio(url)
     }
     if (event.type === 'PLAYER_LEFT') {
       // participant_id で判定（char_id="" の observer/keeper が複数いても巻き添えにしない）
@@ -811,9 +822,9 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       .then(r => r.json())
       .then(res => {
         const s = res.settings ?? res
-        if (s.allowed_rating_sexual) setAllowedSexual(s.allowed_rating_sexual)
-        if (s.allowed_rating_violence) setAllowedViolence(s.allowed_rating_violence)
-        if (s.safety_level) setSafetyLevel(s.safety_level === 'warn' ? 'off' : s.safety_level)
+        if (s.allowed_rating_sexual) { setAllowedSexual(s.allowed_rating_sexual); allowedSexualRef.current = s.allowed_rating_sexual }
+        if (s.allowed_rating_violence) { setAllowedViolence(s.allowed_rating_violence); allowedViolenceRef.current = s.allowed_rating_violence }
+        if (s.safety_level) { const v = s.safety_level === 'warn' ? 'off' : s.safety_level; setSafetyLevel(v); safetyLevelRef.current = v }
         if (s.session_actions_per_turn) {
           setActionsPerTurn(s.session_actions_per_turn)
           actionsPerTurnRef.current = s.session_actions_per_turn
@@ -851,7 +862,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
         setMaxCounter(value)
         maxCounterRef.current = value
       }
-      if (key === 'safety_level') setSafetyLevel(value === 'warn' ? 'off' : value)
+      if (key === 'safety_level') { const v = value === 'warn' ? 'off' : value; setSafetyLevel(v); safetyLevelRef.current = v }
     }
     window.addEventListener('def-settings-change', onSettingsChange)
     fetch('/api/session/rules')
@@ -3117,7 +3128,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                         <span className="emotion"> ({m.emotion})</span>
                       )}
                     </span>
-                    {m.audioUrl && (
+                    {m.audioUrl && !blocked && (
                       <audio key={m.audioUrl} controls src={m.audioUrl} className="session-msg-audio" />
                     )}
                   </div>

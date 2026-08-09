@@ -540,7 +540,9 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
             </button>
           </div>
         )}
-        {messages.map((m, i) => (
+        {messages.map((m, i) => {
+          const blocked = safetyLevel !== 'off' && m.role === 'assistant' && !m.isRevealed && !!m.tags && isContentBlocked(m.tags, allowedSexual, allowedViolence)
+          return (
           <div key={i} className={`message ${m.role}`}>
             {m.role === 'assistant' && iconUrl && (
               <img src={iconUrl} alt="" className="avatar" />
@@ -566,12 +568,11 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
                     <span className="emotion"> ({m.emotion})</span>
                   )}
                 </div>
-                {m.audioUrl && (
+                {m.audioUrl && !blocked && (
                   <audio key={m.audioUrl} controls autoPlay={!!m.autoPlayAudio} src={m.audioUrl} className="chat-msg-audio" />
                 )}
               </div>
               {(() => {
-                const blocked = safetyLevel !== 'off' && m.role === 'assistant' && !m.isRevealed && !!m.tags && isContentBlocked(m.tags, allowedSexual, allowedViolence)
                 if (blocked) {
                   return (
                     <div className="content-blocked">
@@ -635,7 +636,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
               )}
             </div>
           </div>
-        ))}
+        )})}
         {loading && (
           <div className="message assistant">
             {iconUrl && <img src={iconUrl} alt="" className="avatar" />}
