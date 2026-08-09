@@ -103,4 +103,6 @@ _register_compatible_backends()
 
 DEFAULT_LLM_BACKEND = os.environ.get("LLM_BACKEND", "openai")
 if DEFAULT_LLM_BACKEND not in LLM_BACKENDS:
-    DEFAULT_LLM_BACKEND = "openai"
+    # "openai"はdata/llm_services.json（gitignore対象）経由でのみ登録されるため、
+    # その設定が無い環境（新規clone等）では常時ハードコード済みのtextgen_webuiへ逃がす
+    DEFAULT_LLM_BACKEND = "textgen_webui"

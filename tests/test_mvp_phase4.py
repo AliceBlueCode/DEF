@@ -15,17 +15,29 @@ import tempfile
 def test_characters():
     from def_kari.characters import get_character, apply_name_reading, get_tts_speaker_id, list_character_choices
 
-    choices = list_character_choices()
+    profiles = {
+        "test_char_001": {
+            "base_profile": {
+                "name": "テストキャラ",
+                "appearance_tags": "1girl, brown hair",
+                "identity_prompt": "元気で明るい性格。",
+                "persona_attributes": {},
+                "visual_references": {},
+            }
+        }
+    }
+
+    choices = list_character_choices(profiles)
     assert len(choices) > 0
     print(f"  {len(choices)} characters found")
 
-    luna = get_character("character_luna_001")
-    assert luna["name"]
-    assert luna["appearance_tags"]
-    assert luna["persona_description"]
-    print(f"  luna: name={luna['name']}")
+    char = get_character("test_char_001", profiles)
+    assert char["name"]
+    assert char["appearance_tags"]
+    assert char["persona_description"]
+    print(f"  char: name={char['name']}")
 
-    unknown = get_character("nonexistent_character_xyz")
+    unknown = get_character("nonexistent_character_xyz", profiles)
     assert unknown["name"]
 
     char_with_reading = {"name": "燈佳", "name_reading": {"family_name": "", "given_name": "トウカ"}}

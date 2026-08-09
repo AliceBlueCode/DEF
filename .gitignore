@@ -63,7 +63,6 @@ data/*.pid
 
 # Service / model cache JSON (auto-generated)
 data/api_services.json
-data/llm_services.json
 data/civitai_models.json
 data/civitai_ecosystem_map.json
 
@@ -119,7 +118,7 @@ llamacpp_tools/
 # ============================================================
 # LOCAL MODEL FILES (large binaries)
 # ============================================================
-models/
+/models/
 
 # ============================================================
 # ROOT DOCUMENTS (internal, not for public)

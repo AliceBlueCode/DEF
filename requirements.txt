@@ -2,7 +2,9 @@
 # Install: pip install -r requirements.txt
 
 # Web framework
-fastapi>=0.95.0
+# fastapiは0.96以降でpydantic v2/starlette 1.x系に連鎖し、コード全体が
+# 前提にしているpydantic v1スタイル（@validator等）と衝突するため上限固定
+fastapi>=0.95.0,<0.96.0
 uvicorn[standard]>=0.21.0
 python-multipart>=0.0.9
 
@@ -24,6 +26,13 @@ jsonschema>=4.17.0
 # Config / translation tool
 PyYAML>=6.0.0
 
+# Translation (ローカル翻訳プロバイダ)
+deep-translator>=1.11.0
+
 # --- dev / test ---
 pytest>=8.0.0
 pytest-asyncio>=1.0.0
+# FastAPI TestClient用。新しいhttpx/anyioはfastapi<0.96系のstarletteと
+# 組み合わせるとTestClient初期化や例外伝播の挙動が変わるため上限固定
+httpx==0.23.3
+anyio<4.0.0

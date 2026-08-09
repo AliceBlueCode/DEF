@@ -1,0 +1,26 @@
+[
+  {
+    "id": "gemini",
+    "label": "Google Gemini API",
+    "type": "gemini",
+    "default_model": "gemini-2.5-flash",
+    "api_url": "https://generativelanguage.googleapis.com/v1beta/models",
+    "api_key_service": "gemini"
+  },
+  {
+    "id": "openai",
+    "label": "OpenAI API",
+    "type": "openai_compatible",
+    "default_model": "gpt-4o-mini",
+    "api_url": "https://api.openai.com/v1",
+    "api_key_service": "openai"
+  },
+  {
+    "id": "anthropic",
+    "label": "Anthropic Claude API",
+    "type": "anthropic",
+    "default_model": "claude-sonnet-4-6",
+    "api_url": "https://api.anthropic.com/v1",
+    "api_key_service": "anthropic"
+  }
+]

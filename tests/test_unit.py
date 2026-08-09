@@ -46,14 +46,54 @@ class TestLoadProfiles:
         profiles = load_profiles()
         assert isinstance(profiles, dict)
 
-    def test_known_character_present(self):
-        profiles = load_profiles()
-        assert "character_luna_001" in profiles
+    def test_known_character_present(self, tmp_path):
+        char_dir = tmp_path / "test_char_001"
+        char_dir.mkdir()
+        profile_data = {
+            "test_char_001": {
+                "base_profile": {
+                    "name": "Test",
+                    "persona_attributes": {},
+                    "visual_references": {},
+                }
+            }
+        }
+        (char_dir / "profile.json").write_text(
+            json.dumps(profile_data), encoding="utf-8"
+        )
+        with mock.patch(
+            "def_kari.characters.CHARACTERS_DIR", tmp_path
+        ), mock.patch(
+            "def_kari.characters.PRIVATE_CHARACTERS_DIR",
+            tmp_path / "nonexistent_private",
+        ):
+            profiles = load_profiles()
+        assert "test_char_001" in profiles
 
-    def test_profile_has_base_profile(self):
-        profiles = load_profiles()
-        luna = profiles["character_luna_001"]
-        assert "base_profile" in luna
+    def test_profile_has_base_profile(self, tmp_path):
+        char_dir = tmp_path / "test_char_001"
+        char_dir.mkdir()
+        profile_data = {
+            "test_char_001": {
+                "base_profile": {
+                    "name": "Test",
+                    "persona_attributes": {},
+                    "visual_references": {},
+                }
+            }
+        }
+        (char_dir / "profile.json").write_text(
+            json.dumps(profile_data), encoding="utf-8"
+        )
+        with mock.patch(
+            "def_kari.characters.CHARACTERS_DIR", tmp_path
+        ), mock.patch(
+            "def_kari.characters.PRIVATE_CHARACTERS_DIR",
+            tmp_path / "nonexistent_private",
+        ):
+            profiles = load_profiles()
+        char = profiles["test_char_001"]
+        assert "base_profile" in char
 
     def test_loads_from_temp_directory(self, tmp_path):
         """Create a minimal character dir and verify load_profiles picks it up."""
@@ -132,7 +172,7 @@ class TestGetCharacter:
         assert char["name"] == "nonexistent_xyz"
 
     def test_default_character_id_used_when_none(self):
-        profiles = load_profiles()
+        profiles = {DEFAULT_CHARACTER_ID: {"base_profile": {"name": "Default Test Char"}}}
         char = get_character(None, profiles)
         assert char["name"] != ""
 
@@ -323,10 +363,18 @@ class TestLoadProfilesBOM:
 
 
 class TestFindCharacterDir:
-    def test_existing_public_character(self):
-        d = _find_character_dir("character_luna_001")
+    def test_existing_public_character(self, tmp_path):
+        char_dir = tmp_path / "test_char_002"
+        char_dir.mkdir()
+        with mock.patch(
+            "def_kari.characters.CHARACTERS_DIR", tmp_path
+        ), mock.patch(
+            "def_kari.characters.PRIVATE_CHARACTERS_DIR",
+            tmp_path / "nonexistent_private",
+        ):
+            d = _find_character_dir("test_char_002")
         assert d.exists()
-        assert d.name == "character_luna_001"
+        assert d.name == "test_char_002"
 
     def test_nonexistent_falls_back_to_public(self):
         d = _find_character_dir("does_not_exist_999")

@@ -1,0 +1,14 @@
+{
+  "501": {
+    "kind": "llm",
+    "name": "LightChatAssistant-TypeB-2x7B_q8.gguf",
+    "prompt_language": "ja",
+    "model_type": "chat"
+  },
+  "101": {
+    "kind": "image",
+    "backend": "a1111",
+    "name": "waiNSFWIllustrious_v140.safetensors",
+    "prompt_format": "danbooru"
+  }
+}
