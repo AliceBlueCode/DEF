@@ -18,7 +18,8 @@
     "e2e:rate-limit": "node e2e/rate_limit.js",
     "e2e:host-disconnect": "node e2e/host_disconnect_resilience.js",
     "e2e:all-disconnect-autostop": "node e2e/all_disconnect_autostop.js",
-    "e2e:invite-rating": "node e2e/invite_rating.js"
+    "e2e:invite-rating": "node e2e/invite_rating.js",
+    "e2e:full-integration": "node e2e/full_integration.js"
   },
   "dependencies": {
     "react": "^19.2.7",
