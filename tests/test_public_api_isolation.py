@@ -29,7 +29,17 @@ _ALLOWED_PREFIXES = (
     "/api/t2i",         # t2i_public のみ
     "/api/tts",         # tts_public のみ
     "/api/health",
+    "/assets",          # frontend/dist/assets のビルド済みJS/CSS（下記参照）
 )
+
+# "/" のような短い文字列を_ALLOWED_PREFIXESにprefixマッチで加えると、全パスが
+# 何にでもstartswith("/")してしまい許可リストが事実上無効化される。フロントエンド
+# ビルド成果物（index.html・favicon.svg・icons.svg）配信用の個別ルートは
+# 完全一致でのみ許可する（2026-08-10、Cloudflare Tunnel動作確認でゲストがUIを
+# 読み込めない不具合を発見・追加。当初"/"にStaticFiles(html=True)を丸ごとマウント
+# する案を試したが、他のAPIパスの404/405判定まで巻き込んで壊れたため、
+# individual routesに絞り直した）。
+_ALLOWED_EXACT_PATHS = ("/", "/favicon.svg", "/icons.svg")
 
 
 def _iter_included_paths():
@@ -51,7 +61,10 @@ def test_allowlist_no_path_outside_allowed_prefixes():
     """public_app の全パスが許可プレフィックスの範囲内であること。"""
     all_paths = list(_iter_included_paths())
     assert all_paths, "public_app にルートが1件も登録されていない（設定ミスの可能性）"
-    offenders = [p for p in all_paths if not p.startswith(_ALLOWED_PREFIXES)]
+    offenders = [
+        p for p in all_paths
+        if not p.startswith(_ALLOWED_PREFIXES) and p not in _ALLOWED_EXACT_PATHS
+    ]
     assert not offenders, f"許可外のパスが public_app に混入している: {offenders}"
 
 

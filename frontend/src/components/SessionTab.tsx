@@ -229,7 +229,7 @@ type RulebookOption = { id: string; label: string; dice_system: string }
 type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string }
 type KeeperJudgment = { character_id: string; character_name: string; stat: string; stat_value: number; damage_on?: 'failure' | 'fumble' | 'any' }
 
-export default function SessionTab({ characters, backend, ttsBackend, t2iBackend }: Props) {
+export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   const t = useT()
   const [selectedChars, setSelectedChars] = useState<string[]>([])
   const [topic, setTopic] = useState('')
@@ -262,7 +262,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [keeperSource, setKeeperSource] = useState<'ai' | 'participant'>('ai')
   const [hostRole, setHostRole] = useState<'keeper' | 'player' | 'observer'>('keeper')
   const [hostCharForLobby, setHostCharForLobby] = useState('')
-  const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
+  // TODO: aiTakeover機能完成時に復元（TODO.md参照）
+  // const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
   const [lobbyKeeperCharId, setLobbyKeeperCharId] = useState('')
   const [lobbyKeeperCharName, setLobbyKeeperCharName] = useState('')
   // ロビーAI割付けウィザード（スロット/キーパー共通）: キャラ選択 → ゲームキャラシート選択（TRPG+スロットのみ）→ LLM選択
@@ -1400,29 +1401,32 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
   }
 
-  const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
-    if (isCharDead(j.character_id)) {
-      setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
-      return
-    }
-    const roll = await rollJudgmentAuto(sessionId, j)
-    if (roll) {
-      const jv = roll.judgment?.judgment_value ?? j.stat_value
-      let outcome = ''
-      if (roll.judgment?.critical) outcome = 'クリティカル！'
-      else if (roll.judgment?.fumble) outcome = 'ファンブル…'
-      else if (roll.judgment?.success) outcome = '成功'
-      else if (roll.judgment) outcome = '失敗'
-      setMessages(prev => [...prev, {
-        character_id: j.character_id,
-        character_name: `🎲 ${j.character_name}`,
-        text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
-        emotion: '', tags: [],
-      }])
-      if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
-    }
-    setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
-  }
+  // TODO: UIから呼ばれるボタンが無く未使用のためビルド上コメントアウト。今は
+  // rollAllPendingJudgments（一括ロール）のみUIに存在する。個別ロールのボタンを
+  // 足す機能完成時に復元（TODO.md参照）。
+  // const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
+  //   if (isCharDead(j.character_id)) {
+  //     setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
+  //     return
+  //   }
+  //   const roll = await rollJudgmentAuto(sessionId, j)
+  //   if (roll) {
+  //     const jv = roll.judgment?.judgment_value ?? j.stat_value
+  //     let outcome = ''
+  //     if (roll.judgment?.critical) outcome = 'クリティカル！'
+  //     else if (roll.judgment?.fumble) outcome = 'ファンブル…'
+  //     else if (roll.judgment?.success) outcome = '成功'
+  //     else if (roll.judgment) outcome = '失敗'
+  //     setMessages(prev => [...prev, {
+  //       character_id: j.character_id,
+  //       character_name: `🎲 ${j.character_name}`,
+  //       text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+  //       emotion: '', tags: [],
+  //     }])
+  //     if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
+  //   }
+  //   setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
+  // }
 
   const normalizeSheetStats = (sheet: any): any => {
     if (!sheet?.stats) return sheet
@@ -1708,17 +1712,19 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     // ai_resume はここでは呼ばない。オフライン同様、キーパーが自動/次の発言で開始する。
   }
 
-  const aiTakeover = async (charId: string) => {
-    if (!sessionId) return
-    const res = await fetch(`/api/session/${sessionId}/ai_takeover`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
-      body: JSON.stringify({ character_id: charId }),
-    })
-    if (res.ok) {
-      setAiTakenOverChars(prev => new Set([...prev, charId]))
-    }
-  }
+  // TODO: UIから呼ばれるボタンが無く未使用のためビルド上コメントアウト。機能完成時に
+  // 復元（TODO.md参照、バックエンド POST /{session_id}/ai_takeover は実装済みで無傷）。
+  // const aiTakeover = async (charId: string) => {
+  //   if (!sessionId) return
+  //   const res = await fetch(`/api/session/${sessionId}/ai_takeover`, {
+  //     method: 'POST',
+  //     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+  //     body: JSON.stringify({ character_id: charId }),
+  //   })
+  //   if (res.ok) {
+  //     setAiTakenOverChars(prev => new Set([...prev, charId]))
+  //   }
+  // }
 
   const lobbyAddAi = async (charId: string, gameSheetId = '', backendId = '') => {
     if (!sessionId) return
@@ -2100,7 +2106,6 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       ...Object.fromEntries(characters.map(c => [c.id, c.name])),
       ...Object.fromEntries(participants.filter(p => p.char_id).map(p => [p.char_id, p.display_name])),
     }
-    const isOnlineLobby = initiative.length === 0 || participants.some(p => p.role === 'player' && !characters.find(c => c.id === p.char_id))
     const observerCount = participants.filter(p => p.role === 'observer').length
 
     return (

@@ -14,9 +14,12 @@ T2I画像・TTS音声の読み取り専用配信ルーターのみをマウン�
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from def_kari.api.main import (
     SessionBodySizeLimitMiddleware,
@@ -27,6 +30,8 @@ from def_kari.api.routes import session
 from def_kari.api.routes.characters_public import router as characters_public_router
 from def_kari.api.routes.t2i_public import router as t2i_public_router
 from def_kari.api.routes.tts_public import router as tts_public_router
+
+_FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -74,3 +79,29 @@ public_app.include_router(tts_public_router, prefix="/api/tts", tags=["tts-publi
 @public_app.get("/api/health")
 def health():
     return {"status": "ok", "version": __version__}
+
+
+# ゲストがCloudflare Tunnel経由でDEFのUI自体を読み込めるよう、本番ビルド成果物
+# （frontend/dist、npm run buildで生成）を配信する。未ビルドの環境（新規clone・CI等）
+# ではdist/自体が存在しないため、その場合は静かにスキップする（StaticFilesは存在しない
+# ディレクトリを渡すと起動時に例外を出すため）。
+#
+# "/"にStaticFiles(html=True)を丸ごとマウントする案は一度試して破棄した:
+# Starletteはそのマウントを「/配下の全パスに対する経路の1つ」として扱うため、
+# 他のAPIパスへの本来405になるべき誤メソッドリクエスト等まで巻き込んで挙動が変わり、
+# 複数の到達不能性テストが壊れた（2026-08-10）。frontend/dist/内の実ファイル
+# （index.html・favicon.svg・icons.svg・assets/配下）だけをそれぞれ狭く公開する。
+if _FRONTEND_DIST.is_dir():
+    public_app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="frontend-assets")
+
+    @public_app.get("/", include_in_schema=False)
+    def _serve_frontend_index():
+        return FileResponse(_FRONTEND_DIST / "index.html")
+
+    @public_app.get("/favicon.svg", include_in_schema=False)
+    def _serve_frontend_favicon():
+        return FileResponse(_FRONTEND_DIST / "favicon.svg")
+
+    @public_app.get("/icons.svg", include_in_schema=False)
+    def _serve_frontend_icons():
+        return FileResponse(_FRONTEND_DIST / "icons.svg")
