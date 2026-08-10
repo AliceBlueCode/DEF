@@ -35,6 +35,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought, trpg
+from def_kari.api import tunnel_state
 
 from def_kari import __version__
 
@@ -251,3 +252,11 @@ app.include_router(trpg.router, prefix="/api/trpg", tags=["trpg"])
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": __version__}
+
+
+@app.get("/api/tunnel_url")
+def get_tunnel_url():
+    """dual_run.py --cloudflare-tunnel がcloudflaredを自動起動した場合に検出した
+    Quick Tunnel URLを返す（ホストが招待URLをコピペするためのUI用、SessionTab参照）。
+    未起動・未検出の場合はurl:nullを返す（フロント側は手入力にフォールバックする）。"""
+    return {"url": tunnel_state.url}
