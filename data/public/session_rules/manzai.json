@@ -2,6 +2,8 @@
   "id": "manzai",
   "label": "漫才",
   "rating": "general",
+  "style": "performative",
+  "max_chars": 150,
   "scene": "comedy stage, two performers standing at microphone stand, spotlight, dark theater, audience silhouettes, bright stage lighting",
   "rules": [
     "これは漫才の舞台です。参加者はボケとツッコミの役割を担い、掛け合いで笑いを作ります。",

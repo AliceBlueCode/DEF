@@ -2,6 +2,7 @@
   "id": "default",
   "label": "標準（対立促進・対話重視）",
   "rating": "general",
+  "style": "discussion",
   "scene": "indoors, round table, modern conference room, soft lighting, multiple characters sitting, discussion atmosphere",
   "rules": [
     "これは参加者同士の対話セッションです。観客やユーザーは存在しません。",

@@ -1689,6 +1689,8 @@ def start_session(req: SessionStartRequest, request: Request):
     _rule_data = _load_session_rules().get(req.rule_set, {})
     rules = _rule_data.get("rules", [])
     scene = _rule_data.get("scene", "")
+    rule_style = _rule_data.get("style", "discussion")
+    rule_max_chars = _rule_data.get("max_chars", 0)
     char_backends = {
         cid: bid
         for cid, bid in req.char_backends.items()
@@ -1708,6 +1710,8 @@ def start_session(req: SessionStartRequest, request: Request):
         "char_backends": char_backends,
         "rule_set": req.rule_set,
         "rules": rules,
+        "style": rule_style,
+        "max_chars": rule_max_chars,
         "scene": scene,
         "round": 1,
         "turn": 0,
@@ -2183,8 +2187,12 @@ def next_turn(req: SessionNextRequest):
         backend_id = DEFAULT_LLM_BACKEND
     model = _resolve_model(backend_id, req.model)
 
+    # performative系（漫才・落語等）は「直近のネタ/演目」に集中させたいのと、履歴が
+    # 育つほど応答が長文化していく傾向を抑えるため、discussion系より短い窓に絞る
+    # （2026-08-10）。
+    _history_window = 8 if session.get("style") == "performative" else 20
     history = []
-    for h in session["history"][-20:]:
+    for h in session["history"][-_history_window:]:
         raw_content = h["content"]
         h_role = h.get("role", "user")
         h_char_id = h.get("character_id")
@@ -2762,6 +2770,8 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = 
         sess["rule_set"] = req.rule_set
         _rule_data = _load_session_rules().get(req.rule_set, {})
         sess["rules"] = _rule_data.get("rules", [])
+        sess["style"] = _rule_data.get("style", "discussion")
+        sess["max_chars"] = _rule_data.get("max_chars", 0)
         sess["scene"] = _rule_data.get("scene", "")
     if req.trpg_rulebook is not None:
         sess["trpg_rulebook"] = req.trpg_rulebook

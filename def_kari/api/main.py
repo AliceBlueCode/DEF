@@ -237,8 +237,12 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
 app.include_router(novel.router, prefix="/api/novel", tags=["novel"])
-app.include_router(session.router, prefix="/api/session", tags=["session"])
+# local_routerを先に登録する。router側の`GET /{session_id}`が単一セグメントの
+# 何にでもマッチするため、後から登録すると local_router の `/debug`・`/saved`
+# 等の固定パスがそちらに食われて到達不能になっていた（2026-08-10発覚、
+# `GET /api/session/saved`が常に{"error": "Session not found"}を返す不具合）。
 app.include_router(session.local_router, prefix="/api/session", tags=["session-local"])
+app.include_router(session.router, prefix="/api/session", tags=["session"])
 app.include_router(t2i.router, prefix="/api/t2i", tags=["t2i"])
 app.include_router(thought.router, prefix="/api/thought", tags=["thought"])
 app.include_router(trpg.router, prefix="/api/trpg", tags=["trpg"])

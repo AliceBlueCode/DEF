@@ -2,6 +2,8 @@
   "id": "rakugo",
   "label": "落語（古典・現代）",
   "rating": "general",
+  "style": "performative",
+  "max_chars": 400,
   "scene": "japanese stage, high seat, performer in kimono sitting on zabuton, folding fan, traditional wooden hall, warm lantern light, audience shadows",
   "rules": [
     "あなたは高座に座った落語家です。扇子（おうぎ）と手ぬぐい、この二つだけを使い、複数の登場人物を一人で演じきります。",

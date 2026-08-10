@@ -569,13 +569,28 @@ def build_turn_instruction(
     """ターンごとの発言指示テキストを組み立てる。"""
     _is_ja = user_language == "ja"
     _is_trpg = session.get("trpg_mode", False)
+    # discussion系（default/gentle等）向けの「意見を述べよ」という指示は、manzai/rakugo/
+    # roleplay等performative系のルール（文字数制限・役割演技等）と正面から食い違い、
+    # ルールが注入されていても議論寄りの長文へ引っ張られる原因になっていた
+    # （2026-08-10、漫才ルールセットが機能していない不具合の調査で発覚）。
+    _is_performative = session.get("style", "discussion") == "performative"
+    # 文字数上限はrulesの文章内にも書かれているが、履歴が育つにつれその指示が
+    # 文脈の重みに埋もれ、ターンを追うごとに応答が長くなっていく傾向があった。
+    # 生成直前の短い指示に毎ターン再掲することで直近の重みを稼ぐ（2026-08-10）。
+    _max_chars = session.get("max_chars", 0) if _is_performative else 0
     if not session_history:
         if _is_ja:
             if _is_trpg:
                 return "あなたはこのシーンにいる探索者です。AIとしての自己紹介は不要です。目の前の状況に自然に反応し、探索者として行動・発言してください。"
+            if _is_performative:
+                _suffix = f"（1発言は{_max_chars}字以内厳守）" if _max_chars else ""
+                return f"上記のルールに従い、このお題を起点に始めてください。{_suffix}"
             return "まず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。"
         if _is_trpg:
             return "You are an explorer in this scene. Do not introduce yourself as an AI. React naturally to the situation and act as your character."
+        if _is_performative:
+            _suffix = f" (strictly {_max_chars} characters or fewer)" if _max_chars else ""
+            return f"Following the rules above, begin using this topic as your starting point.{_suffix}"
         return "Start with a brief self-introduction, then state your position on the topic."
     if action_count == 0:
         others_have_spoken = any(
@@ -587,6 +602,9 @@ def build_turn_instruction(
                 if others_have_spoken:
                     return "上記の状況と他の探索者の行動を踏まえ、探索者としてこの場面に自然に反応してください。AIとしての解説・メタコメントは禁止です。発言は3文以内で簡潔にまとめてください。"
                 return "この場面の状況を踏まえ、探索者として自然に行動・発言してください。AIとしての解説・メタコメントは禁止です。発言は3文以内で簡潔にまとめてください。"
+            if _is_performative:
+                _suffix = f"（1発言は{_max_chars}字以内厳守。長くなりすぎないこと）" if _max_chars else ""
+                return f"上記のルールとここまでの流れを踏まえ、続けてください。{_suffix}"
             if others_have_spoken:
                 return "上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から意見を述べてください。"
             return "上記の発言記録を踏まえ、あなた自身の立場から意見を述べてください。"
@@ -594,6 +612,9 @@ def build_turn_instruction(
             if others_have_spoken:
                 return "Based on the situation and what other explorers have done, react naturally as your character. No AI meta-commentary. Keep your response to 3 sentences or fewer."
             return "React naturally to this scene as your character. No AI meta-commentary. Keep your response to 3 sentences or fewer."
+        if _is_performative:
+            _suffix = f" (strictly {_max_chars} characters or fewer; do not let responses grow longer over time)" if _max_chars else ""
+            return f"Following the rules above and the flow so far, continue.{_suffix}"
         if others_have_spoken:
             return "Based on the discussion above, respond to what other participants have said and express your own position."
         return "Based on the discussion above, express your own position."
