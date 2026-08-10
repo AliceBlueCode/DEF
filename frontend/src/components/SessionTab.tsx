@@ -983,7 +983,7 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
     }
   }
 
-  // ローカルで開始: キャラ選択必須、ロビーなし、AI即開始
+  // ローカルで開始: キャラ選択必須、ロビーなし
   const startLocalSession = async () => {
     if (selectedChars.length < 1) return
     setSessionStarting(true)
@@ -995,8 +995,8 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       })
       const data = await res.json()
       await _initSession(data, selectedChars)
-      // ロビーを経由せず即開始
-      void authFetch(`/api/session/${data.session_id}/ai_resume`, { method: 'POST' })
+      // オンライン側（ロビー終了処理）と同様、ここではai_resumeを呼ばない。
+      // 開始後は「自動」トグルか「次の発言」ボタンでユーザーが能動的に始める。
     } catch (e) {
       console.error(e)
     } finally {
