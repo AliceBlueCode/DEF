@@ -84,43 +84,59 @@ export default function InvitePanel({ defaultCode, sessionId, hostToken, onCodeC
     })
   }
 
+  const rowStyle: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }
+  const fieldBoxStyle: React.CSSProperties = { flex: 1, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', fontSize: '0.85em' }
+  const copyBtnStyle = (enabled: boolean): React.CSSProperties => ({
+    padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)',
+    background: 'transparent', color: 'inherit', cursor: enabled ? 'pointer' : 'default',
+    fontSize: '0.85em', whiteSpace: 'nowrap',
+  })
+
   return (
     <div className="invite-panel">
-      <div className="invite-url-row" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+      <div className="invite-url-row" style={rowStyle}>
         <input
           type="text"
           value={joinUrl}
           onChange={e => updateJoinUrl(e.target.value)}
           placeholder="参加用URL（例: https://xxxx.trycloudflare.com）"
-          style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', fontSize: '0.85em' }}
+          style={fieldBoxStyle}
         />
-        <button
-          className="invite-copy-btn"
-          onClick={copyJoinUrl}
-          disabled={!joinUrl}
-          style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: joinUrl ? 'pointer' : 'default', fontSize: '0.85em', whiteSpace: 'nowrap' }}
-        >
+        <button className="invite-copy-btn" onClick={copyJoinUrl} disabled={!joinUrl} style={copyBtnStyle(!!joinUrl)}>
           {urlCopied ? '✓ コピー済み' : 'URLコピー'}
         </button>
       </div>
-      <div className="invite-rating-row">
-        {RATINGS.map(r => (
-          <button
-            key={r}
-            className={`invite-rating-btn${rating === r ? ' active' : ''}`}
-            style={rating === r ? { borderColor: RATING_COLORS[r], color: RATING_COLORS[r] } : undefined}
-            onClick={() => void switchRating(r)}
-            disabled={loading}
-          >
-            {r}
-          </button>
-        ))}
+      <div className="invite-rating-row" style={{ ...rowStyle, gap: 6 }}>
+        {RATINGS.map(r => {
+          const active = rating === r
+          return (
+            <button
+              key={r}
+              className={`invite-rating-btn${active ? ' active' : ''}`}
+              onClick={() => void switchRating(r)}
+              disabled={loading}
+              style={{
+                padding: '6px 14px', borderRadius: 8,
+                border: `1px solid ${active ? RATING_COLORS[r] : 'var(--border-color, #ccc)'}`,
+                background: active ? `${RATING_COLORS[r]}1a` : 'transparent',
+                color: active ? RATING_COLORS[r] : 'inherit',
+                fontWeight: active ? 600 : 400, fontSize: '0.85em',
+                cursor: loading ? 'default' : 'pointer',
+              }}
+            >
+              {r}
+            </button>
+          )
+        })}
       </div>
-      <div className="invite-code-row">
-        <span className="invite-code" style={{ color: loading ? 'var(--text-muted, #888)' : RATING_COLORS[rating], fontWeight: 700, letterSpacing: '0.05em' }}>
+      <div className="invite-code-row" style={rowStyle}>
+        <span
+          className="invite-code"
+          style={{ ...fieldBoxStyle, fontWeight: 700, letterSpacing: '0.05em', color: loading ? 'var(--text-muted, #888)' : RATING_COLORS[rating] }}
+        >
           {loading ? '...' : inviteCode}
         </span>
-        <button className="invite-copy-btn" onClick={copy} disabled={loading || !inviteCode}>
+        <button className="invite-copy-btn" onClick={copy} disabled={loading || !inviteCode} style={copyBtnStyle(!loading && !!inviteCode)}>
           {copied ? '✓ コピー済み' : 'コピー'}
         </button>
       </div>
