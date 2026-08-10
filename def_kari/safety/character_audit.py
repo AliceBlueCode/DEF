@@ -50,6 +50,7 @@ def _extract_audit_text(character_json: dict) -> str:
                 str(bp.get("identity_prompt") or bp.get("persona_description") or ""),
                 str(bp.get("identity_detail") or ""),
                 str(bp.get("appearance_tags") or ""),
+                str(bp.get("image_name_tags") or ""),
             ]
             text = "\n".join(p for p in parts if p)
             if text:
@@ -59,6 +60,7 @@ def _extract_audit_text(character_json: dict) -> str:
         str(character_json.get("persona_description") or character_json.get("identity_prompt") or ""),
         str(character_json.get("identity_detail") or ""),
         str(character_json.get("appearance_tags") or ""),
+        str(character_json.get("image_name_tags") or ""),
         str(character_json.get("name") or ""),
     ]
     return "\n".join(p for p in parts if p)
