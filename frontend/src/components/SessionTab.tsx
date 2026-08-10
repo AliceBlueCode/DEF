@@ -36,6 +36,9 @@ type SavedSession = {
   round: number
   character_names: string[]
   trpg_scenario_title?: string
+  rule_set?: string
+  rule_set_label?: string
+  online_mode?: boolean
 }
 
 // 生の history 配列(セーブファイル読み込み・GET /{session_id}どちらも同じ形)から
@@ -2789,7 +2792,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
                 {savedSessions.map(s => (
                   <div key={s.filename} className="session-saved-item" onClick={() => loadSavedSession(s.filename)}>
                     <span className="saved-topic">{s.trpg_scenario_title || s.topic || t('session.setup.savedUntitled')}</span>
-                    <span className="saved-meta">{s.character_names.join(' · ')} | Round {s.round}</span>
+                    <span className="saved-meta">
+                      {s.character_names.join(' · ')} | Round {s.round}
+                      {s.rule_set_label && ` | ${s.rule_set_label}`}
+                      {` | ${s.online_mode ? t('session.setup.savedOnline') : t('session.setup.savedOffline')}`}
+                    </span>
                     <span className="saved-date">{s.saved_at.replace('_', ' ')}</span>
                     <button
                       className="saved-delete-btn"

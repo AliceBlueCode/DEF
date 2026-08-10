@@ -1691,6 +1691,7 @@ def start_session(req: SessionStartRequest, request: Request):
     scene = _rule_data.get("scene", "")
     rule_style = _rule_data.get("style", "discussion")
     rule_max_chars = _rule_data.get("max_chars", 0)
+    rule_max_rounds = _rule_data.get("max_rounds", 0)
     char_backends = {
         cid: bid
         for cid, bid in req.char_backends.items()
@@ -1712,6 +1713,7 @@ def start_session(req: SessionStartRequest, request: Request):
         "rules": rules,
         "style": rule_style,
         "max_chars": rule_max_chars,
+        "max_rounds": rule_max_rounds,
         "scene": scene,
         "round": 1,
         "turn": 0,
@@ -2772,6 +2774,7 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = 
         sess["rules"] = _rule_data.get("rules", [])
         sess["style"] = _rule_data.get("style", "discussion")
         sess["max_chars"] = _rule_data.get("max_chars", 0)
+        sess["max_rounds"] = _rule_data.get("max_rounds", 0)
         sess["scene"] = _rule_data.get("scene", "")
     if req.trpg_rulebook is not None:
         sess["trpg_rulebook"] = req.trpg_rulebook
@@ -4042,9 +4045,11 @@ def get_session_debug():
 @local_router.get("/saved")
 def list_saved_sessions():
     files = list_session_mode_files()
+    _rule_sets = _load_session_rules()
     result = []
     for f in files:
         meta = f.get("metadata", {})
+        _rule_set_id = meta.get("rule_set", "")
         result.append({
             "filename": Path(f["path"]).name,
             "session_id": f["session_id"],
@@ -4054,6 +4059,9 @@ def list_saved_sessions():
             "character_names": list(meta.get("name_map", {}).values()),
             "trpg_scenario_title": meta.get("trpg_scenario_title", ""),
             "private": f.get("private", False),
+            "rule_set": _rule_set_id,
+            "rule_set_label": _rule_sets.get(_rule_set_id, {}).get("label", _rule_set_id),
+            "online_mode": meta.get("online_mode", False),
         })
     result.sort(key=lambda x: x["saved_at"], reverse=True)
     return {"sessions": result}
@@ -4191,6 +4199,7 @@ def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSes
         "topic": session.get("topic", ""),
         "backend": session.get("backend", ""),
         "rule_set": session.get("rule_set", ""),
+        "online_mode": session.get("online_mode", False),
         "rules": session.get("rules", []),
         "round": session.get("round", 1),
         "turn": session.get("turn", 0),

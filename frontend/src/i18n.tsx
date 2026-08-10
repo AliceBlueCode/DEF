@@ -45,6 +45,8 @@ const ja: Record<string, string> = {
   'session.setup.startOnlineBtn': 'オンラインセッション作成',
   'session.setup.savedLabel': '保存済みセッション',
   'session.setup.savedUntitled': '(無題)',
+  'session.setup.savedOnline': 'オンライン',
+  'session.setup.savedOffline': 'ローカル',
   'session.setup.deleteBtn.title': '削除',
   'session.setup.deleteConfirm': '「{topic}」を削除しますか？',
 
@@ -599,6 +601,8 @@ const en: Record<string, string> = {
   'session.setup.startOnlineBtn': 'Create Online Session',
   'session.setup.savedLabel': 'Saved Sessions',
   'session.setup.savedUntitled': '(Untitled)',
+  'session.setup.savedOnline': 'Online',
+  'session.setup.savedOffline': 'Local',
   'session.setup.deleteBtn.title': 'Delete',
   'session.setup.deleteConfirm': 'Delete "{topic}"?',
 

@@ -578,6 +578,13 @@ def build_turn_instruction(
     # 文脈の重みに埋もれ、ターンを追うごとに応答が長くなっていく傾向があった。
     # 生成直前の短い指示に毎ターン再掲することで直近の重みを稼ぐ（2026-08-10）。
     _max_chars = session.get("max_chars", 0) if _is_performative else 0
+    # ラウンド数の上限も同様にrules文中に埋もれて無視され、13ラウンドを超えても
+    # 同じネタを続け一向に終わらない現象が起きていた。max_charsと同じ理由・同じ
+    # 対処で、上限超過時は毎ターンの指示文自体を「畳め」という強制指示に差し替える
+    # （2026-08-10）。
+    _max_rounds = session.get("max_rounds", 0) if _is_performative else 0
+    _cur_round_num = session.get("round", 1)
+    _over_rounds = bool(_max_rounds) and _cur_round_num > _max_rounds
     if not session_history:
         if _is_ja:
             if _is_trpg:
@@ -603,6 +610,8 @@ def build_turn_instruction(
                     return "上記の状況と他の探索者の行動を踏まえ、探索者としてこの場面に自然に反応してください。AIとしての解説・メタコメントは禁止です。発言は3文以内で簡潔にまとめてください。"
                 return "この場面の状況を踏まえ、探索者として自然に行動・発言してください。AIとしての解説・メタコメントは禁止です。発言は3文以内で簡潔にまとめてください。"
             if _is_performative:
+                if _over_rounds:
+                    return f"このネタはもう{_cur_round_num}ラウンド続いています。ここで畳んでください。次のボケで最大のボケ（大落ち）を決め、ツッコミは「ありがとうございましたー！」〔二人でお辞儀〕で締めること。話を広げず、収束させてください。"
                 _suffix = f"（1発言は{_max_chars}字以内厳守。長くなりすぎないこと）" if _max_chars else ""
                 return f"上記のルールとここまでの流れを踏まえ、続けてください。{_suffix}"
             if others_have_spoken:
@@ -613,6 +622,8 @@ def build_turn_instruction(
                 return "Based on the situation and what other explorers have done, react naturally as your character. No AI meta-commentary. Keep your response to 3 sentences or fewer."
             return "React naturally to this scene as your character. No AI meta-commentary. Keep your response to 3 sentences or fewer."
         if _is_performative:
+            if _over_rounds:
+                return f"This bit has already run for {_cur_round_num} rounds. Wrap it up now: the next boke should deliver the climax (biggest boke), and the tsukkomi should close with a thank-you and a bow. Converge, do not expand further."
             _suffix = f" (strictly {_max_chars} characters or fewer; do not let responses grow longer over time)" if _max_chars else ""
             return f"Following the rules above and the flow so far, continue.{_suffix}"
         if others_have_spoken:

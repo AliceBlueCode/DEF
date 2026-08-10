@@ -73,3 +73,29 @@ def test_performative_style_without_max_chars_has_no_reminder():
     session = {"style": "performative"}
     text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
     assert "字以内" not in text
+
+
+def test_performative_style_within_max_rounds_continues_normally():
+    session = {"style": "performative", "max_rounds": 6, "round": 3, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "畳んで" not in text
+    assert "続けてください" in text
+
+
+def test_performative_style_over_max_rounds_forces_wrap_up():
+    session = {"style": "performative", "max_rounds": 6, "round": 13, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "畳んで" in text
+    assert "13" in text
+    assert "大落ち" in text
+
+
+def test_performative_style_without_max_rounds_never_forces_wrap_up():
+    """max_roundsが設定されていない（roleplay等）performativeルールセットでは、
+    ラウンド数に関わらず強制終了指示を出さないこと。"""
+    session = {"style": "performative", "round": 999, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "畳んで" not in text
