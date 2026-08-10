@@ -47,6 +47,10 @@ data/mvp_settings.json
 data/public/session_history/
 data/sessions/
 
+# Episodic memory (per-install runtime data generated during play/testing,
+# not part of the distributable character definition itself)
+data/public/characters/*/memory/
+
 # Public characters excluded from release (dev/test only)
 data/public/characters/character_aoi_001/
 data/public/characters/character_elizabeth_001/
