@@ -56,6 +56,7 @@ PERSISTED_KEYS = [
     "jwt_secret",
     "disconnect_timeout_sec",
     "session_daily_generation_limit",
+    "session_auto_illustrate",
 ]
 
 

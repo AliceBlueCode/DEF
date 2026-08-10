@@ -645,6 +645,10 @@ export default function SettingsTab({
             {SIZE_PRESETS.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
           </select>
         </div>
+        <div className="settings-row">
+          <label title={t('settings.label.autoIllustrate.title')}>{t('settings.label.autoIllustrate')}</label>
+          <Toggle checked={get('session_auto_illustrate', false)} onChange={v => set('session_auto_illustrate', v)} />
+        </div>
       </div>
 
       <div className="settings-divider" />

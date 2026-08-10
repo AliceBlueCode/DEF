@@ -935,11 +935,17 @@ def _generate_turn_audio(session_id: str, result: dict) -> None:
 
     従来は各クライアントが個別に POST /api/tts/ → POST /api/tts/save を叩いていたが、
     それだと音声合成という重い操作を無認証で外部公開する必要が生じてしまう。
-    サーバー側で1回だけ合成してWS配信し、再生するかどうかはクライアント側の
-    ttsEnabled 設定に委ねる。
+    サーバー側で1回だけ合成してWS配信する方式に統一した。
+
+    tts_enabled設定がOFFの場合は生成自体をスキップする（以前は常に生成し
+    クライアント側の再生可否のみで制御していたため、誰も聴かない音声を
+    毎ターンvram_lockを使って合成し続ける無駄があった、2026-08-10発覚）。
     """
     try:
-        tts_backend = load_settings().get("tts_backend", "")
+        settings = load_settings()
+        if not settings.get("tts_enabled", True):
+            return
+        tts_backend = settings.get("tts_backend", "")
         url = _synthesize_turn_audio_sync(result.get("text", ""), result.get("character_id", ""), tts_backend)
         if not url:
             return
@@ -958,8 +964,13 @@ def _maybe_generate_turn_media(session_id: str, result: dict) -> None:
 
     _run_ai_turns から AI_TURN_COMPLETED emit直後に呼ばれる。参加処理と同様、
     生成の成否に関わらずターン進行はブロックしない（fail-silent）。
+
+    挿絵の自動生成はsession_auto_illustrate設定（デフォルトOFF）でオプトイン。
+    OFF時は作画ボタン（generate_session_image、発言力消費・認証済み）のみで
+    生成する。TTSは対象外（別軸のまま常時自動生成）。
     """
-    threading.Thread(target=_generate_turn_image, args=(session_id, result), daemon=True).start()
+    if load_settings().get("session_auto_illustrate", False):
+        threading.Thread(target=_generate_turn_image, args=(session_id, result), daemon=True).start()
     threading.Thread(target=_generate_turn_audio, args=(session_id, result), daemon=True).start()
 
 
@@ -987,10 +998,13 @@ def _synthesize_and_notify_audio(session_id: str, text: str, character_id: str, 
 def _start_background_tts(session_id: str, text: str, character_id: str) -> str:
     """TTS合成をバックグラウンドスレッドで起動し、呼び出し元に返すrequest_idを発行する。
 
-    text が空、またはTTSバックエンド未設定の場合は空文字列を返しスレッドは起動しない
+    人間プレイヤー自身の発言（human_turn_action・vote_deliberate・vote_proposal）に使う。
+    text が空、tts_human_enabled設定がOFF（デフォルトOFF）、またはTTSバックエンド
+    未設定の場合は空文字列を返しスレッドは起動しない
     （呼び出し元はaudio_request_idが空なら音声なしとして扱う）。
     """
-    if not text or not load_settings().get("tts_backend", ""):
+    settings = load_settings()
+    if not text or not settings.get("tts_human_enabled", False) or not settings.get("tts_backend", ""):
         return ""
     request_id = _uuid_mod.uuid4().hex[:12]
     threading.Thread(

@@ -295,6 +295,11 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
   const [, setTtsEnabled] = useState(false)
   const ttsEnabledRef = useRef(false)
   const ttsHumanEnabledRef = useRef(false)
+  // AUDIO_READY（human_turn_action・vote/deliberateの人間/AI発言読み上げ）の
+  // request_id → messages配列インデックス対応表。AUDIO_READY受信時にここを引いて
+  // 該当メッセージへaudioUrlを反映する（2026-08-10、リスナー未実装で自動再生が
+  // 常に死んでいたのを発見・修正）。
+  const audioRequestIndexRef = useRef<Record<string, number>>({})
   const hostTokenRef = useRef('')
   const myCharIdRef = useRef('')  // このタブが担当するキャラID（オンライン対戦用）
   const endingRef = useRef(false)  // endSession 再入ガード（SESSION_ENDED 受信での再実行防止）
@@ -695,6 +700,26 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       const audioBlocked = safetyLevelRef.current !== 'off' && !!matchedTags &&
         isContentBlocked(matchedTags, allowedSexualRef.current, allowedViolenceRef.current)
       if (url && ttsEnabledRef.current && !audioBlocked) void playAudio(url)
+    }
+    if (event.type === 'AUDIO_READY') {
+      // human_turn_action / vote_deliberate 経由の人間・AI発言読み上げ。
+      // request_idでaudioRequestIndexRefを引いて対象メッセージを特定する
+      // （送信直後は同期レスポンスにURLが無く、生成完了後にこのイベントで届く）。
+      const { character_id, request_id, url } = event.payload ?? {}
+      const idx = request_id != null ? audioRequestIndexRef.current[request_id] : undefined
+      if (url && idx != null) {
+        delete audioRequestIndexRef.current[request_id]
+        let matchedTags: string[] | undefined
+        setMessages(prev => prev.map((m, i) => {
+          if (i !== idx) return m
+          matchedTags = m.tags
+          return { ...m, audioUrl: url }
+        }))
+        const shouldPlay = character_id === myCharIdRef.current ? ttsHumanEnabledRef.current : ttsEnabledRef.current
+        const audioBlocked = character_id !== myCharIdRef.current && safetyLevelRef.current !== 'off' &&
+          !!matchedTags && isContentBlocked(matchedTags, allowedSexualRef.current, allowedViolenceRef.current)
+        if (shouldPlay && !audioBlocked) void playAudio(url)
+      }
     }
     if (event.type === 'PLAYER_LEFT') {
       // participant_id で判定（char_id="" の observer/keeper が複数いても巻き添えにしない）
@@ -1892,23 +1917,20 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       }])
     }
     if (action !== 'skip' && text) {
-      setMessages(prev => [...prev, {
-        character_id: humanCharId,
-        character_name: humanCharName,
-        text,
-        emotion: 'neutral',
-        tags: [],
-        imageColor: charMap[humanCharId]?.image_color,
-      }])
-      // TTSはサーバー側（human_turn_action）で合成済み。再生するかどうかだけクライアントが判断する。
-      const ttsUrl: string | null = data.audio_url || null
-      if (ttsUrl) {
-        setMessages(prev => {
-          const last = prev.length - 1
-          return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m)
-        })
-        if (ttsHumanEnabledRef.current) await playAudio(ttsUrl)
-      }
+      // TTSはバックグラウンド生成のためこの時点ではURL未確定。audio_request_idを
+      // 記録しておき、生成完了後に届くAUDIO_READYイベントで該当メッセージへ反映する。
+      setMessages(prev => {
+        const idx = prev.length
+        if (data.audio_request_id) audioRequestIndexRef.current[data.audio_request_id] = idx
+        return [...prev, {
+          character_id: humanCharId,
+          character_name: humanCharName,
+          text,
+          emotion: 'neutral',
+          tags: [],
+          imageColor: charMap[humanCharId]?.image_color,
+        }]
+      })
     }
 
     if (data.counters) setCounters(capCounters(data.counters))
@@ -1951,25 +1973,22 @@ export default function SessionTab({ characters, backend, ttsBackend, t2iBackend
       if (data.error) return
       if (data.counters) setCounters(capCounters(data.counters))
       if (data.deliberations && Array.isArray(data.deliberations)) {
-        for (const d of data.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[] }[]) {
-          setMessages(prev => [...prev, {
-            character_id: d.character_id,
-            character_name: d.character_name,
-            text: d.text,
-            emotion: d.emotion || '',
-            tags: d.tags || [],
-            imageColor: charMap[d.character_id]?.image_color,
-          }])
-          // TTSはサーバー側（vote_deliberate）で合成済み。再生するかどうかだけクライアントが判断する
-          // （人間プレイヤー発言は ttsHumanEnabled、それ以外は ttsEnabled に従う）。
-          const ttsUrl: string | null = (d as { audio_url?: string }).audio_url || null
-          if (ttsUrl) {
-            const shouldPlay = d.character_id === humanCharId ? ttsHumanEnabledRef.current : ttsEnabledRef.current
-            const isBlocked = d.character_id !== humanCharId && safetyLevelRef.current !== 'off' &&
-              isContentBlocked(d.tags || [], allowedSexualRef.current, allowedViolenceRef.current)
-            setMessages(prev => { const last = prev.length - 1; return last < 0 ? prev : prev.map((m, i) => i === last ? { ...m, audioUrl: ttsUrl } : m) })
-            if (shouldPlay && !isBlocked) await playAudio(ttsUrl)
-          }
+        for (const d of data.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[]; audio_request_id?: string }[]) {
+          // TTSはバックグラウンド生成のためこの時点ではURL未確定。audio_request_idを
+          // 記録しておき、生成完了後に届くAUDIO_READYイベントで該当メッセージへ反映する
+          // （人間プレイヤー発言はttsHumanEnabled、それ以外はttsEnabledに従う判定もそちらで行う）。
+          setMessages(prev => {
+            const idx = prev.length
+            if (d.audio_request_id) audioRequestIndexRef.current[d.audio_request_id] = idx
+            return [...prev, {
+              character_id: d.character_id,
+              character_name: d.character_name,
+              text: d.text,
+              emotion: d.emotion || '',
+              tags: d.tags || [],
+              imageColor: charMap[d.character_id]?.image_color,
+            }]
+          })
         }
       }
       setMessages(prev => [...prev, {
