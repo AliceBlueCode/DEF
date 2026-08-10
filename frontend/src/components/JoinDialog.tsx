@@ -96,11 +96,12 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
     if (!code) { setError(t('session.join.errorNoCode')); return }
 
     // 参加ボタン押下時は最新スロット状態を取得（ホストの役割変更を反映するため）
+    const hadSlotsLoaded = slotsLoaded
     lastFetchedCode.current = ''
     const fresh = await fetchSlots(code, false)  // 選択をリセットしない
     if (!fresh) {
       // 初回取得失敗 or 同コード再実行はスロット未ロードとして扱う
-      if (!slotsLoaded) return
+      if (!hadSlotsLoaded) return
       // すでにスロットが表示済みなら古いデータでそのまま進む
     } else {
       // 新データで keeper 埋まり判定
@@ -108,10 +109,33 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
         setError('キーパー枠は現在埋まっています')
         return
       }
-      // スロット一覧が変わっていたら選択を促すためreturn
-      const freshIds = (fresh.human_slots ?? []).map((s: Slot) => s.char_id)
-      const currentIds = slots.map(s => s.char_id)
-      if (JSON.stringify(freshIds) !== JSON.stringify(currentIds)) return
+      if (hadSlotsLoaded) {
+        // 既に表示済みのスロット一覧と比較し、他ゲストの参加等で変わっていたら
+        // 選び直させる。コード入力後スロット一覧が表示される前に「参加」を
+        // 押した場合（＝このfetchSlotsが初回ロードを兼ねている）は、
+        // 比較対象となる旧スロット一覧がまだ空のstateしかなく、常に不一致
+        // 判定になって無反応（無言でreturn）に見えるバグになっていた
+        // （スマホで「コード入力→即タップ」した際に再現、2026-08-10）。
+        const freshIds = (fresh.human_slots ?? []).map((s: Slot) => s.char_id)
+        const currentIds = slots.map(s => s.char_id)
+        if (JSON.stringify(freshIds) !== JSON.stringify(currentIds)) return
+      } else {
+        // オンラインモードは human_slots が空でも「プレイヤーとして参加」
+        // （キャラJSON持ち込み）が常に選べる（slotsLoaded時のJSX参照）ため、
+        // online_mode自体も選択肢ありとして扱う。ここに online_mode を含め忘れると、
+        // human_slotsが空でwaiting_for_gmもfalseなオンラインセッションで「プレイヤー
+        // として参加」を選ぶ機会が無いまま、無言で観戦者として参加してしまう
+        // （2026-08-10、実機検証で発覚）。
+        const hasChoices = fresh.online_mode || (fresh.human_slots ?? []).length > 0 || fresh.waiting_for_gm
+        if (hasChoices) {
+          // 初回ロードでは選択肢をまだ提示できていないため、参加枠一覧を表示して
+          // 選んでもらう（観戦者以外を選べる可能性があるのに無言で観戦者として
+          // 参加させてしまわないよう、ここでは一旦止める）。
+          setError('参加枠を選んでから、もう一度「参加」を押してください')
+          return
+        }
+        // 選択肢が観戦者しか無いセッションでは、そのまま観戦者として参加を続行する。
+      }
     }
 
     // オンラインモードでプレイヤーとして参加する場合はJSONが必要
