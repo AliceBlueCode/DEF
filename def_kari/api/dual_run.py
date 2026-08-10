@@ -39,6 +39,16 @@ _TUNNEL_URL_RE = re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")
 
 
 def _resolve_cloudflared() -> str | None:
+    # 設定タブ（バックエンドインストール先ダイアログ）でCLOUDFLARED_DIRが
+    # 設定されていれば最優先する。main.pyの.envローダーが本モジュールの
+    # import時点でos.environに読み込み済み（settings.pyのbackend-dirs保存時にも
+    # 都度os.environへ反映される）。インストール場所は環境依存で、
+    # PATH登録やwinget既定の配置場所とは限らないため。
+    configured_dir = os.environ.get("CLOUDFLARED_DIR", "").strip()
+    if configured_dir:
+        configured_exe = os.path.join(configured_dir, "cloudflared.exe")
+        if os.path.isfile(configured_exe):
+            return configured_exe
     for candidate in _CLOUDFLARED_CANDIDATES:
         resolved = shutil.which(candidate)
         if resolved:
@@ -68,8 +78,10 @@ def _start_cloudflared(public_port: int) -> subprocess.Popen | None:
     if not exe:
         print(
             "[dual_run] --cloudflare-tunnel が指定されましたが cloudflared が見つかりません"
-            "（winget install --id Cloudflare.cloudflared でインストールするか、"
-            "手動で cloudflared tunnel --url http://127.0.0.1:%d を別途起動してください）" % public_port
+            "（winget install --id Cloudflare.cloudflared でインストールし、PATHに無い場合は"
+            "設定タブ→バックエンドインストール先→cloudflared でインストール先ディレクトリを"
+            "指定してください。それでも自動起動しない場合は手動で"
+            "cloudflared tunnel --url http://127.0.0.1:%d を別途起動してください）" % public_port
         )
         return None
     proc = subprocess.Popen(

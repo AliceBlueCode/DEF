@@ -89,6 +89,10 @@ export default function SettingsTab({
   const [civitaiModels, setCivitaiModels] = useState<{label: string; model_air: string}[]>([])
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false)
   const [showBackendDirDialog, setShowBackendDirDialog] = useState(false)
+  const [cloudflaredDir, setCloudflaredDir] = useState('')
+  const [cloudflaredDirSaving, setCloudflaredDirSaving] = useState(false)
+  const [cloudflaredDirMsg, setCloudflaredDirMsg] = useState('')
+  const [cloudflaredDirBrowsing, setCloudflaredDirBrowsing] = useState(false)
   const [showModelProfile, setShowModelProfile] = useState(false)
   const [compatibleBackends, setCompatibleBackends] = useState<{name: string; label: string; base_url: string; model: string; extra_headers: Record<string,string>; capabilities: string[]; has_key: boolean}[]>([])
   const [showCompatibleDialog, setShowCompatibleDialog] = useState(false)
@@ -166,6 +170,39 @@ export default function SettingsTab({
       })
       .catch(() => {})
   }, [t2iBackend])
+
+  useEffect(() => {
+    fetch('/api/settings/cloudflared-dir')
+      .then(r => r.json())
+      .then(data => setCloudflaredDir(data.dir || ''))
+      .catch(() => {})
+  }, [])
+
+  const saveCloudflaredDir = async () => {
+    setCloudflaredDirSaving(true)
+    try {
+      await fetch('/api/settings/cloudflared-dir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: cloudflaredDir }),
+      })
+      setCloudflaredDirMsg(t('settings.msg.cloudflaredDirSaved'))
+      setTimeout(() => setCloudflaredDirMsg(''), 2000)
+    } finally {
+      setCloudflaredDirSaving(false)
+    }
+  }
+
+  const browseCloudflaredDir = async () => {
+    setCloudflaredDirBrowsing(true)
+    try {
+      const res = await fetch('/api/settings/browse-dir')
+      const data = await res.json()
+      if (data.path) setCloudflaredDir(data.path)
+    } finally {
+      setCloudflaredDirBrowsing(false)
+    }
+  }
 
   const get = useCallback(<T,>(key: string, def: T): T => {
     return (key in appSettings ? appSettings[key] : def) as T
@@ -653,37 +690,6 @@ export default function SettingsTab({
 
       <div className="settings-divider" />
 
-      {/* ── Security ── */}
-      <div className="settings-section">
-        <h3>{t('settings.section.security')}</h3>
-        <div className="char-danger-zone">
-          <button
-            className="danger-btn"
-            disabled={jwtRegenerating}
-            onClick={async () => {
-              if (!window.confirm(t('settings.confirm.jwtSecretRegenerate'))) return
-              setJwtRegenerating(true)
-              setJwtRegenerateMsg('')
-              try {
-                const res = await fetch('/api/settings/jwt-secret/regenerate', { method: 'POST' })
-                const data = await res.json()
-                setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerated', { count: String(data.disconnected_connections ?? 0) }))
-              } catch {
-                setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerateFailed'))
-              } finally {
-                setJwtRegenerating(false)
-              }
-            }}
-          >
-            {jwtRegenerating ? t('settings.btn.jwtSecretRegenerate.loading') : t('settings.btn.jwtSecretRegenerate')}
-          </button>
-          <p className="settings-hint">{t('settings.hint.jwtSecretRegenerate')}</p>
-          {jwtRegenerateMsg && <p className="settings-hint">{jwtRegenerateMsg}</p>}
-        </div>
-      </div>
-
-      <div className="settings-divider" />
-
       {/* ── Episode Settings ── */}
       <div className="settings-section">
         <h3>{t('settings.section.episode')}</h3>
@@ -718,6 +724,71 @@ export default function SettingsTab({
           >
             {SIZE_PRESETS.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
           </select>
+        </div>
+      </div>
+
+      <div className="settings-divider" />
+
+      {/* ── Security ── */}
+      <div className="settings-section">
+        <h3>{t('settings.section.security')}</h3>
+        <div className="char-danger-zone">
+          <button
+            className="danger-btn"
+            disabled={jwtRegenerating}
+            onClick={async () => {
+              if (!window.confirm(t('settings.confirm.jwtSecretRegenerate'))) return
+              setJwtRegenerating(true)
+              setJwtRegenerateMsg('')
+              try {
+                const res = await fetch('/api/settings/jwt-secret/regenerate', { method: 'POST' })
+                const data = await res.json()
+                setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerated', { count: String(data.disconnected_connections ?? 0) }))
+              } catch {
+                setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerateFailed'))
+              } finally {
+                setJwtRegenerating(false)
+              }
+            }}
+          >
+            {jwtRegenerating ? t('settings.btn.jwtSecretRegenerate.loading') : t('settings.btn.jwtSecretRegenerate')}
+          </button>
+          <p className="settings-hint">{t('settings.hint.jwtSecretRegenerate')}</p>
+          {jwtRegenerateMsg && <p className="settings-hint">{jwtRegenerateMsg}</p>}
+        </div>
+      </div>
+
+      <div className="settings-divider" />
+
+      {/* ── Remote Access (Cloudflare Tunnel) ──
+          AI生成バックエンド(TGW/ComfyUI等、backend-dirsダイアログ)とは性質が違う
+          ネットワークツールのため、意図的に別セクションに分けている
+          （2026-08-10、混在させたところユーザーから違和感の指摘） */}
+      <div className="settings-section">
+        <h3>{t('settings.section.remoteAccess')}</h3>
+        <div className="settings-row">
+          <label>{t('settings.label.cloudflaredDir')}</label>
+          <div className="backend-dir-input-row">
+            <input
+              type="text"
+              className="backend-dir-input"
+              placeholder="例: C:\Program Files (x86)\cloudflared"
+              value={cloudflaredDir}
+              onChange={e => setCloudflaredDir(e.target.value)}
+            />
+            <button
+              className="backend-dir-browse-btn"
+              onClick={browseCloudflaredDir}
+              disabled={cloudflaredDirBrowsing}
+            >📁</button>
+          </div>
+        </div>
+        <p className="settings-hint">{t('settings.hint.cloudflaredDir')}</p>
+        <div className="settings-btn-row">
+          <button onClick={saveCloudflaredDir} disabled={cloudflaredDirSaving}>
+            {t('settings.btn.cloudflaredDirSave')}
+          </button>
+          {cloudflaredDirMsg && <span className="apikey-msg">{cloudflaredDirMsg}</span>}
         </div>
       </div>
 

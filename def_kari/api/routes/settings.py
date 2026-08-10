@@ -485,6 +485,35 @@ def save_backend_dirs(req: SaveBackendDirsRequest):
     return {"status": "ok"}
 
 
+@router.get("/cloudflared-dir")
+def get_cloudflared_dir():
+    """cloudflared(Cloudflare Tunnel)のインストール先ディレクトリ。
+
+    TGW/ComfyUI等のAI生成バックエンド(_BACKEND_DIR_DEFS)とは性質が異なる
+    （AIモデル推論ではなく単なるネットワークトンネリングツール）ため、
+    設定タブでは「バックエンド / APIキー」とは別セクションに分けて表示する
+    （2026-08-10、混在させたところユーザーから違和感の指摘）。永続化先は
+    同じ.envファイル(CLOUDFLARED_DIR)を使い回す。dual_run.py --cloudflare-tunnel
+    が起動時にこれを読んでcloudflared.exeを探す。
+    """
+    env = _load_env_file()
+    return {"dir": os.environ.get("CLOUDFLARED_DIR", env.get("CLOUDFLARED_DIR", ""))}
+
+
+class SaveCloudflaredDirRequest(BaseModel):
+    dir: str
+
+
+@router.post("/cloudflared-dir")
+def save_cloudflared_dir(req: SaveCloudflaredDirRequest):
+    _save_env_file({"CLOUDFLARED_DIR": req.dir})
+    if req.dir:
+        os.environ["CLOUDFLARED_DIR"] = req.dir
+    else:
+        os.environ.pop("CLOUDFLARED_DIR", None)
+    return {"status": "ok"}
+
+
 class CompatibleBackendRequest(BaseModel):
     name: str
     base_url: str
