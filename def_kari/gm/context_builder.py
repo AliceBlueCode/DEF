@@ -5,6 +5,7 @@ session.py から抽出した純粋関数群。
 """
 
 import json
+import re
 from pathlib import Path
 
 _BASE = Path(__file__).parent.parent.parent
@@ -16,32 +17,38 @@ _TRPG_SCENARIO_DIRS = [
     _BASE / "data" / "public" / "trpg_scenarios",
     _BASE / "data" / "private" / "trpg_scenarios",
 ]
+# 8.26対策: rulebook_id/scenario_idはPOST /api/session/start等クライアント入力を
+# そのままファイル名に使うため、IDのallowlist（characters_common._SAFE_ID_RE・
+# trpg.py._SAFE_ID_REと同型）＋resolve後のディレクトリ包含チェックの二重で
+# パストラバーサル・絶対パス注入を防ぐ。
+_SAFE_RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _load_trpg_resource(resource_id: str, dirs: list[Path]) -> dict:
+    if not resource_id or not _SAFE_RESOURCE_ID_RE.match(resource_id):
+        return {}
+    for d in dirs:
+        base = d.resolve()
+        candidate = (d / f"{resource_id}.json").resolve()
+        try:
+            if not candidate.is_relative_to(base):
+                continue
+        except ValueError:
+            continue
+        if candidate.exists():
+            try:
+                return json.loads(candidate.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+    return {}
 
 
 def load_trpg_rulebook(rulebook_id: str) -> dict:
-    if not rulebook_id:
-        return {}
-    for d in _TRPG_RULEBOOK_DIRS:
-        path = d / f"{rulebook_id}.json"
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-    return {}
+    return _load_trpg_resource(rulebook_id, _TRPG_RULEBOOK_DIRS)
 
 
 def load_trpg_scenario(scenario_id: str) -> dict:
-    if not scenario_id:
-        return {}
-    for d in _TRPG_SCENARIO_DIRS:
-        path = d / f"{scenario_id}.json"
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-    return {}
+    return _load_trpg_resource(scenario_id, _TRPG_SCENARIO_DIRS)
 
 
 def build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str) -> str:
