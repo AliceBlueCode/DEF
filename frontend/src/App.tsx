@@ -71,7 +71,7 @@ function AppInner() {
   const handleTtsBackendChange = (v: string) => { ttsUserChangedRef.current = true; setSelectedTtsBackend(v) }
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0)
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'dark'
+    (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'light'
   )
 
   const toggleTheme = () => {
