@@ -21,6 +21,9 @@ type Message = MessageSnapshot & {
   redoStack?: MessageSnapshot[]
   isRevealed?: boolean
   autoPlayAudio?: boolean
+  // API呼び出し失敗時の表示専用プレースホルダー。saveHistory()には含めない
+  // （以前、生のJSエラー文がそのままキャラクター発言として永続化されるバグがあった）。
+  isError?: boolean
 }
 
 const SEXUAL_TAGS = ['sfw', 'nsfw', 'hentai']
@@ -103,7 +106,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
 
   const saveHistory = (charId: string, msgs: Message[]) => {
     if (!charId || msgs.length === 0) return
-    const payload = msgs.map(m => ({
+    const payload = msgs.filter(m => !m.isError).map(m => ({
       id: m.id || crypto.randomUUID(),
       role: m.role,
       content: m.content,
@@ -206,8 +209,9 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
             history: [],
           }),
         })
-          .then(r => r.json())
-          .then(data => {
+          .then(r => r.json().then(data => ({ ok: r.ok, data })))
+          .then(({ ok, data }) => {
+            if (!ok) { console.error('auto-greeting failed:', data?.detail || data?.error || 'unknown error'); return }
             const greetMsg: Message = {
               id: crypto.randomUUID(),
               role: 'assistant',
@@ -251,6 +255,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
         body: JSON.stringify({ loaded_ids: loadedIds, batch: 20 }),
       })
       const data = await res.json()
+      if (!res.ok) { console.error('load more failed:', data.detail || res.status); return }
       const older = fromHistory(data.messages || [])
       if (older.length > 0) {
         setMessages(prev => [...older, ...prev])
@@ -275,6 +280,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       const form = new FormData()
       form.append('file', blob, 'audio.wav')
       const saveRes = await fetch('/api/tts/save', { method: 'POST', body: form })
+      if (!saveRes.ok) return null
       const saveData = await saveRes.json()
       const url: string = saveData.url
       setMessages(prev =>
@@ -299,6 +305,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       const form = new FormData()
       form.append('file', blob, 'audio.wav')
       const saveRes = await fetch('/api/tts/save', { method: 'POST', body: form })
+      if (!saveRes.ok) return
       const saveData = await saveRes.json()
       const url: string = saveData.url
       setMessages(prev => prev.map((m, i) => (i === index ? { ...m, audioUrl: url, autoPlayAudio: true } : m)))
@@ -317,8 +324,8 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
         body: JSON.stringify({ prompt, backend: t2iBackend }),
       })
       const data = await res.json()
-      if (data.error) {
-        setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageStatus: 'error', imageError: data.error } : m))
+      if (!res.ok || data.error) {
+        setMessages(prev => prev.map((m, i) => i === index ? { ...m, imageStatus: 'error', imageError: data.error || data.detail || String(res.status) } : m))
         return
       }
       const updatedMsgs = messagesRef.current.map((m, i) =>
@@ -365,6 +372,10 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
         }),
       })
       const data = await res.json()
+      if (!res.ok) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${data.detail || data.error || res.status}`, isError: true }])
+        return
+      }
       const assistantMsg: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -386,7 +397,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
         if (mode === 'end' || mode === 'interval') generateImage(data.image_prompt_en, assistantIdx)
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])
+      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}`, isError: true }])
     } finally {
       setLoading(false)
     }
@@ -474,12 +485,21 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
       })
       const data = await res.json()
       console.log('[regenTurn] response=', data)
+      if (!res.ok) {
+        setMessages(prev => prev.map((m, i) =>
+          i === assistantIdx
+            ? { ...m, content: `Error: ${data.detail || data.error || res.status}`, audioUrl: undefined, imageUrl: undefined, imageStatus: undefined, isError: true }
+            : m
+        ))
+        return
+      }
       const updated: Partial<Message> = {
         content: data.text || '(no response)',
         emotion: data.emotion,
         imagePromptEn: data.image_prompt_en || '',
         tags: data.tags || [],
         isRevealed: false,
+        isError: false,
       }
       const finalMsgs = messagesRef.current.map((m, i) =>
         i === assistantIdx ? { ...m, ...updated } : m
@@ -491,7 +511,7 @@ export default function ChatTab({ characters, selectedChar, backend, ttsBackend,
     } catch (e) {
       setMessages(prev => prev.map((m, i) =>
         i === assistantIdx
-          ? { ...m, content: `Error: ${e}`, audioUrl: undefined, imageUrl: undefined, imageStatus: undefined }
+          ? { ...m, content: `Error: ${e}`, audioUrl: undefined, imageUrl: undefined, imageStatus: undefined, isError: true }
           : m
       ))
     } finally {

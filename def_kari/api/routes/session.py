@@ -190,6 +190,36 @@ def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
     _main_loop = loop
 
 
+# 8.32対策: WS接続はaccept()直後にfirst-message authを最大5秒待つが、それまでの
+# 「未認証で保持中」の接続数には上限が無く、_check_ws_rate（認証後、token単位）も
+# ここには効かない。authを一切送らず大量に同時接続されると、TCP/asyncioタスク/
+# メモリを際限なく消費できてしまう（2026-08-11、外部レビュー指摘）。IP単位・
+# プロセス全体単位の同時「認証待ち」接続数に上限を設ける。
+_ws_pending_auth_by_ip: dict[str, int] = {}
+_ws_pending_auth_total = {"n": 0}
+_WS_PENDING_AUTH_LIMIT_PER_IP = 20
+_WS_PENDING_AUTH_LIMIT_TOTAL = 500
+
+
+def _try_acquire_ws_pending_auth_slot(client_ip: str) -> bool:
+    """True=枠を確保できた（呼び出し元は必ずrelease_ws_pending_auth_slotを対で呼ぶこと）。"""
+    if (_ws_pending_auth_by_ip.get(client_ip, 0) >= _WS_PENDING_AUTH_LIMIT_PER_IP
+            or _ws_pending_auth_total["n"] >= _WS_PENDING_AUTH_LIMIT_TOTAL):
+        return False
+    _ws_pending_auth_by_ip[client_ip] = _ws_pending_auth_by_ip.get(client_ip, 0) + 1
+    _ws_pending_auth_total["n"] += 1
+    return True
+
+
+def _release_ws_pending_auth_slot(client_ip: str) -> None:
+    if client_ip in _ws_pending_auth_by_ip:
+        _ws_pending_auth_by_ip[client_ip] -= 1
+        if _ws_pending_auth_by_ip[client_ip] <= 0:
+            del _ws_pending_auth_by_ip[client_ip]
+    if _ws_pending_auth_total["n"] > 0:
+        _ws_pending_auth_total["n"] -= 1
+
+
 def _check_ws_rate(session_id: str, token: str, limit: int = 60, window: int = 60) -> bool:
     """True=許可、False=制限超過（60メッセージ/分）。
 
@@ -4645,6 +4675,17 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     """
     await ws.accept()
 
+    # 8.32対策: 未認証で保持中の接続数がIP単位/全体単位の上限に達していれば、
+    # authを待たず即座に切断する（_check_ws_rateは認証後のtoken単位のため、
+    # このフェーズには効かない）。
+    client_ip = _resolve_client_ip(ws)
+    if not _try_acquire_ws_pending_auth_slot(client_ip):
+        try:
+            await ws.close(code=1013)  # Try Again Later
+        except Exception:
+            pass
+        return
+
     # 認証: 接続後5秒以内に {"type":"auth","token":"..."} を受け取る
     try:
         auth_msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
@@ -4660,6 +4701,8 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         except Exception:
             pass
         return
+    finally:
+        _release_ws_pending_auth_slot(client_ip)
 
     sess = _sessions.get(session_id)
     if not sess:

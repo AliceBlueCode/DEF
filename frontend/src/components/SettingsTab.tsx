@@ -743,6 +743,10 @@ export default function SettingsTab({
               try {
                 const res = await fetch('/api/settings/jwt-secret/regenerate', { method: 'POST' })
                 const data = await res.json()
+                if (!res.ok) {
+                  setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerateFailed'))
+                  return
+                }
                 setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerated', { count: String(data.disconnected_connections ?? 0) }))
               } catch {
                 setJwtRegenerateMsg(t('settings.msg.jwtSecretRegenerateFailed'))

@@ -479,7 +479,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             headers: hostTokenRef.current ? { 'Authorization': `Bearer ${hostTokenRef.current}` } : {},
           })
           const data = await res.json()
-          const history: any[] = data.session?.history || []
+          if (!res.ok) console.error('initial history fetch failed:', data.detail || res.status)
+          const history: any[] = res.ok ? (data.session?.history || []) : []
           if (history.length > 0 && !cancelled) {
             const nameMap: Record<string, string> = data.session?.name_map || {}
             const charMapForHistory = Object.fromEntries(characters.map(c => [c.id, c]))
@@ -795,7 +796,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vote_type: data.vote_type || 'topic_change', detail: data.vote_detail || '', target_id: '', proposer_id: data.character_id, proposer_text: data.proposer_text || '' }),
         })
-        const delibData = await delibRes.json()
+        const delibData = await parseJsonResponse(delibRes)
+        if (delibData.error) { console.error(delibData.error); return }
         if (delibData.counters) setCounters(capCounters(delibData.counters))
         if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
           for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[] }[]) {
@@ -1027,6 +1029,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {}, keeper_char_id: trpgMode ? keeperCharId : '', human_keeper: trpgMode ? humanKeeper : false }),
       })
       const data = await res.json()
+      if (!res.ok) { console.error('session start failed:', data.detail || res.status); return }
       await _initSession(data, selectedChars)
       // オンライン側（ロビー終了処理）と同様、ここではai_resumeを呼ばない。
       // 開始後は「自動」トグルか「次の発言」ボタンでユーザーが能動的に始める。
@@ -1047,6 +1050,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         body: JSON.stringify({ character_ids: [], topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: {}, keeper_char_id: '', human_keeper: false, online_mode: true }),
       })
       const data = await res.json()
+      if (!res.ok) { console.error('session start failed:', data.detail || res.status); return }
       await _initSession(data, [])
       setLobbyTrpgMode(trpgMode)
       setKeeperSource('ai')
@@ -1217,7 +1221,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vote_type: 'end_session', detail: '', target_id: '', proposer_id: '_keeper', proposer_text: '' }),
         })
-        const delibData = await delibRes.json()
+        const delibData = await parseJsonResponse(delibRes)
+        if (delibData.error) { console.error(delibData.error); return }
         if (delibData.deliberations && Array.isArray(delibData.deliberations)) {
           for (const d of delibData.deliberations as { character_id: string; character_name: string; text: string; emotion: string; tags?: string[] }[]) {
             setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: d.tags || [] }])
@@ -1323,8 +1328,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, character_id: charId, rulebook_id: selectedRulebook }),
       })
-      const d = await res.json()
-      if (d.error) return
+      const d = await parseJsonResponse(res)
+      if (d.error) { console.error(d.error); return }
       const syncStats = (updatedStats: Record<string, any>) => {
         const flat = Object.fromEntries(
           Object.entries(updatedStats).map(([k, v]: [string, any]) => [k, v.current ?? 0])
@@ -1554,7 +1559,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         body: JSON.stringify({ filename }),
       })
       const data = await res.json()
-      if (data.error) { console.error(data.error); return }
+      if (!res.ok || data.error) { console.error(data.detail || data.error || res.status); return }
 
       const nameMap: Record<string, string> = data.name_map || {}
       const history: any[] = data.history || []
@@ -1828,11 +1833,12 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     const text = pendingActions.length === 1
       ? pendingActions[0]
       : pendingActions.map((a, i) => `${i + 1}. ${a}`).join('\n')
-    await fetch(`/api/session/${sessionId}/keeper`, {
+    const res = await fetch(`/api/session/${sessionId}/keeper`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ text }),
     })
+    if (!res.ok) { console.error('keeper action failed:', res.status); return }
     setMessages(prev => [...prev, {
       character_id: '_keeper',
       character_name: '🎩 Keeper',
@@ -1869,11 +1875,12 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
   const designateNext = async () => {
     if (!sessionId || !designateTarget) return
-    await fetch(`/api/session/${sessionId}/designate`, {
+    const res = await fetch(`/api/session/${sessionId}/designate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
       body: JSON.stringify({ target_id: designateTarget }),
     })
+    if (!res.ok) { console.error('designate failed:', res.status); return }
     const nameMap = Object.fromEntries(characters.map(c => [c.id, c.name]))
     setMessages(prev => [...prev, {
       character_id: '_keeper',

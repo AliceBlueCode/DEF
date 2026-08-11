@@ -182,12 +182,16 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
   const doSave = async (newBody: string, newPlot?: string, newTitle?: string) => {
     const title = (newTitle ?? titleInput).trim() || 'Untitled'
     const ep = { ...(novel || {}), title, body: newBody, plot: newPlot ?? plot }
-    await fetch('/api/novel/', {
+    const res = await fetch('/api/novel/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ novel: ep }),
     })
-    // タイトルが変わった場合は旧ファイルを削除
+    if (!res.ok) {
+      console.error('novel save failed, keeping old file:', res.status)
+      return
+    }
+    // タイトルが変わった場合は旧ファイルを削除（新タイトルでの保存が確実に成功した後のみ）
     if (selectedTitle && selectedTitle !== title) {
       await fetch(`/api/novel/${encodeURIComponent(selectedTitle)}`, { method: 'DELETE' })
     }
@@ -296,7 +300,7 @@ export default function NovelTab({ backend, t2iBackend, candidateCount, ttsBacke
         body: JSON.stringify({ scene_text: sceneText, plot, llm_backend: novelBackend || backend, t2i_backend: novelT2iBackend || t2iBackend, t2i_model: novelT2iModel }),
       })
       const data = await res.json()
-      if (data.error) { setImageError(data.error); return }
+      if (!res.ok || data.error) { setImageError(data.error || data.detail || String(res.status)); return }
       setMedia(prev => [...prev, { type: 'image', prompt: data.prompt, url: data.image_url }])
     } catch (e) { setImageError(String(e)) }
     finally { setGeneratingImage(false) }

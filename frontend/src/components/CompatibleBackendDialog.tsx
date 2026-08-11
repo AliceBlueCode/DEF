@@ -92,7 +92,7 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
     })
     const data = await res.json()
     setSaving(false)
-    if (data.error) { showMsg(data.error); return }
+    if (!res.ok || data.error) { showMsg(data.error || data.detail || String(res.status)); return }
     onSaved()
     onClose()
     window.location.reload()

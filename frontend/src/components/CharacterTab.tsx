@@ -108,12 +108,17 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
     try {
       const res = await fetch(`/api/characters/${selectedChar}/raw-profile`)
       const data = await res.json()
-      const profile = { ...(data.profile || {}), image_color: color }
-      await fetch(`/api/characters/${selectedChar}/raw-profile`, {
+      if (!res.ok || !data.profile) {
+        console.error('failed to load profile before color save:', data.detail || res.status)
+        return
+      }
+      const profile = { ...data.profile, image_color: color }
+      const putRes = await fetch(`/api/characters/${selectedChar}/raw-profile`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profile }),
       })
+      if (!putRes.ok) { console.error('failed to save image color:', putRes.status); return }
       setRawProfile(JSON.stringify(profile, null, 2))
     } finally {
       setColorSaving(false)
@@ -125,7 +130,8 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
     if (!window.confirm(t('char.history.deleteConfirm'))) return
     setClearing(true)
     try {
-      await fetch(`/api/chat/history/${selectedChar}`, { method: 'DELETE' })
+      const res = await fetch(`/api/chat/history/${selectedChar}`, { method: 'DELETE' })
+      if (!res.ok) { console.error('failed to clear history:', res.status); return }
       onHistoryCleared()
     } finally {
       setClearing(false)

@@ -164,6 +164,7 @@ Regarding `participant_id`: since there can be multiple observers/Keepers with `
 | `4001` | Auth failure (no token / invalid) |
 | `4004` | Session does not exist |
 | `1008` | Forced disconnect due to JWT secret regeneration |
+| `1013` | Rejected because the number of concurrent unauthenticated connections has hit its limit (Try Again Later). Wait a moment and reconnect |
 
 -----
 
