@@ -80,12 +80,20 @@ WS   /api/session/{session_id}/ws
 
 GET  /api/session/{session_id}
   headers: Authorization: Bearer {token}  # participant token required (host/player/gm/observer)
-  -> Returns the entire session (the full history log, initiative, etc., with
-     sensitive fields such as auth tokens/invite codes excluded). Readable only
-     with a participant token for that session (no longer readable after the
-     token is revoked by leaving or being expelled). History pagination is
-     unimplemented -- the full log is returned every time. Response bloat as a
-     session grows large is a known limitation
+  -> Returns only the fields considered safe to expose to every role (host/
+     player/gm/observer alike) -- allowlist-based: the full history log,
+     initiative, name_map, progress state (round/turn/etc.), mode flags, and
+     so on. Besides sensitive fields (auth tokens, invite codes), this
+     excludes GM/scenario-authored content and internal state: npc_state /
+     player_knowledge (GM-only NPC knowledge and per-character known facts),
+     rules/scene (ruleset body text), char_game_sheets, skill_pool,
+     skill_values, guest_chars, and more. GM-only data is available only
+     through dedicated, require_keeper-protected endpoints such as
+     `GET /{session_id}/npc/{npc_id}/state`. Readable only with a participant
+     token for that session (no longer readable after the token is revoked by
+     leaving or being expelled). History pagination is unimplemented -- the
+     full log is returned every time. Response bloat as a session grows large
+     is a known limitation
 ```
 
 In addition to the above, session-progression actions such as submitting a human turn, voting, and leaving are performed via individual REST endpoints such as `POST /{session_id}/human_turn` (see Chapter 3).

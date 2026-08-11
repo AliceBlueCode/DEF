@@ -99,7 +99,7 @@ All three also support connecting to any service exposing an OpenAI-compatible A
 
 | Type | Count | Result |
 |---|---|---|
-| Unit Tests | 541 | All passing |
+| Unit Tests | 553 | All passing |
 
 Measurement command: `python -m pytest def_kari tests` (excludes `poc/` and `llamacpp_tools/` PoC/vendor tests, as of 2026-08-11)
 

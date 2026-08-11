@@ -18,7 +18,18 @@ def _setup_dirs(tmp_path, monkeypatch):
     (private_dir / "secret.json").write_text('{"label": "private rulebook"}', encoding="utf-8")
     dirs = [public_dir, private_dir]
     monkeypatch.setattr(context_builder, "_TRPG_RULEBOOK_DIRS", dirs)
+    monkeypatch.setattr(context_builder, "_PUBLIC_TRPG_RULEBOOK_DIRS", [public_dir])
     return public_dir, private_dir, dirs
+
+
+def test_load_trpg_rulebook_public_only_excludes_private_dir(tmp_path, monkeypatch):
+    """8.28対策: public_only=True（public_app経由の/start等）ではdata/private/を
+    検索対象から除外すること。public_only=False（従来どおり、ローカル専用ポート・
+    セッション内部の再読み込み）はprivateも引き続き見える。"""
+    _setup_dirs(tmp_path, monkeypatch)
+    assert context_builder.load_trpg_rulebook("secret", public_only=True) == {}
+    assert context_builder.load_trpg_rulebook("secret", public_only=False) == {"label": "private rulebook"}
+    assert context_builder.load_trpg_rulebook("sample", public_only=True) == {"label": "public rulebook"}
 
 
 def test_load_trpg_rulebook_valid_id_still_works(tmp_path, monkeypatch):
@@ -66,7 +77,26 @@ def test_load_trpg_scenario_rejects_traversal_id(tmp_path, monkeypatch):
         '{"npcs": [{"id": "n1", "knowledge": ["gm-only secret"]}]}', encoding="utf-8"
     )
     monkeypatch.setattr(context_builder, "_TRPG_SCENARIO_DIRS", [public_dir, private_dir])
+    monkeypatch.setattr(context_builder, "_PUBLIC_TRPG_SCENARIO_DIRS", [public_dir])
 
     assert context_builder.load_trpg_scenario("../private/trpg_scenarios/hidden_npc") == {}
     # 正規のIDなら引き続き読める（従来通り）
     assert context_builder.load_trpg_scenario("hidden_npc")["npcs"][0]["id"] == "n1"
+
+
+def test_load_trpg_scenario_public_only_excludes_private_dir(tmp_path, monkeypatch):
+    """8.28対策: /startのtrpg_scenarioがpublic_app経由でも通常IDでprivateシナリオの
+    npc.knowledge等を取り込めた件。public_only=Trueならprivateディレクトリのシナリオは
+    正規IDでも読めなくなること。"""
+    public_dir = tmp_path / "public" / "trpg_scenarios"
+    private_dir = tmp_path / "private" / "trpg_scenarios"
+    public_dir.mkdir(parents=True)
+    private_dir.mkdir(parents=True)
+    (private_dir / "hidden_npc.json").write_text(
+        '{"npcs": [{"id": "n1", "knowledge": ["gm-only secret"]}]}', encoding="utf-8"
+    )
+    monkeypatch.setattr(context_builder, "_TRPG_SCENARIO_DIRS", [public_dir, private_dir])
+    monkeypatch.setattr(context_builder, "_PUBLIC_TRPG_SCENARIO_DIRS", [public_dir])
+
+    assert context_builder.load_trpg_scenario("hidden_npc", public_only=True) == {}
+    assert context_builder.load_trpg_scenario("hidden_npc", public_only=False)["npcs"][0]["id"] == "n1"

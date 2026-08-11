@@ -77,11 +77,17 @@ WS   /api/session/{session_id}/ws
 
 GET  /api/session/{session_id}
   headers: Authorization: Bearer {token}  # 参加者トークン必須（host/player/gm/observer）
-  → セッション全体（過去ログ全件・initiative等、認証トークン/招待コード等の
-    機密フィールドを除いたもの）を返す。そのセッションの参加者トークンでのみ
-    読める（退室・追放でトークンが失効した後は読めない）。過去ログの
-    ページネーションは未実装で、毎回全件を返す。セッション規模が大きく
-    なった場合のレスポンス肥大化は既知の制約
+  → 過去ログ全件・initiative・name_map・進行状況（round/turn等）・モードフラグなど、
+    全ロール（host/player/gm/observer含む）に公開してよいフィールドのみを返す
+    （allowlist方式）。認証トークン/招待コード等の機密フィールドに加え、
+    npc_state・player_knowledge（GM専用のNPC知識・キャラ別既知情報）、
+    rules/scene（ルールセット本文）、char_game_sheets/skill_pool/skill_values、
+    guest_chars等のGM/シナリオ由来コンテンツ・内部状態も一切含まれない
+    （GM専用情報が必要な場合は `GET /{session_id}/npc/{npc_id}/state` 等の
+    require_keeper保護された個別エンドポイントを使う）。そのセッションの
+    参加者トークンでのみ読める（退室・追放でトークンが失効した後は読めない）。
+    過去ログのページネーションは未実装で、毎回全件を返す。セッション規模が
+    大きくなった場合のレスポンス肥大化は既知の制約
 ```
 
 このほか、人間ターン送信・投票・退室等のセッション進行アクションは`POST /{session_id}/human_turn`等の個別RESTエンドポイントで行う（3章参照）。

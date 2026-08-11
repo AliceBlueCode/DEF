@@ -100,6 +100,30 @@ def test_get_session_still_exposes_gameplay_fields():
     assert "name_map" in session
 
 
+def test_get_session_excludes_gm_only_and_internal_fields():
+    """8.27対策: blacklist方式（host_token等5フィールドのみ除外）からallowlist方式に
+    変更したこと自体の回帰確認。npc_state（require_keeper保護の/npc/{id}/stateが
+    「GM専用情報」と明記しているのと同じデータ）・player_knowledge・rules/scene
+    （private ruleset本文が入りうる）・char_game_sheets・skill_pool/skill_values・
+    guest_chars等、frontendが実際に使っていない/GM専用のフィールドは
+    GET /{session_id} のレスポンスに一切含まれないこと。
+    """
+    sid, host_token = _start_with_token()
+
+    resp = client.get(f"/api/session/{sid}", headers={"Authorization": f"Bearer {host_token}"})
+    session = resp.json()["session"]
+
+    must_not_leak = {
+        "npc_state", "player_knowledge", "rules", "scene",
+        "char_game_sheets", "skill_pool", "skill_values",
+        "guest_chars", "guest_char_ratings", "runtime_stats", "counters",
+        "expelled_char_fingerprints", "circuit_broken",
+        "daily_gen_count", "daily_gen_date", "backend", "char_backends",
+    }
+    leaked = must_not_leak & session.keys()
+    assert not leaked, f"GET /{{session_id}} leaked GM-only/internal fields: {leaked}"
+
+
 def test_autosave_serialization_still_keeps_tokens_for_restore():
     """`_session_for_json`（autosave用）は引き続きhost_token等を保持すること
     （復元に必要なため、公開用の除外を適用してはいけない）。"""

@@ -123,20 +123,32 @@ def _session_for_json(session: dict) -> dict:
     return {k: v for k, v in session.items() if k not in _NON_SERIALIZABLE_KEYS}
 
 
-# GET /{session_id}（無認証）で外部に公開してはいけない機密フィールド。
-# _NON_SERIALIZABLE_KEYS（JSON化できるか）とは別軸の「公開してよいか」の判定。
-# 2026-08-04の攻撃者視点監査で、host_token/invited_gm_token/players（{token: char_id}、
-# キーが全参加者の認証トークン）/invite_codes/token_to_participant（{token: participant_id}）
-# が無認証GETで丸ごと露出していたことが発覚した（8.1参照）。
-_PUBLIC_EXCLUDED_KEYS = frozenset({
-    "host_token", "invited_gm_token", "players", "invite_codes", "token_to_participant",
+# GET /{session_id}（参加者認証必須、8.24）で外部に公開してよいフィールドのallowlist。
+# 8.27対策: 以前はblacklist（`_PUBLIC_EXCLUDED_KEYS`、認証トークン・招待コードのみ除外）
+# 方式だったため、npc_state（GM専用情報。`/{session_id}/npc/{npc_id}/state`が
+# require_keeperで保護しているのと同じデータが、こちらは無防備に全ロールへ露出していた）・
+# player_knowledge・rules/scene（private ruleset本文がそのまま入りうる）等、新フィールド
+# 追加のたびに「除外し忘れる」リスクを構造的に抱えていた。フロントエンド
+# （SessionTab.tsx）がこのエンドポイントから実際に読むのは`history`/`name_map`のみ
+# （2026-08-11確認）。allowlistは実際に必要なフィールド＋ゲーム進行の表示に使う
+# 非秘匿のメタデータ（数値カウンタ・モードフラグ・ID文字列）に限定し、GM/シナリオ/
+# ルールセット由来の自由記述コンテンツ（npc_state・player_knowledge・rules・scene・
+# char_game_sheets・skill_pool・skill_values・guest_chars等）は一切含めない。
+_PUBLIC_SESSION_KEYS = frozenset({
+    "id", "history", "name_map", "initiative",
+    "round", "turn", "action_count", "actions_per_turn",
+    "topic", "trpg_mode", "online_mode", "lobby_active", "host_keeper_mode",
+    "human_keeper", "waiting_for_gm", "auto_advance", "human_char_ids",
+    "keeper_char_id", "keeper_char_name", "max_players",
+    "current_scene_index", "scene_round_start", "designated_next",
+    "rule_set", "trpg_rulebook", "trpg_scenario", "action_directive_set",
 })
 
 
 def _session_for_public_json(session: dict) -> dict:
-    """GETレスポンス専用: `_session_for_json`に加えて認証トークン・招待コード等の
-    機密フィールドも除外したコピーを返す。"""
-    return {k: v for k, v in _session_for_json(session).items() if k not in _PUBLIC_EXCLUDED_KEYS}
+    """GETレスポンス専用: allowlist（`_PUBLIC_SESSION_KEYS`）に含まれるフィールドのみの
+    コピーを返す。autosave用の`_session_for_json`（全フィールド保持）とは別軸。"""
+    return {k: v for k, v in session.items() if k in _PUBLIC_SESSION_KEYS}
 
 
 def _handle_flag_updated(session_id: str, event: dict) -> None:
@@ -1165,7 +1177,7 @@ def _save_session_episodic(session_id: str, session: dict) -> None:
         save_episodic(char_id, entry)
 
 
-def _build_initial_npc_state(scenario_id: str) -> dict:
+def _build_initial_npc_state(scenario_id: str, public_only: bool = False) -> dict:
     """シナリオの静的NPC定義から npc_state を初期化する。
 
     npc_state = {
@@ -1181,7 +1193,7 @@ def _build_initial_npc_state(scenario_id: str) -> dict:
     """
     if not scenario_id:
         return {}
-    scenario = _load_trpg_scenario(scenario_id)
+    scenario = _load_trpg_scenario(scenario_id, public_only=public_only)
     npc_state = {}
     for npc in scenario.get("npcs", []):
         nid = npc.get("id")
@@ -1733,7 +1745,13 @@ def start_session(req: SessionStartRequest, request: Request):
 
     if len(_sessions) >= _MAX_SESSIONS:
         _evict_oldest_session()
-    _rule_data = _load_session_rules().get(req.rule_set, {})
+    # 8.28対策: 無認証の公開ポート経由の/startは、rule_set/trpg_rulebook/trpg_scenarioに
+    # data/private/配下のIDを直接指定してprivateコンテンツをセッションへ取り込める
+    # （8.22で塞いだのは「一覧・詳細取得」のみで、「/start時点での選択」は
+    # 「セッションが既に選んだものは信頼する」という前提で対象外にしていたが、
+    # その前提は/start自体が公開ポートに乗っている場合は成立しない）。
+    _public_req = _is_public_request(request)
+    _rule_data = _load_session_rules(public_only=_public_req).get(req.rule_set, {})
     rules = _rule_data.get("rules", [])
     scene = _rule_data.get("scene", "")
     rule_style = _rule_data.get("style", "discussion")
@@ -1746,7 +1764,7 @@ def start_session(req: SessionStartRequest, request: Request):
     }
     _skill_pool_init = 0
     if req.trpg_mode and req.trpg_rulebook:
-        _rb = _load_trpg_rulebook(req.trpg_rulebook)
+        _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req)
         _skill_pool_init = int(_rb.get("skill_point_pool", 0))
 
     _sessions[session_id] = {
@@ -1777,7 +1795,7 @@ def start_session(req: SessionStartRequest, request: Request):
         "current_scene_index": 0,
         "scene_round_start": 0,
         "player_knowledge": {cid: [] for cid in player_ids},
-        "npc_state": _build_initial_npc_state(req.trpg_scenario),
+        "npc_state": _build_initial_npc_state(req.trpg_scenario, public_only=_public_req),
         "skill_pool": {cid: _skill_pool_init for cid in player_ids},
         "skill_values": {cid: {} for cid in player_ids},
         "keeper_char_id": keeper_char_id,
@@ -2802,7 +2820,7 @@ class LobbySettingsRequest(BaseModel):
 
 
 @router.patch("/{session_id}/lobby/settings")
-def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = Depends(require_host)):
+def set_lobby_settings(session_id: str, req: LobbySettingsRequest, request: Request, auth: dict = Depends(require_host)):
     """ロビー中にセッション設定（お題・ルールセット・ルールブック・シナリオ）を変更する。
 
     /start 時に確定する派生データ（rules/scene・skill_pool・npc_state）もここで再構築する。
@@ -2813,11 +2831,12 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = 
         raise HTTPException(404, "Session not found")
     if not sess.get("lobby_active"):
         raise HTTPException(409, "Session already started")
+    _public_req = _is_public_request(request)  # 8.28対策: /startと同じ理由
     if req.topic is not None:
         sess["topic"] = req.topic
     if req.rule_set is not None:
         sess["rule_set"] = req.rule_set
-        _rule_data = _load_session_rules().get(req.rule_set, {})
+        _rule_data = _load_session_rules(public_only=_public_req).get(req.rule_set, {})
         sess["rules"] = _rule_data.get("rules", [])
         sess["style"] = _rule_data.get("style", "discussion")
         sess["max_chars"] = _rule_data.get("max_chars", 0)
@@ -2825,13 +2844,13 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, auth: dict = 
         sess["scene"] = _rule_data.get("scene", "")
     if req.trpg_rulebook is not None:
         sess["trpg_rulebook"] = req.trpg_rulebook
-        _rb = _load_trpg_rulebook(req.trpg_rulebook) if req.trpg_rulebook else {}
+        _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req) if req.trpg_rulebook else {}
         _pool = int(_rb.get("skill_point_pool", 0))
         # 開始前なので既存参加者の技能ポイントプールも新ルールブック値でリセットする
         sess["skill_pool"] = {cid: _pool for cid in sess.get("skill_pool", {})}
     if req.trpg_scenario is not None:
         sess["trpg_scenario"] = req.trpg_scenario
-        sess["npc_state"] = _build_initial_npc_state(req.trpg_scenario)
+        sess["npc_state"] = _build_initial_npc_state(req.trpg_scenario, public_only=_public_req)
     if req.max_players is not None:
         sess["max_players"] = max(1, min(8, req.max_players))
     return {

@@ -13,10 +13,12 @@ _TRPG_RULEBOOK_DIRS = [
     _BASE / "data" / "public" / "trpg_rules",
     _BASE / "data" / "private" / "trpg_rules",
 ]
+_PUBLIC_TRPG_RULEBOOK_DIRS = [_BASE / "data" / "public" / "trpg_rules"]
 _TRPG_SCENARIO_DIRS = [
     _BASE / "data" / "public" / "trpg_scenarios",
     _BASE / "data" / "private" / "trpg_scenarios",
 ]
+_PUBLIC_TRPG_SCENARIO_DIRS = [_BASE / "data" / "public" / "trpg_scenarios"]
 # 8.26対策: rulebook_id/scenario_idはPOST /api/session/start等クライアント入力を
 # そのままファイル名に使うため、IDのallowlist（characters_common._SAFE_ID_RE・
 # trpg.py._SAFE_ID_REと同型）＋resolve後のディレクトリ包含チェックの二重で
@@ -43,12 +45,12 @@ def _load_trpg_resource(resource_id: str, dirs: list[Path]) -> dict:
     return {}
 
 
-def load_trpg_rulebook(rulebook_id: str) -> dict:
-    return _load_trpg_resource(rulebook_id, _TRPG_RULEBOOK_DIRS)
+def load_trpg_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
+    return _load_trpg_resource(rulebook_id, _PUBLIC_TRPG_RULEBOOK_DIRS if public_only else _TRPG_RULEBOOK_DIRS)
 
 
-def load_trpg_scenario(scenario_id: str) -> dict:
-    return _load_trpg_resource(scenario_id, _TRPG_SCENARIO_DIRS)
+def load_trpg_scenario(scenario_id: str, public_only: bool = False) -> dict:
+    return _load_trpg_resource(scenario_id, _PUBLIC_TRPG_SCENARIO_DIRS if public_only else _TRPG_SCENARIO_DIRS)
 
 
 def build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str) -> str:

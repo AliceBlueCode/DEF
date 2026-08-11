@@ -11,6 +11,7 @@
 ルーターが public_app に追加された際、許可リストに無ければ即座に失敗する。
 """
 
+import json
 from unittest.mock import patch
 
 from fastapi.routing import APIRoute
@@ -150,6 +151,48 @@ def test_characters_public_icon_excludes_private_dir(tmp_path):
         resp = client.get(f"/api/characters/{char_id}/icon")
         assert resp.status_code == 200
         assert resp.json() == {"error": "Icon not found"}
+
+
+def test_characters_game_sheets_reachable_and_excludes_private_dir(tmp_path):
+    """8.29対策: characters_public.pyに/game_sheetsが無く、Cloudflare Tunnel経由の
+    オンラインTRPGセッションでキャラシート復元が404になっていた（機能回帰）ので追加。
+    icon/standingと同じくpublic_onlyでdata/private/charactersを除外すること。"""
+    from def_kari.api.routes import characters_common
+
+    r_missing = client.get("/api/characters/nonexistent/game_sheets")
+    assert r_missing.status_code == 200
+    assert r_missing.json() == {"game_sheets": {}}
+
+    private_dir = tmp_path / "private"
+    public_dir = tmp_path / "public"
+    private_dir.mkdir()
+    public_dir.mkdir()
+
+    char_id = "secret_char_002"
+    char_dir = private_dir / char_id
+    char_dir.mkdir()
+    (char_dir / "profile.json").write_text(
+        json.dumps({"v1": {"game_rules_sheets": {"coc": {"str": 12}}}}), encoding="utf-8"
+    )
+
+    with patch.object(characters_common, "_PUBLIC_CHAR_DIRS", [public_dir]), \
+         patch.object(characters_common, "_CHAR_DIRS", [public_dir, private_dir]):
+        resp = client.get(f"/api/characters/{char_id}/game_sheets")
+        assert resp.status_code == 200
+        assert resp.json() == {"game_sheets": {}}
+
+    pub_char_id = "public_char_002"
+    pub_char_dir = public_dir / pub_char_id
+    pub_char_dir.mkdir()
+    (pub_char_dir / "profile.json").write_text(
+        json.dumps({"v1": {"game_rules_sheets": {"coc": {"str": 12}}}}), encoding="utf-8"
+    )
+
+    with patch.object(characters_common, "_PUBLIC_CHAR_DIRS", [public_dir]), \
+         patch.object(characters_common, "_CHAR_DIRS", [public_dir, private_dir]):
+        resp = client.get(f"/api/characters/{pub_char_id}/game_sheets")
+        assert resp.status_code == 200
+        assert resp.json() == {"game_sheets": {"coc": {"str": 12}}}
 
 
 def test_t2i_generation_not_reachable_but_image_delivery_is():
@@ -293,6 +336,59 @@ def test_session_rules_and_directives_exclude_private_over_public_app(tmp_path):
         r_full_directives = full_client.get("/api/session/action-directives")
         full_directive_ids = [d["id"] for d in r_full_directives.json()["directives"]]
         assert "nsfw_directive" in full_directive_ids
+
+
+def test_start_via_public_app_cannot_pull_private_rule_content(tmp_path):
+    """8.28対策: 無認証のpublic_app経由でもPOST /api/session/startは到達可能なため、
+    rule_setにdata/private/配下のIDを直接指定すれば、8.22が塞いだ一覧・詳細取得を
+    経由せずprivateルールセットの本文をセッションへ取り込めた（8.22は「一覧・詳細取得」
+    のみ対象で、「/start時点での選択」は「セッションが既に選んだものは信頼する」という
+    前提で対象外にしていたが、その前提は/start自体が公開ポートに乗っている場合は
+    成立しない）。public_app経由ではprivateディレクトリのIDを指定しても中身が空のまま
+    セッションが作られ、main.py（ローカル専用）経由では従来どおり読み込まれることを
+    直接 _sessions の中身で確認する（GETレスポンス自体は8.27のallowlistで
+    rules/sceneを一切返さなくなったため、出力側では検証できない）。
+    trpg_rulebook/trpg_scenarioの同種の制限は`context_builder.load_trpg_rulebook`/
+    `load_trpg_scenario`のpublic_only引数として`tests/test_trpg_resource_path_safety.py`
+    で単体テスト済み。
+    """
+    from def_kari.api.routes import session as session_module
+
+    public_dir = tmp_path / "public_rules"
+    private_dir = tmp_path / "private_rules"
+    public_dir.mkdir()
+    private_dir.mkdir()
+    (private_dir / "nsfw_secret.json").write_text(
+        '{"id": "nsfw_secret", "rules": ["secret private rule text"], "scene": "secret scene"}',
+        encoding="utf-8",
+    )
+
+    with patch.object(session_module, "_RULE_DIRS", [public_dir, private_dir]), \
+         patch.object(session_module, "_PUBLIC_RULE_DIRS", [public_dir]):
+
+        # public_app（無認証）: private rule_setを指定しても中身は空で作られる
+        r_pub = client.post("/api/session/start", json={"character_ids": [], "rule_set": "nsfw_secret"})
+        assert r_pub.status_code == 200
+        sid_pub = r_pub.json()["session_id"]
+        try:
+            sess_pub = session_module._sessions[sid_pub]
+            assert sess_pub["rules"] == []
+            assert sess_pub["scene"] == ""
+        finally:
+            session_module._sessions.pop(sid_pub, None)
+
+        # main.py（ローカル専用）: 従来どおりprivateコンテンツも読み込まれる
+        from def_kari.api.main import app
+        full_client = TestClient(app)
+        r_local = full_client.post("/api/session/start", json={"character_ids": [], "rule_set": "nsfw_secret"})
+        assert r_local.status_code == 200
+        sid_local = r_local.json()["session_id"]
+        try:
+            sess_local = session_module._sessions[sid_local]
+            assert sess_local["rules"] == ["secret private rule text"]
+            assert sess_local["scene"] == "secret scene"
+        finally:
+            session_module._sessions.pop(sid_local, None)
 
 
 def test_session_dead_code_endpoints_removed_everywhere():

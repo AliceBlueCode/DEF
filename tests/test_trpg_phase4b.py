@@ -108,7 +108,7 @@ def test_build_initial_npc_state_from_scenario(monkeypatch=None):
 
     # _load_trpg_scenario をモンキーパッチ
     original = session_module._load_trpg_scenario
-    session_module._load_trpg_scenario = lambda _: _SCENARIO
+    session_module._load_trpg_scenario = lambda _, public_only=False: _SCENARIO
     try:
         state = session_module._build_initial_npc_state("dummy_scenario")
         assert "butler" in state
@@ -123,7 +123,7 @@ def test_build_initial_npc_state_from_scenario(monkeypatch=None):
 def test_build_initial_npc_state_empty_scenario():
     import def_kari.api.routes.session as session_module
     original = session_module._load_trpg_scenario
-    session_module._load_trpg_scenario = lambda _: {}
+    session_module._load_trpg_scenario = lambda _, public_only=False: {}
     try:
         state = session_module._build_initial_npc_state("dummy_scenario")
         assert state == {}
