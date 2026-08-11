@@ -33,7 +33,7 @@ This document records the implementation status of feature specifications (F-num
 | F-17 | Generated Asset Management | ✅ Done | Isolated from Git tracking |
 | F-18 | session_state Optimization | ✅ Done | MAX_VISIBLE_TURNS=3, trim_session, lazy loading |
 | F-23 | Turn Regeneration & Undo/Redo | ✅ Done | Full/voice-only/image-only regen, configurable history count. Novel mode uses browser-native Ctrl+Z instead |
-| F-25 | origin_type & Publication Policy | ✅ Done | original/reconstructed_persona/personification/derivative |
+| F-25 | Publication Policy (rating classification) | ✅ Done | `content_policy`'s `rating_sexual`/`rating_violence`/`is_real_person`/`is_existing_ip` are implemented. The `origin_type` field and its automated classification logic are design-only, not implemented -- publication scope is currently managed by manually placing files under `data/public/characters/` vs `data/private/characters/` (see `docs/DEF_kari_Character_Data_Specification_en.md`) |
 | F-26 | Character Switch Auto-Greeting | ✅ Done | ON/OFF configurable. Greeting skipped when switching to the same character (v2.1.1+) |
 | F-27 | Meta Self-Awareness Directive | ✅ Done | content_policy-based (3 variants: default/existing_ip/real_person), injected at the top of the system prompt |
 | F-28 | Novel Mode Foundation | ✅ Done | Work management, plot settings, AI candidate generation, `Chapter N + Scene M` labels |
@@ -99,7 +99,7 @@ All three also support connecting to any service exposing an OpenAI-compatible A
 
 | Type | Count | Result |
 |---|---|---|
-| Unit Tests | 536 | All passing |
+| Unit Tests | 541 | All passing |
 
 Measurement command: `python -m pytest def_kari tests` (excludes `poc/` and `llamacpp_tools/` PoC/vendor tests, as of 2026-08-11)
 

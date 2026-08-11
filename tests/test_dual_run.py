@@ -36,3 +36,13 @@ def test_dual_run_configures_ws_max_size():
     assert len(captured_configs) == 2
     for kwargs in captured_configs:
         assert kwargs.get("ws_max_size") == _SESSION_BODY_SIZE_LIMIT
+
+
+def test_public_host_defaults_to_loopback():
+    """8.25対策: --public-hostの既定値は0.0.0.0ではなく127.0.0.1であること。
+    cloudflaredは常に127.0.0.1へ接続するため--cloudflare-tunnel運用は無傷のまま、
+    未指定時にLAN/インターネットへ直接公開ポートが晒される事故を防ぐ。"""
+    from def_kari.api import dual_run
+
+    args = dual_run._build_parser().parse_args([])
+    assert args.public_host == "127.0.0.1"

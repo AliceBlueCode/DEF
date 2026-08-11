@@ -10,7 +10,7 @@ start "DEF-React" cmd /k "cd /d E:\tools\DEF\frontend && npm run dev"
 
 echo.
 echo FastAPI (local, full access):    http://127.0.0.1:8511
-echo FastAPI (public, session only):  http://0.0.0.0:8512
+echo FastAPI (public, session only):  http://127.0.0.1:8512 (proxied via cloudflared)
 echo React:                           http://localhost:3000
 echo.
 echo cloudflared (Quick Tunnel) is auto-launched by dual_run.py. The generated

@@ -1,12 +1,19 @@
 """DEF(kari) デュアルポート起動。
 
 同一プロセス内で、ローカル向けフル機能アプリ（デフォルト127.0.0.1:8511）と、
-Cloudflare Tunnel等での公開向け軽量アプリ（デフォルト0.0.0.0:8512、session機能＋
+Cloudflare Tunnel等での公開向け軽量アプリ（デフォルト127.0.0.1:8512、session機能＋
 画像/音声の読み取り専用配信のみ）を同時に起動する。
 
 シングルトン（game_event_bus / vram_lock / _sessions）は同一プロセス内のメモリで
 共有されるため、2つのアプリ間でセッション状態の不整合は起きない
 （別プロセスに分けると壊れる。マルチプレイ設計書§14「--workers は必ず1」と同じ理由）。
+
+--public-host のデフォルトが127.0.0.1な理由: --cloudflare-tunnel 運用時、cloudflared
+自体は常に http://127.0.0.1:{public_port}（ハードコード、_start_cloudflared参照）に
+loopback接続するため、--public-hostを0.0.0.0にする必要は本来ない。0.0.0.0にすると
+Cloudflareのエッジ保護（WAF/DDoS対策/レート制限）を経由しない直接アクセス経路が
+LAN・（NAT/FW設定次第で）インターネットから開いてしまう。cloudflaredを使わず
+LAN内のみで直接公開したい場合に限り、明示的に --public-host 0.0.0.0 を指定すること。
 
 使い方:
     python -m def_kari.api.dual_run
@@ -114,11 +121,22 @@ async def _run(local_host: str, local_port: int, public_host: str, public_port: 
     await asyncio.gather(local_server.serve(), public_server.serve())
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DEF(kari) デュアルポート起動")
     parser.add_argument("--local-host", default="127.0.0.1")
     parser.add_argument("--local-port", type=int, default=8511)
-    parser.add_argument("--public-host", default="0.0.0.0")
+    parser.add_argument(
+        "--public-host",
+        default="127.0.0.1",
+        help=(
+            "公開ポートのbindアドレス。デフォルトはloopbackのみ。"
+            "cloudflaredは常に127.0.0.1へ接続するため、--cloudflare-tunnelでの"
+            "公開運用ではこのデフォルトのままで問題ない。LAN内から直接"
+            "（Cloudflare Tunnelを経由せず）アクセスさせたい場合のみ"
+            "0.0.0.0を明示的に指定すること（Cloudflareのエッジ保護を経由しない"
+            "直接公開になる点に注意）。"
+        ),
+    )
     parser.add_argument("--public-port", type=int, default=8512)
     parser.add_argument(
         "--no-trust-cloudflare-tunnel",
@@ -145,7 +163,11 @@ def main() -> None:
             "cloudflaredを別途手動で起動すること。"
         ),
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
     if not args.no_trust_cloudflare_tunnel:
         os.environ.setdefault("DEF_BEHIND_CLOUDFLARE_TUNNEL", "1")
     cloudflared_proc = _start_cloudflared(args.public_port) if args.cloudflare_tunnel else None

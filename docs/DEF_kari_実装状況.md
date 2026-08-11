@@ -33,7 +33,7 @@
 | F-17 | 生成アセット管理 | ✅ 実装済み | Git管理対象外に隔離 |
 | F-18 | session_state軽量化 | ✅ 実装済み | MAX_VISIBLE_TURNS=3、trim_session、遅延読み込み |
 | F-23 | ターン再生成・Undo/Redo | ✅ 実装済み | 全体/音声のみ/画像のみ再生成、保持件数設定可能。ノベルモードはブラウザ標準Ctrl+Zで代替するため非対応 |
-| F-25 | origin_type・公開ポリシー | ✅ 実装済み | original/reconstructed_persona/personification/derivative |
+| F-25 | 公開ポリシー（レーティング判定） | ✅ 実装済み | `content_policy`の`rating_sexual`/`rating_violence`/`is_real_person`/`is_existing_ip`は実装済み。`origin_type`フィールドおよびそれに基づく自動判定ロジックは設計のみで未実装——現状は`data/public/characters/` vs `data/private/characters/`への手動配置で公開範囲を管理している（詳細は`docs/DEF_kari_キャラクターデータ仕様.md`参照） |
 | F-26 | キャラクター切替時の自動挨拶 | ✅ 実装済み | ON/OFF設定可能。同一キャラクターへの切替は挨拶スキップ（v2.1.1〜） |
 | F-27 | メタ自己認識ディレクティブ | ✅ 実装済み | content_policyベース（default/existing_ip/real_person 3バリアント）、システムプロンプト先頭強制挿入 |
 | F-28 | ノベルモード基盤 | ✅ 実装済み | 作品管理、プロット設定、AI候補生成、`Chapter N + Scene M` ラベル |
@@ -99,7 +99,7 @@
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| ユニットテスト | 536件 | 全パス |
+| ユニットテスト | 541件 | 全パス |
 
 計測コマンド: `python -m pytest def_kari tests`（`poc/`・`llamacpp_tools/` のPoC・ベンダーテストは対象外、2026-08-11時点）
 
