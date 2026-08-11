@@ -10,7 +10,7 @@
 # fastapi >= 0.96 pulls in pydantic v2 / starlette 1.x, which conflicts with
 # the pydantic v1 style (@validator etc.) the codebase is written against,
 # so the upper bound is pinned.
-fastapi>=0.95.0,<0.96.0
+fastapi>=0.141.1,<0.142.0
 uvicorn[standard]>=0.21.0
 python-multipart>=0.0.9
 
