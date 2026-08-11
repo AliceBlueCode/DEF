@@ -648,6 +648,24 @@ def _resolve_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _token_currently_active(session_id: str, token: str) -> bool:
+    """8.30対策: JWTの署名・exp・session_id・roleが正しくても、そのトークンが
+    「現在もこのセッションの参加者として登録されているか」（`session["players"]`）を
+    最終防波堤として確認する。
+
+    `_revoked_jtis`はプロセスメモリ上のみで永続化されないのに対し、`players`は
+    autosave・起動時復元（`_AUTOSAVE_DIR`走査）を通じて永続化される。退室(`/leave`)・
+    追放(expel)はどちらも`players`からのトークン削除とrevoke_token()を必ずセットで
+    行うため、`players`に無い＝現在有効ではない、という判定は`_revoked_jtis`が
+    プロセス再起動で失われても揺らがない。session_id自体が存在しない場合は
+    Trueを返し、呼び出し元（各エンドポイント）の既存の404チェックに判定を委ねる。
+    """
+    session = _sessions.get(session_id)
+    if session is None:
+        return True
+    return token in session.get("players", {})
+
+
 def require_host(session_id: str, authorization: str = Header(...)) -> dict:
     """role == host かつ、そのJWTがこのsession_id用に発行されたものであることを両方チェックするDependency。
 
@@ -666,6 +684,8 @@ def require_host(session_id: str, authorization: str = Header(...)) -> dict:
         raise HTTPException(403, "Host role required")
     if payload.get("session_id") != session_id:
         raise HTTPException(403, "Token session mismatch")
+    if not _token_currently_active(session_id, token):
+        raise HTTPException(401, "Token is no longer active")
     return payload
 
 
@@ -680,6 +700,8 @@ def require_player(session_id: str, authorization: str = Header(...)) -> dict:
         raise HTTPException(403, "Player role required")
     if payload.get("session_id") != session_id:
         raise HTTPException(403, "Token session mismatch")
+    if not _token_currently_active(session_id, token):
+        raise HTTPException(401, "Token is no longer active")
     return payload
 
 
@@ -695,6 +717,8 @@ def require_keeper(session_id: str, authorization: str = Header(...)) -> dict:
         raise HTTPException(403, "Keeper role required")
     if payload.get("session_id") != session_id:
         raise HTTPException(403, "Token session mismatch")
+    if not _token_currently_active(session_id, token):
+        raise HTTPException(401, "Token is no longer active")
     return payload
 
 
@@ -715,6 +739,8 @@ def require_participant(session_id: str, authorization: str = Header(...)) -> di
         raise HTTPException(403, "Participant role required")
     if payload.get("session_id") != session_id:
         raise HTTPException(403, "Token session mismatch")
+    if not _token_currently_active(session_id, token):
+        raise HTTPException(401, "Token is no longer active")
     return payload
 
 
@@ -2158,6 +2184,13 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
         except Exception:
             pass
     revoke_token(token)
+    # 8.30対策: playersからのトークン除去をautosaveへ即座に反映する。以前はここで
+    # autosaveしておらず、退室直後にプロセスがクラッシュ/再起動すると、起動時復元
+    # （_AUTOSAVE_DIR走査）が古い players を丸ごと復元してしまい、かつ_revoked_jtis
+    # はメモリ上のみで空に戻るため、退室済みトークンが認証を再び通ってしまい得た
+    # （require_*側の_token_currently_activeで最終的には塞がっているが、
+    # データ自体を鮮度高く保つのが根本対応）。
+    _autosave(session_id)
 
     _game_event_bus.emit(session_id, "PLAYER_LEFT", {
         "participant_id": participant_id,
@@ -4632,6 +4665,16 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     if not sess:
         try:
             await ws.close(code=4004)
+        except Exception:
+            pass
+        return
+
+    # 8.30対策: require_*と同じ「現在playersに登録されているか」の最終防波堤。
+    # _revoked_jtisはプロセス再起動で失われるが、playersはautosave/起動時復元で
+    # 永続化されるため、退室・追放済みのトークンでの再接続をここでも塞ぐ。
+    if raw_token not in sess.get("players", {}):
+        try:
+            await ws.close(code=4001)
         except Exception:
             pass
         return

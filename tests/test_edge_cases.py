@@ -117,16 +117,21 @@ def test_ws_observer_role_closes_4001():
     """
     from fastapi.testclient import TestClient
     from def_kari.api.main import app
-    from def_kari.api.routes.session import issue_player_jwt
+    from def_kari.api.routes.session import issue_player_jwt, _sessions
     client = TestClient(app)
     sid, _ = _start(client)
     observer_token = issue_player_jwt(sid, "observer")
+    # 8.30対策でWS認証もplayers登録を要求するため、実際のjoinを模してここでも登録する。
+    _sessions[sid]["players"][observer_token] = ""
     # observer は verify_jwt を通過できる → セッションあり → 接続成立
     with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
         ws.send_json({"type": "auth", "token": observer_token})
         # pong で接続が生きていることを確認（keepalive はスキップ）
         ws.send_json({"type": "pong"})
-        # 接続は維持される（エラーなし）
+        # 接続が閉じられていないことをPLAYER_RECONNECTEDイベント受信で確認する
+        # （8.30対策前は例外なくsend_jsonできる＝接続維持、という弱い確認だった）
+        received = ws.receive_json()
+        assert received.get("type") == "PLAYER_RECONNECTED"
 
 
 # ── invite / join 異常系 ──────────────────────────────────────────

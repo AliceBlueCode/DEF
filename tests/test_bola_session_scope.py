@@ -109,6 +109,7 @@ def test_generate_image_jti_bypass_blocked_by_ip_limit(monkeypatch):
     for i in range(21):
         # 毎回新しいjti（=joinをやり直した体）で叩く
         player_token = session_module.issue_player_jwt(sid, "player", "char_a")
+        session_module._sessions[sid]["players"][player_token] = "char_a"
         resp = client.post(f"/api/session/{sid}/generate-image", json={}, headers=_auth(player_token))
         statuses.append(resp.status_code)
 
@@ -120,11 +121,12 @@ def test_vote_deliberate_rate_limited():
     """8.9: vote/deliberateにレート制限が無く、AIキャラがN人いるセッションなら
     1回の連打でN倍のLLM呼び出しが発生しうった問題。initiativeを空にしたセッションで
     LLM呼び出しを起こさずレート制限だけを検証する（6回/分、7回目で429）。"""
-    from def_kari.api.routes.session import issue_player_jwt
+    from def_kari.api.routes.session import issue_player_jwt, _sessions
 
     sid, _host_token = _start_session()  # character_ids=[]なのでinitiativeは空
 
     player_token = issue_player_jwt(sid, "player", "char_a")
+    _sessions[sid]["players"][player_token] = "char_a"
     statuses = []
     for _ in range(7):
         resp = client.post(
@@ -141,11 +143,12 @@ def test_vote_deliberate_rate_limited():
 def test_human_turn_rate_limited():
     """8.10: human_turn（TTS合成を伴う）にレート制限が無かった問題。
     WS発言と同じ基準（60回/分）を適用したので、61回叩くと61回目が429になること。"""
-    from def_kari.api.routes.session import issue_player_jwt
+    from def_kari.api.routes.session import issue_player_jwt, _sessions
 
     sid, _host_token = _start_session()  # initiativeは空なのでturn関連のロジックには到達しない
 
     player_token = issue_player_jwt(sid, "player", "char_a")
+    _sessions[sid]["players"][player_token] = "char_a"
     statuses = []
     for _ in range(61):
         resp = client.post(
@@ -163,13 +166,14 @@ def test_vote_deliberate_circuit_breaker_trips_and_host_can_reset():
     """9.3 Layer3: 同一セッションへのレート制限違反が5分間に10回連続すると
     サーキットブレーカーが作動し、以降の生成系エンドポイントは423でブロックされる。
     ホストが/circuit_breaker/resetで明示的に解除するまで回復しないこと。"""
-    from def_kari.api.routes.session import issue_player_jwt
+    from def_kari.api.routes.session import issue_player_jwt, _sessions
     from def_kari.safety import audit_log
 
     sid, host_token = _start_session()  # character_ids=[]なのでinitiativeは空
     audit_log._violations.pop(sid, None)
     try:
         player_token = issue_player_jwt(sid, "player", "char_a")
+        _sessions[sid]["players"][player_token] = "char_a"
         vote_body = {"vote_type": "topic_change", "detail": "", "target_id": "", "proposer_id": "", "proposer_text": ""}
         statuses = []
         for _ in range(16):
@@ -193,6 +197,7 @@ def test_vote_deliberate_circuit_breaker_trips_and_host_can_reset():
         assert resp.status_code == 200
 
         player_token2 = issue_player_jwt(sid, "player", "char_a")  # レート制限バケットは別トークンで
+        _sessions[sid]["players"][player_token2] = "char_a"
         resp = client.post(f"/api/session/{sid}/vote/deliberate", json=vote_body, headers=_auth(player_token2))
         assert resp.status_code != 423
     finally:
@@ -214,6 +219,7 @@ def test_human_turn_rejects_blocked_text():
     _sessions[sid]["initiative"] = ["char_a"]
     _sessions[sid]["name_map"] = {"char_a": "Char A"}
     player_token = issue_player_jwt(sid, "player", "char_a")
+    _sessions[sid]["players"][player_token] = "char_a"
 
     resp = client.post(
         f"/api/session/{sid}/human_turn",
