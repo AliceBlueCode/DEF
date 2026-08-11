@@ -615,8 +615,8 @@ def build_turn_instruction(
                 _suffix = f"（1発言は{_max_chars}字以内厳守。長くなりすぎないこと）" if _max_chars else ""
                 return f"上記のルールとここまでの流れを踏まえ、続けてください。{_suffix}"
             if others_have_spoken:
-                return "上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から意見を述べてください。"
-            return "上記の発言記録を踏まえ、あなた自身の立場から意見を述べてください。"
+                return "上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から簡潔に意見を述べてください。"
+            return "上記の発言記録を踏まえ、あなた自身の立場から簡潔に意見を述べてください。"
         if _is_trpg:
             if others_have_spoken:
                 return "Based on the situation and what other explorers have done, react naturally as your character. No AI meta-commentary. Keep your response to 3 sentences or fewer."
@@ -627,8 +627,8 @@ def build_turn_instruction(
             _suffix = f" (strictly {_max_chars} characters or fewer; do not let responses grow longer over time)" if _max_chars else ""
             return f"Following the rules above and the flow so far, continue.{_suffix}"
         if others_have_spoken:
-            return "Based on the discussion above, respond to what other participants have said and express your own position."
-        return "Based on the discussion above, express your own position."
+            return "Based on the discussion above, respond concisely to what other participants have said and express your own position."
+        return "Based on the discussion above, express your own position concisely."
     _cur_round = session.get("round", 1)
     _cur_turn = session.get("turn", 0)
     turn_actions = [

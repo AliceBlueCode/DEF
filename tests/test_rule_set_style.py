@@ -99,3 +99,27 @@ def test_performative_style_without_max_rounds_never_forces_wrap_up():
     history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
     text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
     assert "畳んで" not in text
+
+
+def test_discussion_style_reminds_conciseness_after_others_spoke():
+    """discussionスタイルは1人目には「簡潔に」と指示するが、2人目以降
+    （他の参加者の発言に触れる指示）にはこの指示が抜けており、ラウンドを
+    追うごとに応答が長文化する原因になっていた（2026-08-11発覚）。
+    毎ターン簡潔さを再掲することで抑止する。"""
+    session = {"style": "discussion", "round": 1, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "簡潔" in text
+
+
+def test_discussion_style_reminds_conciseness_first_turn():
+    session = {"style": "discussion"}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "簡潔" in text
+
+
+def test_discussion_style_reminds_conciseness_after_others_spoke_en():
+    session = {"style": "discussion", "round": 1, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "en")
+    assert "concisely" in text
