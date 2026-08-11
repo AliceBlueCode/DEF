@@ -1783,8 +1783,23 @@ def start_session(req: SessionStartRequest, request: Request):
     apt = req.actions_per_turn or _s.get("session_actions_per_turn", 2)
     directive_set_id = req.action_directive_set or _s.get("session_action_directive_set", "default")
 
+    # 8.28対策: 無認証の公開ポート経由の/startは、rule_set/trpg_rulebook/trpg_scenarioに
+    # data/private/配下のIDを直接指定してprivateコンテンツをセッションへ取り込める
+    # （8.22で塞いだのは「一覧・詳細取得」のみで、「/start時点での選択」は
+    # 「セッションが既に選んだものは信頼する」という前提で対象外にしていたが、
+    # その前提は/start自体が公開ポートに乗っている場合は成立しない）。
+    _public_req = _is_public_request(request)
+
     session_id = secrets.token_urlsafe(16)
     profiles = load_profiles()
+    # 8.35対策: character_idsも8.28と同型の穴——load_profiles()はpublic/private無差別に
+    # 読み込むため、公開ポート経由で私有キャラクターのIDを直接指定すれば、そのキャラの
+    # persona_descriptionでAIが実際に喋り出し、history経由（allowlist内）で間接的に
+    # ペルソナの内容が漏れる経路が成立していた。公開ポート経由ではdata/public/配下に
+    # 存在しないIDをそのまま除外する（存在しないキャラとして扱う＝一覧化はしない）。
+    if _public_req:
+        from def_kari.api.routes.characters_common import find_char_dir as _find_char_dir_pub
+        req.character_ids = [cid for cid in req.character_ids if _find_char_dir_pub(cid, public_only=True) is not None]
     if not req.online_mode:
         for cid in req.character_ids:
             char = get_character(cid, profiles)
@@ -1801,12 +1816,6 @@ def start_session(req: SessionStartRequest, request: Request):
 
     if len(_sessions) >= _MAX_SESSIONS:
         _evict_oldest_session()
-    # 8.28対策: 無認証の公開ポート経由の/startは、rule_set/trpg_rulebook/trpg_scenarioに
-    # data/private/配下のIDを直接指定してprivateコンテンツをセッションへ取り込める
-    # （8.22で塞いだのは「一覧・詳細取得」のみで、「/start時点での選択」は
-    # 「セッションが既に選んだものは信頼する」という前提で対象外にしていたが、
-    # その前提は/start自体が公開ポートに乗っている場合は成立しない）。
-    _public_req = _is_public_request(request)
     _rule_data = _load_session_rules(public_only=_public_req).get(req.rule_set, {})
     rules = _rule_data.get("rules", [])
     scene = _rule_data.get("scene", "")
@@ -2932,7 +2941,7 @@ class LobbyAIRequest(BaseModel):
 
 
 @router.post("/{session_id}/lobby/add_ai")
-def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(require_host)):
+def lobby_add_ai(session_id: str, req: LobbyAIRequest, request: Request, auth: dict = Depends(require_host)):
     """ロビーに AI キャラクターを追加する（ホストのみ）。"""
     sess = _sessions.get(session_id)
     if not sess:
@@ -2944,6 +2953,13 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, auth: dict = Depends(requ
         raise HTTPException(409, "Already in initiative")
     if char_id and char_id == sess.get("keeper_char_id"):
         raise HTTPException(409, "Character already assigned to keeper")
+    # 8.35対策: /startのcharacter_idsと同じ穴。公開ポート経由では、hostトークン自体が
+    # 攻撃者自身の場合があるため（自分で/startしてhostになれる）、data/public/以外の
+    # キャラクターは追加不可にする。
+    if _is_public_request(request):
+        from def_kari.api.routes.characters_common import find_char_dir as _find_char_dir_pub
+        if _find_char_dir_pub(char_id, public_only=True) is None:
+            raise HTTPException(404, "Character not found")
     profiles = load_profiles()
     char = get_character(char_id, profiles)
     if not char:
@@ -3346,6 +3362,26 @@ def designate_next(session_id: str, req: DesignateRequest, _auth: dict = Depends
         return {"error": "Character not in initiative"}
     initiative = session["initiative"]
     current_turn = session.get("turn", 0)
+
+    # 8.34対策: キーパー(host/gm)は自治規約上の管理者特権として無条件・無償で指名できる
+    # （SessionTab.tsxのdesignateBtnKeeperがcounters無視で表示されているのと同じ扱い、
+    # skipBtnKeeper等の既存の他のキーパー特権とも一貫）。一方プレイヤー用UI
+    # （designateBtn）はextend/interrupt/vote等の兄弟ボタンと同じ発言力コスト消費の
+    # 並びに置かれており、自治規約（docs/DEF_TRPG卓_自治規約.md）も「次発言者指名: -1」
+    # と明記しているが、本エンドポイントはrole区別なく誰でも無条件・無償で呼べていた
+    # （他人のターン中でも連打可能）。playerロールのみ、現在のターンの本人であること・
+    # 発言力1以上を持つことを要求し、-1を消費する。
+    if _auth.get("role") == "player":
+        if not initiative or current_turn >= len(initiative):
+            return {"error": "invalid turn"}
+        current_char_id = initiative[current_turn]
+        if _auth.get("char_id") != current_char_id:
+            raise HTTPException(409, "It is not your turn")
+        counters = session.setdefault("counters", {})
+        if counters.get(current_char_id, 0) < 1:
+            raise HTTPException(409, "Not enough speech power to designate")
+        counters[current_char_id] = counters[current_char_id] - 1
+
     # 指名発言後に戻るべきターン位置を保存（指名キャラの次）
     session["designated_next"] = req.target_id
     session["designated_return_turn"] = (current_turn + 1) % len(initiative) if initiative else 0
@@ -3495,6 +3531,19 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         # 比較では区別できない。実害は小さいためTODO.mdへ別途記録する。
         if req.action in ("send", "skip") and req.expected_round != session["round"]:
             raise HTTPException(409, "This turn has already been completed (stale request)")
+
+    # 8.34対策: interrupt/generate_imageはsend/extend/skipと違い「今のターンの本人」
+    # である必要はない（割り込みは他人のターン中に別の人間キャラが横から発言する
+    # 機能のため、req.character_idがcurrent_char_idと異なること自体は仕様通り）。
+    # しかし従来は「そのreq.character_idを名乗るトークンが本当にその本人か」を
+    # 一切検証しておらず、任意のplayerトークンが他人のcharacter_idを指定するだけで
+    # なりすまし発言・他人の発言力を勝手に消費できてしまっていた。
+    if req.action in ("interrupt", "generate_image"):
+        _actor_id = req.character_id if req.character_id else current_char_id
+        if _actor_id not in session.get("human_char_ids", []):
+            raise HTTPException(409, "Not a human player's character")
+        if _auth.get("role") == "player" and _auth.get("char_id") != _actor_id:
+            raise HTTPException(409, "You can only act as your own character")
 
     if req.action == "interrupt":
         if not req.text.strip():
