@@ -8,7 +8,7 @@
 
 > **v3.0.0 変更点:** TRPGモード第一弾（F-20/21/22）実装。ルールブック・シナリオ管理API、ダイスロール、GMエージェント、イベントバス。発言力上限設定（`session_max_counter`）追加。i18nにTRPGモード用語（38+キー）追加。
 
-> **v4.0.0 変更点:** オンラインマルチプレイヤー（`feature/v4.0`）実装。WebSocketリアルタイム同期・JWT認証・招待コード（`SFW-XXX-NNN`形式）・参加者ロール4種（host/player/gm/observer）・ロビーシステム（セッションモード切替・キーパー枠独立管理）・AIターンシングル化・HUMAN_ACTIONイベント伝搬。詳細は `DEF_v4.0_マルチプレイ設計書.md` および基本設計書（内部用）7.11節を参照。
+> **v4.0.0 変更点:** オンラインマルチプレイヤー（`feature/v4.0`）実装。WebSocketリアルタイム同期・JWT認証・招待コード（`SFW-XXX-NNN`形式）・参加者ロール4種（host/player/gm/observer）・ロビーシステム（セッションモード切替・キーパー枠独立管理）・AIターンシングル化・HUMAN_ACTIONイベント伝搬・Cloudflare Tunnel経由の公開ポート分離・持ち込みキャラクターのLLM審査・招待コードのレーティング照合。詳細は `DEF_kari_マルチプレイ設計書_内部用.md` および基本設計書（内部用）7.11節を参照。
 
 ---
 
@@ -23,8 +23,8 @@
 | F-6 | セッションモード（マルチエージェント） | ✅ 実装済み | 複数AI＋人間参加、イニシアチブ制、発言力システム |
 | F-7 | セーフティタグ | ✅ 実装済み | 6段階（sfw/nsfw/hentai/violence/gore/extreme） |
 | F-8 | コンテンツフィルタリング | ✅ 実装済み | off/warn/mask、ユーザー制御可能 |
-| F-9 | i18n・多言語対応 | 🔶 主要UI完了 | 200+キー（日英、TRPGモード38+キーを含む）。LLM指示文は `session_prompts.json` で外出し管理。セッション内動的メッセージ約30箇所は未対応 |
-| F-10 | TTS音声合成 | ✅ 実装済み | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS |
+| F-9 | i18n・多言語対応 | ✅ 実装済み | 599キー（日英、TRPGモード38+キーを含む）。LLM指示文は `session_prompts.json` で外出し管理。セッション内動的メッセージ（SessionTab.tsx等のハードコード日本語）も含め全画面をt()化済み（2026-08-11） |
+| F-10 | TTS音声合成 | ✅ 実装済み | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS / Grok TTS |
 | F-11 | TTS自動再生・パイプライン | ✅ 実装済み | セッション・ノベルモード対応 |
 | F-13-1 | VRAM排他制御 | ✅ 実装済み | vram_lock方式 |
 | F-14 | 構造化出力・フォールバックチェーン | ✅ 実装済み | 4段階フォールバック、フィールド名typo自動修正 |
@@ -53,7 +53,7 @@
 | F-20 | TRPGルールブック注入 | ✅ 実装済み | JSON形式。`data/public/trpg_rules/` / `data/private/trpg_rules/` から読み込み。IDバリデーション付き |
 | F-21 | GMエージェント | ✅ 実装済み | キャラクターをGMとして指名。イベントバス（`game_event_bus`）で非同期通知。判定結果をセッション履歴に自動注入 |
 | F-22 | ダイスロール・キャラクターシート | ✅ 実装済み | `NdM±K` 記法、成功/クリティカル/ファンブル/失敗判定、対抗判定、ダメージロール。シナリオ管理APIも提供 |
-| —— | オンラインマルチプレイヤー（v4.0〜） | ✅ 実装済み | WebSocket同期・JWT認証・招待コード・参加者ロール4種・ロビー・GMロール（`waiting_for_gm`）。詳細は `DEF_v4.0_マルチプレイ設計書.md` および基本設計書7.11節を参照 |
+| —— | オンラインマルチプレイヤー（v4.0〜） | ✅ 実装済み | WebSocket同期・JWT認証・招待コード・参加者ロール4種・ロビー・GMロール（`waiting_for_gm`）・Cloudflare Tunnelでの外部公開。詳細は `DEF_kari_マルチプレイ設計書_内部用.md` および基本設計書7.11節を参照 |
 
 ---
 
@@ -66,10 +66,10 @@
 | F-13-2 | 軽量レスポンスモード | ⏸ 保留 | 現アーキテクチャでは不要 |
 | F-13-3 | Diffusersオフロード制御 | ⏸ 保留 | 現アーキテクチャでは不要 |
 | F-19 | エクスポート/インポート | ⏸ 保留 | データ構造が固まるまで保留 |
-| F-24 | エピソードモード基盤 | ❌ 未実装 | Episode > Chapter > Scene 階層管理。将来フェーズ |
-| F-24 | エピソードモード基盤 | ❌ 未実装 | Episode > Chapter > Scene 階層管理。将来フェーズ |
 | F-24-1 | エピソード構造化出力 | ❌ 未実装 | narration/dialogue/tags/choices JSON Schema |
 | F-24-3 | 分岐選択肢+Git連携 | ❌ 未実装 | choices→Gitブランチ |
+
+> **注記（2026-08-11訂正）:** 以前この表には「F-24 エピソードモード基盤 — ❌ 未実装」という行が（誤って2重に）記載されていたが、実際には上記「実装済み」テーブルの「F-28 ノベルモード基盤」「F-28 ノベルモード 3モダリティ」が同じ機能を指しており実装済み。F-24とF-28どちらが正式な採番か基本設計書側の記述と食い違っているため、基本設計書の見直し時にあわせて番号を統一する。
 
 ---
 
@@ -88,8 +88,10 @@
 | 種別 | バックエンド数 | 内訳 |
 |---|---|---|
 | LLM | 5 | Text Generation WebUI / Ollama / OpenAI / Gemini / Anthropic |
-| TTS | 5 | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS |
+| TTS | 6 | VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS / Grok TTS |
 | T2I | 5 | A1111 / ComfyUI / Hugging Face / Civitai / OpenAI Images |
+
+いずれもOpenAI互換APIを提供する任意のサービス（LM Studio・vLLM・llama.cpp server・Groq・OpenRouter等）を追加で接続可能（`compatible`系アダプター、上表の内訳には含まれない）。
 
 ---
 
@@ -97,9 +99,9 @@
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| ユニットテスト | 344件 | 全パス |
+| ユニットテスト | 536件 | 全パス |
 
-計測コマンド: `python -m pytest def_kari tests`（`poc/`・`llamacpp_tools/` のPoC・ベンダーテストは対象外）
+計測コマンド: `python -m pytest def_kari tests`（`poc/`・`llamacpp_tools/` のPoC・ベンダーテストは対象外、2026-08-11時点）
 
 ---
 

@@ -68,37 +68,38 @@ DEF(kari)が守るのは**パブリックとプライベートの境界**であ�
 
 ## 3. TTSアダプターの追加
 
-`def_kari/workers/tts_adapters/` 以下に新しいアダプターを追加してください。
+`def_kari/tts/adapters/` 以下に新しいアダプターを追加してください。
 
 ### 要件
 
-- 基本設計書2.5節で定義した`synthesize()`インターフェースを実装すること。
-- 既存の`VoicevoxAdapter`・`IrodoriTtsAdapter`の実装を参考にしてください。
+- 基本設計書2.5節で定義したインターフェースに沿う`synthesize()`関数を実装すること（クラスではなく、他のアダプターと同じモジュールレベル関数）。
+- 既存の`def_kari/tts/adapters/voicevox.py`・`irodori.py`の実装を参考にしてください。
+- `def_kari/tts/backend.py`の`TTS_BACKENDS`辞書にバックエンドIDと`synthesize`関数を追加してください（他アダプターと同じ登録方式）。
 - アダプター固有の依存ライブラリは `requirements_optional.txt` に追記してください。
 - 動作確認済みの環境(OS・Pythonバージョン・動作確認したサービス/モデル名)をPR本文に明記してください。
 
 ```python
-class YourTtsAdapter:
-    def synthesize(
-        self,
-        text: str,
-        speaker_id: str | int | None,
-        adapter_options: dict | None = None
-    ) -> bytes:
-        """WAVバイト列を返す"""
-        ...
+# def_kari/tts/adapters/your_adapter.py
+def synthesize(
+    text: str,
+    speaker_id: str | int | None = None,
+    options: dict | None = None,
+) -> bytes:
+    """WAVバイト列を返す"""
+    ...
 ```
 
 -----
 
 ## 4. T2Iアダプターの追加
 
-`def_kari/workers/t2i_adapters/` 以下に新しいアダプターを追加してください。
+`def_kari/t2i/adapters/` 以下に新しいアダプターを追加してください。
 
 ### 要件
 
-- 基本設計書2.4節で定義した`generate_image()`インターフェースを実装すること。
-- 既存の`A1111Adapter`の実装を参考にしてください。
+- 基本設計書2.4節で定義したインターフェースに沿う`generate()`関数を実装すること（クラスではなく、他のアダプターと同じモジュールレベル関数）。
+- 既存の`def_kari/t2i/adapters/a1111.py`の実装を参考にしてください。
+- `def_kari/t2i/backend.py`の`T2I_BACKENDS`辞書にバックエンドIDと`generate`関数を追加してください（他アダプターと同じ登録方式）。
 - アダプター固有の依存ライブラリは `requirements_optional.txt` に追記してください。
 - 動作確認済みの環境(OS・Pythonバージョン・動作確認したサービス/モデル名)をPR本文に明記してください。
 

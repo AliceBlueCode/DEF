@@ -109,6 +109,9 @@ DEF는 로컬 퍼스트이지만, 로컬 환경이 갖춰져 있지 않아도 �
 ### TRPG 모드 — 세션 진행 중
 ![TRPG Session](docs/images/trpg_session.png)
 
+### 온라인 세션 — 로비
+![Online Lobby](docs/images/online_lobby.png)
+
 -----
 
 ## 주요 특징
@@ -119,7 +122,7 @@ DEF는 로컬 퍼스트이지만, 로컬 환경이 갖춰져 있지 않아도 �
 - **4가지 모드:** 채팅(1대1 대화)・세션(다수 AI＋인간의 테이블)・TRPG(룰북・다이스・GM 에이전트)・노벨(소설 집필＋AI 후보 생성)
 - **캐릭터 영속성:** 대화 이력・감정・생성 자산이 영속화되어, 재시작 후에도 "이어서" 재개 가능
 - **사고 가시화:** 각 발언의 LLM 사고 과정을 「사고」 탭에서 확인・기록할 수 있습니다
-- **어댑터 패턴(Adapter Pattern):** LLM×5・TTS×5・T2I×5의 백엔드를 자유롭게 교체 가능
+- **어댑터 패턴(Adapter Pattern):** LLM×5・TTS×6・T2I×5의 백엔드를 자유롭게 교체 가능
 - **OpenAI 호환 API 지원:** LLM・TTS・T2I 각각에서 OpenAI 호환 API를 제공하는 모든 서비스를 연결 가능. LM Studio・vLLM・llama.cpp server・Groq・OpenRouter 등 지원
 - **조닝(Zoning):** 공개 데이터와 비공개 데이터의 명확한 분리. 생성 자산은 Git 관리 대상 외
 
@@ -160,6 +163,15 @@ cd frontend && npm run dev
 설정 탭에서 LLM・TTS・T2I의 백엔드를 각각 선택할 수 있습니다.
 API 키는 설정 탭의 「🔑 API 키 관리」에서 암호화하여 저장됩니다.
 로컬 환경(TGW・VOICEVOX・A1111 등)을 사용할 경우 `.env`에 디렉터리 경로를 설정해 주세요.
+
+### 온라인으로 참가자를 초대하려면
+
+다른 사람이 세션에 참가할 수 있게 하려면 `start_def.bat` 대신 `start_def_public.bat`을 사용하세요. 로컬용・세션 공개용 2개 포트로 백엔드를 실행하고, [cloudflared](https://github.com/cloudflare/cloudflared)(별도 설치 필요)를 이용한 Cloudflare Quick Tunnel을 자동으로 실행하여 외부에서 접속 가능한 URL을 발급합니다. 발급된 URL은 세션 화면의 초대란에도 자동으로 표시됩니다.
+
+고정 도메인으로 지속적으로 공개하려면 Named Tunnel(Cloudflare 계정 필요)을 권장합니다. 자세한 내용은 `start_def_public.bat`의 주석을 참고하세요.
+
+> ⚠️ 멀티플레이어 세션 URL을 다른 사람과 공유하는 경우, 사용하는 각 외부 API 제공업체의 관리 화면에서
+> Hard Spending Limit(이용 한도액)을 반드시 설정하세요. 앱 자체의 속도 제한(rate limit)만 믿지 않기 위한 안전장치입니다.
 
 -----
 

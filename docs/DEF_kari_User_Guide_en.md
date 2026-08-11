@@ -1,4 +1,4 @@
-# DEF(kari) User Guide v3.0.0
+# DEF(kari) User Guide v4.0.0
 
 ## 1. Starting the Application
 
@@ -16,6 +16,10 @@ npm run dev
 
 Open your browser at `http://localhost:3000`.  
 (The FastAPI API runs at `http://127.0.0.1:8511`)
+
+### Inviting participants online
+
+Use `start_def_public.bat` instead of `start_def.bat` to also start the session-public port and automatically launch a Cloudflare Quick Tunnel via [cloudflared](https://github.com/cloudflare/cloudflared) (must be installed separately), issuing a public URL. The generated URL is also shown automatically in the invite panel on the session screen. For ongoing public exposure with a fixed domain, a Named Tunnel (requires a Cloudflare account) is recommended. See the comments inside `start_def_public.bat` for details.
 
 ---
 
@@ -58,13 +62,31 @@ Open your browser at `http://localhost:3000`.
 
 ## 5. Session Tab
 
-### Starting a Session
+### Starting a Session (local, single device)
 1. Select participating characters (multiple allowed)
 2. Select session rules
 3. Press "▶ Start" to begin
 
+### Online Session (multi-device, v4.0+)
+
+Multiple participants can join the same session from separate devices.
+
+1. Press "🌐 Create Online Session" in the Session tab (if the host will control a character, select it first)
+2. On the lobby screen (host only), configure the session before it starts:
+   - **Session mode** — Normal session / TRPG mode
+   - **Number of participants** (excluding observers)
+   - **Host role** — Keeper (game master) / Join as player / Observer
+   - **Keeper assignment** (if the host isn't the keeper) — AI auto-advance / Wait for a participant
+   - **Player slots** — Assign an AI character to an open slot with "Assign AI" (TRPG mode also lets you pick a character sheet and LLM per slot)
+3. An invite code (rating-prefixed, e.g. `SFW-XXX-NNN`) is issued — copy it and share it with the people you want to invite
+   - To let someone join from outside your network, start with `start_def_public.bat` instead and also share the "Join URL" shown alongside the code (see Section 1 above)
+4. Participants open the URL in a browser, choose "Join with Invite Code", enter the code, and pick observer / player (bringing their own character JSON) / keeper. Imported character JSON must pass a lightweight LLM audit (jailbreak/prompt-injection detection)
+5. When the host presses "Start Session", the lobby closes and everyone's screen switches to the in-progress session at the same time
+
+Speech, votes, and removals during the session are broadcast to all participants in real time over WebSocket.
+
 ### During a Session
-- **Auto-advance checkbox** — AI automatically progresses the conversation
+- **Auto-advance button** (▶▶ Auto / ⏸ Stop) — AI automatically progresses the conversation
 - **Done Speaking** — Complete the AI's turn and advance to the next
 - **Interrupt** — Interrupt with Speech Power -2
 - **Designate Next Speaker** — Designate the next speaker with Speech Power -1
@@ -131,8 +153,8 @@ Judgment results (critical/success/failure/fumble) are automatically inserted in
 ### Sections
 - **Language** — UI display language (Japanese, English, Chinese, Korean, Spanish, French, German)
 - **LLM Backend** — TGW / Ollama / OpenAI / Gemini / Anthropic
-- **TTS Backend** — VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS
-- **T2I Backend** — A1111 / ComfyUI / HuggingFace / Civitai
+- **TTS Backend** — VOICEVOX / Kokoro / Irodori / Gemini TTS / OpenAI TTS / Grok TTS
+- **T2I Backend** — A1111 / ComfyUI / HuggingFace / Civitai / OpenAI DALL-E
 - **Backend** — Backend status polling interval (`status_poll_sec`, default 5s)
 - **C2 Method** — Image prompt translation provider
 - **Chat Settings** — Greeting ON/OFF, undo history count
@@ -178,6 +200,7 @@ data/
 │   ├── trpg_scenarios/  # TRPG scenarios (private)
 │   └── thoughts/
 ├── sessions/            # Session history
+├── visitors/            # Persisted guest characters imported into online sessions
 ├── session_prompts.json # Session LLM instruction templates
 └── llm_profiles/        # LLM model profiles
 ```

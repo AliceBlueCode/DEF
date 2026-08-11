@@ -109,6 +109,9 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 ### TRPG Mode — Session in Progress
 ![TRPG Session](docs/images/trpg_session.png)
 
+### Online Session — Lobby
+![Online Lobby](docs/images/online_lobby.png)
+
 -----
 
 ## Key Features
@@ -119,7 +122,7 @@ Once your local setup is ready, you can switch to fully offline, high-speed oper
 - **4 Modes:** Chat (1-on-1 dialogue), Session (multiple AIs + humans at the same table), TRPG (rulebook, dice, GM Agent), Novel (novel writing + AI candidate generation)
 - **Character Persistence:** Dialogue history, emotions, and generated assets are persisted — resume from where you left off after restart
 - **Thought Visualization:** View and record the LLM's reasoning process for each response in the "Thought" tab
-- **Adapter Pattern:** Freely swap between 5 LLM, 5 TTS, and 5 T2I backends
+- **Adapter Pattern:** Freely swap between 5 LLM, 6 TTS, and 5 T2I backends
 - **OpenAI-Compatible API Support:** Connect any OpenAI-compatible service for LLM, TTS, and T2I. Works with LM Studio, vLLM, llama.cpp server, Groq, OpenRouter, and more
 - **Zoning:** Clear separation of public and private data. Generated assets are excluded from Git
 
@@ -160,6 +163,15 @@ Open `http://localhost:3000` in your browser.
 Select LLM, TTS, and T2I backends from the Settings tab.
 API keys are stored encrypted via "API Key Management" in the Settings tab.
 To use local backends (TGW, VOICEVOX, A1111, etc.), set directory paths in `.env`.
+
+### Inviting participants online
+
+To let other people join your session, use `start_def_public.bat` instead of `start_def.bat`. It launches the backend on two ports (local + session-public), and automatically starts a Cloudflare Quick Tunnel via [cloudflared](https://github.com/cloudflare/cloudflared) (must be installed separately), issuing an externally accessible URL. The issued URL is also shown automatically in the invite panel on the session screen.
+
+For ongoing publication on a fixed domain, a Named Tunnel (requires a Cloudflare account) is recommended. See the comments inside `start_def_public.bat` for details.
+
+> ⚠️ If you share a multiplayer session URL with others, make sure to set a Hard Spending Limit in the
+> management console of each external API provider you use. This is a safety net so you aren't relying solely on the app's own rate limiting.
 
 -----
 

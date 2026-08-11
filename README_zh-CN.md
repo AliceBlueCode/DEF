@@ -109,6 +109,9 @@ DEF 是本地优先（Local-First）的平台，但即使你还没有准备好�
 ### TRPG 模式 — 场次进行中
 ![TRPG Session](docs/images/trpg_session.png)
 
+### 在线会话 — 大厅
+![Online Lobby](docs/images/online_lobby.png)
+
 -----
 
 ## 主要特色
@@ -119,7 +122,7 @@ DEF 是本地优先（Local-First）的平台，但即使你还没有准备好�
 - **四种模式：** 聊天（一对一对话）・场次（多 AI ＋人类共同参与）・TRPG（规则书・骰子・GM Agent）・小说（创作撰写＋AI 候选生成）
 - **角色永续性：** 对话记录、情感、生成资产皆会持久化保存，重启后仍可"接续"进行
 - **思考可视化：** 可在"思考"页签中查看・记录每次回应的 LLM 思考过程
-- **适配器模式（Adapter Pattern）：** 可自由切换 5 种 LLM・5 种 TTS・5 种 T2I 后端
+- **适配器模式（Adapter Pattern）：** 可自由切换 5 种 LLM・6 种 TTS・5 种 T2I 后端
 - **OpenAI 兼容 API 支持：** LLM・TTS・T2I 均可连接任何提供 OpenAI 兼容 API 的服务。支持 LM Studio・vLLM・llama.cpp server・Groq・OpenRouter 等
 - **数据分区（Zoning）：** 公开数据与私人数据明确分离。生成的资产不会被 Git 追踪
 
@@ -160,6 +163,15 @@ cd frontend && npm run dev
 可在设置页签中分别选择 LLM・TTS・T2I 的后端。
 API 密钥可通过设置页签的「🔑 API 密钥管理」进行加密保存。
 若使用本地环境（TGW・VOICEVOX・A1111 等），请在 `.env` 中设置目录路径。
+
+### 邀请他人在线加入
+
+若想让其他人加入你的会话，请使用 `start_def_public.bat` 而非 `start_def.bat`。它会以本地用・会话公开用两个端口启动后端，并通过 [cloudflared](https://github.com/cloudflare/cloudflared)（需另行安装）自动启动 Cloudflare Quick Tunnel，生成可从外部访问的 URL。生成的 URL 也会自动显示在会话画面的邀请栏中。
+
+如需以固定域名持续公开，推荐使用 Named Tunnel（需要 Cloudflare 账号）。详情请参阅 `start_def_public.bat` 中的注释。
+
+> ⚠️ 若将多人会话的 URL 分享给他人，请务必在你所使用的各外部 API 提供商的管理后台
+> 设置 Hard Spending Limit（消费上限）。这是为了不完全依赖应用自身的速率限制而设置的安全保障。
 
 -----
 

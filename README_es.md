@@ -109,6 +109,9 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 ### Modo TRPG — Sesión en curso
 ![TRPG Session](docs/images/trpg_session.png)
 
+### Sesión en línea — Sala de espera
+![Online Lobby](docs/images/online_lobby.png)
+
 -----
 
 ## Características principales
@@ -119,7 +122,7 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 - **4 modos:** Chat (diálogo 1 a 1), Sesión (múltiples IAs + humanos en la misma mesa), TRPG (libro de reglas, dados, GM Agent), Novela (escritura de novelas + generación de candidatos por IA)
 - **Persistencia de personajes:** El historial de diálogo, emociones y assets generados se persisten — retoma donde lo dejaste tras reiniciar
 - **Visualización del pensamiento:** Ve y registra el proceso de razonamiento del LLM para cada respuesta en la pestaña "Pensamiento"
-- **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 5 de TTS y 5 de T2I
+- **Patrón Adaptador:** Cambia libremente entre 5 backends de LLM, 6 de TTS y 5 de T2I
 - **Soporte para API compatible con OpenAI:** Conecta cualquier servicio que ofrezca una API compatible con OpenAI para LLM, TTS y T2I. Compatible con LM Studio, vLLM, llama.cpp server, Groq, OpenRouter y más
 - **Zonificación:** Separación clara entre datos públicos y privados. Los assets generados quedan excluidos de Git
 
@@ -160,6 +163,15 @@ Abre `http://localhost:3000` en tu navegador.
 Selecciona los backends de LLM, TTS y T2I desde la pestaña de Configuración.
 Las claves de API se almacenan cifradas mediante "Gestión de claves API" en la pestaña de Configuración.
 Para usar backends locales (TGW, VOICEVOX, A1111, etc.), configura las rutas de directorio en `.env`.
+
+### Invitar participantes en línea
+
+Para que otras personas puedan unirse a tu sesión, usa `start_def_public.bat` en lugar de `start_def.bat`. Esto inicia el backend en dos puertos (local + público para sesión) y lanza automáticamente un Cloudflare Quick Tunnel mediante [cloudflared](https://github.com/cloudflare/cloudflared) (debe instalarse por separado), generando una URL accesible desde fuera. La URL generada también se muestra automáticamente en el panel de invitación de la pantalla de sesión.
+
+Para una publicación continua con un dominio fijo, se recomienda un Named Tunnel (requiere una cuenta de Cloudflare). Consulta los comentarios dentro de `start_def_public.bat` para más detalles.
+
+> ⚠️ Si compartes la URL de una sesión multijugador con otras personas, asegúrate de establecer un
+> Hard Spending Limit (límite de gasto) en el panel de administración de cada proveedor de API externo que uses. Es una red de seguridad para no depender solo del límite de tasa de la propia aplicación.
 
 -----
 

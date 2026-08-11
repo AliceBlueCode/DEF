@@ -1,4 +1,4 @@
-﻿# DEF Glossary v3.0.0
+﻿# DEF Glossary v4.0.0
 
 ## Overview
 
@@ -347,7 +347,50 @@ Judgment results are automatically inserted into the session history.
 
 ---
 
-# 8. Design Philosophy
+# 8. Multiplayer Terminology
+
+Definitions of terms unique to multiple participants joining the same session online.
+
+---
+
+## Invite Code
+
+The code required to join an online session, issued in the form `{rating}-{3 letters}-{3 digits}` (e.g. `SFW-ABC-123`). A different code can be issued per rating (SFW/R15/R18/UNL); a participant cannot join with a character that exceeds what the code's rating allows.
+
+---
+
+## Lobby
+
+The waiting screen shown after creating an online session, before it starts. Here the host configures the session mode, number of participants, keeper assignment, AI assignment to open slots, and more. Participants join during the lobby using the invite code, and when the host starts the session, everyone's screen switches to the in-progress session at the same time.
+
+---
+
+## Participant Role
+
+The four roles that can be assigned to participants in an online session.
+
+| Role | Description |
+|---|---|
+| Host | The session creator. Holds lobby configuration and progression control privileges |
+| Player | A participant who controls a character via an imported character |
+| Keeper (gm) | An invited keeper. Manages progression and adjudication in TRPG Mode |
+| Observer | A participant who watches the session. Does not speak, vote, or take other actions |
+
+---
+
+## Guest Character
+
+A participant's own character data, imported into the session. It must pass a lightweight LLM audit (detection of inappropriate instructions) upon joining.
+
+---
+
+## Expel
+
+A mechanism for removing a participant from the session by vote. Unlike a unilateral kick by the host, it always goes through a vote.
+
+---
+
+# 9. Design Philosophy
 
 DEF does not aim to generate a single correct answer from a single AI.
 
@@ -369,7 +412,7 @@ Document:
 DEF_Glossary
 
 Version:
-3.0.0
+4.0.0
 
 Status:
 Release

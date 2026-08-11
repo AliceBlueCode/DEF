@@ -1,6 +1,6 @@
 # DEF(kari) TRPG Table Autonomy Rules
 
-**Version**: 1.0.0-kari
+**Version**: 1.0.1-kari
 
 Rules governing participant speech, actions, and table management in DEF(kari) TRPG sessions.
 
@@ -14,7 +14,7 @@ Rules governing participant speech, actions, and table management in DEF(kari) T
 | **Scene** | A narrative segment |
 | **Round** | One full cycle where every participant speaks once |
 | **Turn** | Each participant's speaking time ("It's my turn!") |
-| **Action** | The minimum unit of speech within a Turn (1–5 Actions per Turn, default 3) |
+| **Action** | The minimum unit of speech within a Turn (1–5 Actions per Turn, default 2) |
 
 ---
 
