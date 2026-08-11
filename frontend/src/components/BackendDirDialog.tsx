@@ -117,7 +117,7 @@ export default function BackendDirDialog({ onClose }: Props) {
                   <input
                     type="text"
                     className="backend-dir-input"
-                    placeholder="例: C:\tools\textgen-webui"
+                    placeholder={t('backendDir.installDirPlaceholder')}
                     value={values[selected.dir_env] ?? ''}
                     onChange={e => setValues(prev => ({ ...prev, [selected.dir_env!]: e.target.value }))}
                   />

@@ -620,7 +620,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     if (event.type === 'AI_ERROR') {
       setLoading(false)
       if (autoAdvanceRef.current) {
-        setAutoStopMsg('生成エラーで自動進行を停止しました')
+        setAutoStopMsg(t('session.msg.autoStopError'))
         setAutoAdvance(false)
         autoAdvanceRef.current = false
       }
@@ -761,7 +761,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // ── WS 受信 AI ターンデータ処理（旧 nextTurn の本体）────────────
   const processAITurnData = async (data: any, sid: string) => {
     if (!data || data.error) {
-      if (autoAdvanceRef.current) setAutoStopMsg('生成エラーで自動進行を停止しました')
+      if (autoAdvanceRef.current) setAutoStopMsg(t('session.msg.autoStopError'))
       setAutoAdvance(false)
       autoAdvanceRef.current = false
       setLoading(false)
@@ -777,9 +777,9 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       const ctrB: number | null = typeof data.counter_before === 'number' ? data.counter_before : null
       const isForced = ctrB !== null && ctrB < 0
       const skipText = isForced
-        ? `⏭ ${data.character_name} は発言力不足のためスキップ [${ctrB}→${(ctrB as number) + 1}]`
+        ? t('session.msg.forcedSkip', { name: data.character_name, prev: String(ctrB), next: String((ctrB as number) + 1) })
         : ctrB !== null
-          ? `⏭ ${data.character_name} はスキップ（発言力 ${ctrB}→${ctrB + 1}）`
+          ? t('session.msg.counterSkip', { name: data.character_name, prev: String(ctrB), next: String(ctrB + 1) })
           : t('session.msg.humanSkip', { name: data.character_name })
       setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: skipText, emotion: '', tags: [] }])
       return
@@ -787,7 +787,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
     if (data.action === 'vote_proposal') {
       if (data.counters) setCounters(capCounters(data.counters))
-      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `🗳 ${data.character_name} が投票を発議 [発言力-3]`, emotion: '', tags: [] }])
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: t('session.msg.voteProposalSystem', { name: data.character_name }), emotion: '', tags: [] }])
       try {
         const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -800,7 +800,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: d.tags || [] }])
           }
         }
-        setMessages(prev => [...prev, { character_id: '_keeper', character_name: 'キーパー', text: `${data.character_name} の投票提案: ${data.vote_detail || data.vote_type || ''}`, emotion: '', tags: [], isKeeperVote: true }])
+        setMessages(prev => [...prev, { character_id: '_keeper', character_name: t('trpg.keeper.label'), text: t('session.msg.voteProposalDetail', { name: data.character_name, detail: data.vote_detail || data.vote_type || '' }), emotion: '', tags: [], isKeeperVote: true }])
         // 投票中の自動停止・復帰はキーパー権限タブのローカル駆動状態のみ操作する
         // （player タブの表示はセッション状態 AUTO_ADVANCE_CHANGED にのみ従う）
         if (myRoleRef.current === 'host' || myRoleRef.current === 'gm') {
@@ -824,11 +824,13 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     }
     if (data.ai_action === 'extend') {
       const ctr = data.counters?.[data.character_id]
-      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `⚡ ${data.character_name} が力強く発言 [発言力-1${typeof ctr === 'number' ? ` → 残${ctr}` : ''}]`, emotion: '', tags: [] }])
+      const remain = typeof ctr === 'number' ? t('session.msg.remainCounter', { ctr }) : ''
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: t('session.msg.aiExtend', { name: data.character_name, remain }), emotion: '', tags: [] }])
     }
     if (data.ai_action === 'designate' && data.designated_name) {
       const ctr = data.counters?.[data.character_id]
-      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: `👉 ${data.character_name} が ${data.designated_name} を指名 [発言力-1${typeof ctr === 'number' ? ` → 残${ctr}` : ''}]`, emotion: '', tags: [] }])
+      const remain = typeof ctr === 'number' ? t('session.msg.remainCounter', { ctr }) : ''
+      setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: t('session.msg.aiDesignate', { name: data.character_name, target: data.designated_name, remain }), emotion: '', tags: [] }])
     }
 
     // 挿絵・TTSはサーバー側でバックグラウンド生成され、TURN_IMAGE_READY / TURN_AUDIO_READY で
@@ -1194,8 +1196,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     if (keeperResult?.scene_advanced) {
       if (typeof keeperResult.new_scene_index === 'number') setCurrentSceneIndex(keeperResult.new_scene_index)
       const sceneLabel = keeperResult.new_scene_title
-        ? `【シーン進行】${keeperResult.new_chapter_title ? `${keeperResult.new_chapter_title} / ` : ''}${keeperResult.new_scene_title}`
-        : '【シーン進行】次のシーンへ'
+        ? t('session.msg.sceneAdvanced', { label: `${keeperResult.new_chapter_title ? `${keeperResult.new_chapter_title} / ` : ''}${keeperResult.new_scene_title}` })
+        : t('session.msg.sceneAdvancedNext')
       setMessages(prev => [...prev, {
         character_id: '_keeper', character_name: '📍 Scene', text: sceneLabel, emotion: '', tags: [],
       }])
@@ -1204,7 +1206,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     if (keeperResult?.propose_end) {
       setMessages(prev => [...prev, {
         character_id: '_keeper', character_name: '⚙ System',
-        text: '🏁 Keeper がセッション終了を提案しています',
+        text: t('session.msg.keeperEndProposal'),
         emotion: '', tags: [],
       }])
       try {
@@ -1220,8 +1222,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           }
         }
         setMessages(prev => [...prev, {
-          character_id: '_keeper', character_name: 'キーパー',
-          text: 'Keeper のセッション終了提案: 全員の意見は？',
+          character_id: '_keeper', character_name: t('trpg.keeper.label'),
+          text: t('session.msg.keeperEndVoteText'),
           emotion: '', tags: [], isKeeperVote: true,
         }])
         wasAutoAdvancingRef.current = autoAdvanceRef.current
@@ -1345,7 +1347,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         setMessages(prev => [...prev, {
           character_id: charId,
           character_name: `💀 ${charName}`,
-          text: `【即死】${d.flavor}`,
+          text: t('session.msg.instantDeathLabel', { flavor: d.flavor }),
           emotion: '', tags: [],
         }])
       } else {
@@ -1362,7 +1364,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         setMessages(prev => [...prev, {
           character_id: charId,
           character_name: `💥 ${charName}`,
-          text: `【ダメージ】${stat}${delta} (出目:${d.roll}) ${d.flavor}`,
+          text: t('session.msg.damageLabel', { stat, delta, roll: d.roll, flavor: d.flavor }),
           emotion: '', tags: [],
         }])
       }
@@ -1380,10 +1382,10 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       if (roll) {
         const jv = roll.judgment?.judgment_value ?? j.stat_value
         let outcome = ''
-        if (roll.judgment?.critical) outcome = 'クリティカル！'
-        else if (roll.judgment?.fumble) outcome = 'ファンブル…'
-        else if (roll.judgment?.success) outcome = '成功'
-        else if (roll.judgment) outcome = '失敗'
+        if (roll.judgment?.critical) outcome = t('trpg.outcome.critical')
+        else if (roll.judgment?.fumble) outcome = t('trpg.outcome.fumble')
+        else if (roll.judgment?.success) outcome = t('trpg.outcome.success')
+        else if (roll.judgment) outcome = t('trpg.outcome.failure')
         setMessages(prev => [...prev, {
           character_id: j.character_id,
           character_name: `🎲 ${j.character_name}`,
@@ -2002,7 +2004,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       }
       setMessages(prev => [...prev, {
         character_id: '_keeper',
-        character_name: 'キーパー',
+        character_name: t('trpg.keeper.label'),
         text: humanCharId
           ? t('session.vote.castHuman', { name: humanCharName })
           : t('session.vote.castKeeper'),
@@ -2030,7 +2032,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         ...prev.filter(m => !m.isKeeperVote),
         {
           character_id: '_keeper',
-          character_name: 'キーパー',
+          character_name: t('trpg.keeper.label'),
           text: data.result_text,
           emotion: '', tags: [],
         },
@@ -2053,8 +2055,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       if (data.error) { console.error('scene/advance:', data.error); return }
       if (typeof data.current_scene_index === 'number') setCurrentSceneIndex(data.current_scene_index)
       const sceneLabel = data.scene_title
-        ? `【シーン進行】${data.chapter_title ? `${data.chapter_title} / ` : ''}${data.scene_title}`
-        : '【シーン進行】次のシーンへ'
+        ? t('session.msg.sceneAdvanced', { label: `${data.chapter_title ? `${data.chapter_title} / ` : ''}${data.scene_title}` })
+        : t('session.msg.sceneAdvancedNext')
       setMessages(prev => [...prev, {
         character_id: '_keeper', character_name: '📍 Scene', text: sceneLabel, emotion: '', tags: [],
       }])
@@ -2126,7 +2128,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
                 {/* セッションモード */}
                 <div>
-                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>セッションモード</div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('session.lobby.modeLabel')}</div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {([false, true] as const).map(isTrpg => (
                       <button
@@ -2148,7 +2150,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                         }}
                         style={{ padding: '6px 18px', borderRadius: 8, border: `1px solid ${lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'transparent', color: lobbyTrpgMode === isTrpg ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: lobbyTrpgMode === isTrpg ? 600 : 400 }}
                       >
-                        {isTrpg ? 'TRPGモード' : '通常セッション'}
+                        {isTrpg ? t('session.lobby.modeTrpg') : t('session.lobby.modeNormal')}
                       </button>
                     ))}
                   </div>
@@ -2224,7 +2226,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
                 {/* プレイヤー人数 */}
                 <div>
-                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>参加人数（観戦者除く）</div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('session.lobby.maxPlayersLabel')}</div>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
                       <button
@@ -2240,7 +2242,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
                 {/* ホストの役割 */}
                 <div>
-                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>ホストの役割</div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('session.lobby.hostRoleLabel')}</div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {(['keeper', 'player', 'observer'] as const).map(role => (
                       <button
@@ -2254,19 +2256,19 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                         }}
                         style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${hostRole === role ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: hostRole === role ? '#4a6cf7' : 'transparent', color: hostRole === role ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: hostRole === role ? 600 : 400 }}
                       >
-                        {role === 'keeper' ? (lobbyTrpgMode ? 'キーパー（専任）' : '進行管理') : role === 'player' ? 'プレイヤー参加' : '観戦者'}
+                        {role === 'keeper' ? (lobbyTrpgMode ? t('session.lobby.hostRoleKeeperExclusive') : t('session.lobby.progressManagerLabel')) : role === 'player' ? t('session.lobby.hostRolePlayer') : t('session.observer.label')}
                       </button>
                     ))}
                   </div>
                   {hostRole === 'player' && (
                     <div style={{ marginTop: 10 }}>
-                      <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 6 }}>使用キャラクター</div>
+                      <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 6 }}>{t('session.lobby.charSelectHostLabel')}</div>
                       <select
                         value={hostCharForLobby}
                         onChange={e => setHostCharForLobby(e.target.value)}
                         style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
                       >
-                        <option value="">キャラクターを選択...</option>
+                        <option value="">{t('session.setup.charSelect.placeholder')}</option>
                         {characters.filter(c => c.player_type === 'human' || !c.player_type).map(c => (
                           <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
@@ -2279,7 +2281,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                 {hostRole !== 'keeper' && (
                   <div>
                     <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
-                      {lobbyTrpgMode ? 'キーパー担当' : '進行管理担当'}
+                      {lobbyTrpgMode ? t('session.lobby.keeperInChargeLabel') : t('session.lobby.progressManagerInChargeLabel')}
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       {(['ai', 'participant'] as const).map(src => (
@@ -2295,7 +2297,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                           }}
                           style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${keeperSource === src ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: keeperSource === src ? '#4a6cf7' : 'transparent', color: keeperSource === src ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: keeperSource === src ? 600 : 400 }}
                         >
-                          {src === 'ai' ? '🤖 AI自動進行' : '👤 参加者を待つ'}
+                          {src === 'ai' ? t('session.lobby.aiAutoAdvanceOption') : t('session.lobby.waitForParticipantOption')}
                         </button>
                       ))}
                     </div>
@@ -2304,7 +2306,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
                 {/* 招待コード表示 */}
                 <div>
-                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>招待コードを参加者に共有してください</div>
+                  <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('session.lobby.shareInviteCodeLabel')}</div>
                   <InvitePanel defaultCode={inviteCode} sessionId={sessionId} hostToken={hostTokenRef.current} onCodeChanged={setInviteCode} />
                 </div>
 
@@ -2326,7 +2328,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
               const assignableChars = characters.filter(c =>
                 c.player_type !== 'human' && !initiative.includes(c.id) && c.id !== lobbyKeeperCharId
               )
-              const keeperLabel = lobbyTrpgMode ? 'キーパー' : '進行管理'
+              const keeperLabel = lobbyTrpgMode ? t('trpg.keeper.label') : t('session.lobby.progressManagerLabel')
               return (
                 <div style={{ marginBottom: 20 }}>
 
@@ -2337,18 +2339,18 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent-color, #4a6cf7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🎩</div>
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{keeperLabel}</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>ホスト</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>{t('session.lobby.hostBadge')}</span>
                       </div>
                     ) : gmParticipant ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.2))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{gmParticipant.display_name}</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>参加者</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>{t('session.lobby.participantBadge')}</span>
                       </div>
                     ) : keeperSource === 'participant' ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.4))' }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🧙</div>
-                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.5 }}>参加者を待っています…</span>
+                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.5 }}>{t('session.lobby.waitingForParticipant')}</span>
                       </div>
                     ) : lobbyKeeperCharId ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
@@ -2363,17 +2365,17 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                         <button
                           onClick={() => void lobbySetKeeperChar('')}
                           style={{ fontSize: '0.75em', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border-color, #888)', background: 'transparent', color: 'var(--danger-color, #d32)', cursor: 'pointer' }}
-                        >解除</button>
+                        >{t('session.lobby.releaseBtn')}</button>
                       </div>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.05))', border: '1px solid var(--border-color, rgba(128,128,128,0.2))' }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(100,180,100,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>🤖</div>
-                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.7 }}>AI（自動進行）</span>
+                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.7 }}>{t('session.lobby.aiAutoLabel')}</span>
                         {lobbyTrpgMode && assignableChars.length > 0 && (
                           <button
                             onClick={() => openAssignDialog('keeper')}
                             style={{ fontSize: '0.75em', padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-color, #4a6cf7)', color: 'var(--accent-color, #4a6cf7)', background: 'transparent', cursor: 'pointer' }}
-                          >AI割付け</button>
+                          >{t('session.lobby.aiAssignBtn')}</button>
                         )}
                       </div>
                     )}
@@ -2381,7 +2383,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
                   {/* 参加スロット */}
                   <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
-                    参加スロット ({aiSlots.length + playerSlots.length + hostSlotCount} / {lobbyMaxPlayers})
+                    {t('session.lobby.slotCountLabel', { current: aiSlots.length + playerSlots.length + hostSlotCount, max: lobbyMaxPlayers })}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {/* AI割付け済みスロット */}
@@ -2403,21 +2405,21 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                         <button
                           onClick={() => void lobbyRemoveAi(cid)}
                           style={{ fontSize: '0.75em', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border-color, #888)', background: 'transparent', color: 'var(--danger-color, #d32)', cursor: 'pointer' }}
-                        >解除</button>
+                        >{t('session.lobby.releaseBtn')}</button>
                       </div>
                     ))}
                     {/* ホストスロット（プレイヤー参加時） */}
                     {hostRole === 'observer' ? (
                       <div key="host-observer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.3))', opacity: 0.7 }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em', flexShrink: 0 }}>👁</div>
-                        <span style={{ flex: 1, fontSize: '0.88em' }}>観戦者</span>
-                        <span style={{ fontSize: '0.75em', opacity: 0.6 }}>ホスト（スロット外）</span>
+                        <span style={{ flex: 1, fontSize: '0.88em' }}>{t('session.observer.label')}</span>
+                        <span style={{ fontSize: '0.75em', opacity: 0.6 }}>{t('session.lobby.hostOutOfSlot')}</span>
                       </div>
                     ) : hostChar ? (
                       <div key="host-char" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
                         <img src={iconUrl(hostChar.id)} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{hostChar.name}</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🏠 ホスト</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>{t('session.lobby.hostBadgeWithIcon')}</span>
                       </div>
                     ) : null}
                     {/* 参加済みプレイヤースロット */}
@@ -2425,19 +2427,19 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                       <div key={p.participant_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'var(--input-bg, rgba(128,128,128,0.08))' }}>
                         <img src={iconUrl(p.char_id)} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         <span style={{ flex: 1, fontSize: '0.95em', fontWeight: 600 }}>{p.display_name}</span>
-                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>🎭 参加済み</span>
+                        <span style={{ fontSize: '0.82em', color: 'var(--accent-color, #4a6cf7)' }}>{t('session.lobby.joinedBadge')}</span>
                       </div>
                     ))}
                     {/* 空きスロット */}
                     {Array.from({ length: emptyCount }).map((_, i) => (
                       <div key={`empty-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: '1px dashed var(--border-color, rgba(128,128,128,0.3))' }}>
                         <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--border-color, rgba(128,128,128,0.15))', flexShrink: 0 }} />
-                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.45 }}>待機中…</span>
+                        <span style={{ flex: 1, fontSize: '0.88em', opacity: 0.45 }}>{t('session.lobby.waitingSlot')}</span>
                         {assignableChars.length > 0 && (
                           <button
                             onClick={() => openAssignDialog('slot')}
                             style={{ fontSize: '0.75em', padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-color, #4a6cf7)', color: 'var(--accent-color, #4a6cf7)', background: 'transparent', cursor: 'pointer' }}
-                          >AI割付け</button>
+                          >{t('session.lobby.aiAssignBtn')}</button>
                         )}
                       </div>
                     ))}
@@ -2450,14 +2452,14 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                       <div style={{ background: 'var(--bg-color, #fff)', border: '1px solid var(--border-color, #ddd)', borderRadius: 12, padding: '24px 28px', minWidth: 300, maxWidth: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}
                         onClick={e => e.stopPropagation()}>
                         <div style={{ fontWeight: 700, marginBottom: 4, fontSize: '1em' }}>
-                          {assignDialogTarget === 'keeper' ? `${keeperLabel}役のAIキャラクターを割付ける` : 'AIキャラクターを割付ける'}
+                          {assignDialogTarget === 'keeper' ? t('session.lobby.assignDialogTitleKeeper', { label: keeperLabel }) : t('session.lobby.assignDialogTitleSlot')}
                         </div>
                         <div style={{ fontSize: '0.75em', opacity: 0.5, marginBottom: 14 }}>
                           {(() => {
                             const total = lobbyTrpgMode && assignDialogTarget === 'slot' ? 3 : 2
-                            if (assignStep === 'char') return `ステップ 1/${total} : キャラクターを選択`
-                            if (assignStep === 'sheet') return `ステップ 2/${total} : プレイするゲームキャラ`
-                            return `ステップ ${total}/${total} : 使用するLLM`
+                            if (assignStep === 'char') return t('session.lobby.assignStepChar', { total })
+                            if (assignStep === 'sheet') return t('session.lobby.assignStepSheet', { total })
+                            return t('session.lobby.assignStepBackend', { total })
                           })()}
                         </div>
 
@@ -2471,7 +2473,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                               </button>
                             ))}
                             {assignableChars.length === 0 && (
-                              <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>割付け可能な AI キャラクターがいません</div>
+                              <div style={{ opacity: 0.5, fontSize: '0.88em', textAlign: 'center', padding: 12 }}>{t('session.lobby.noAssignableChars')}</div>
                             )}
                           </div>
                         )}
@@ -2487,16 +2489,16 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                               value={assignSheetId}
                               onChange={e => setAssignSheetId(e.target.value)}
                             >
-                              <option value="">シートなし</option>
+                              <option value="">{t('session.lobby.noSheetOption')}</option>
                               {assignSheetOptions.map(sid => (
                                 <option key={sid} value={sid}>{sid}</option>
                               ))}
                             </select>
                             <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
                               <button onClick={() => setAssignStep('char')}
-                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>戻る</button>
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{t('session.lobby.backBtn')}</button>
                               <button onClick={() => setAssignStep('backend')}
-                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--accent-color, #4a6cf7)', background: 'var(--accent-color, #4a6cf7)', color: '#fff', cursor: 'pointer' }}>次へ</button>
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--accent-color, #4a6cf7)', background: 'var(--accent-color, #4a6cf7)', color: '#fff', cursor: 'pointer' }}>{t('session.lobby.nextBtn')}</button>
                             </div>
                           </div>
                         )}
@@ -2512,23 +2514,23 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                               value={assignBackendId}
                               onChange={e => setAssignBackendId(e.target.value)}
                             >
-                              <option value="">設定タブのデフォルトに従う</option>
+                              <option value="">{t('session.lobby.backendDefaultOption')}</option>
                               {llmBackendOptions.map(b => (
                                 <option key={b.id} value={b.id}>{b.label}</option>
                               ))}
                             </select>
                             <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
                               <button onClick={() => setAssignStep(lobbyTrpgMode && assignDialogTarget === 'slot' ? 'sheet' : 'char')}
-                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>戻る</button>
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{t('session.lobby.backBtn')}</button>
                               <button onClick={confirmAssignDialog}
-                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--accent-color, #4a6cf7)', background: 'var(--accent-color, #4a6cf7)', color: '#fff', cursor: 'pointer' }}>割付ける</button>
+                                style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--accent-color, #4a6cf7)', background: 'var(--accent-color, #4a6cf7)', color: '#fff', cursor: 'pointer' }}>{t('session.lobby.assignBtn')}</button>
                             </div>
                           </div>
                         )}
 
                         <div style={{ marginTop: 16, textAlign: 'right' }}>
                           <button onClick={() => setAssignDialogTarget(null)}
-                            style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>キャンセル</button>
+                            style={{ padding: '6px 18px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{t('common.cancel')}</button>
                         </div>
                       </div>
                     </div>
@@ -2540,7 +2542,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             {/* 観戦者カウント（スロット表示に含まれないため別出し） */}
             {observerCount > 0 && (
               <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>
-                観戦者 {observerCount}人
+                {t('session.lobby.observerCountLabel', { n: observerCount })}
               </div>
             )}
 
@@ -2958,8 +2960,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     return (
       <div className="tab-content session-tab" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, minHeight: 300 }}>
         <div style={{ fontSize: '2em' }}>⏳</div>
-        <div style={{ fontWeight: 700, fontSize: '1.1em' }}>ホストがセッションを開始するまでお待ちください</div>
-        <div style={{ opacity: 0.6, fontSize: '0.9em' }}>開始されると自動的に画面が切り替わります</div>
+        <div style={{ fontWeight: 700, fontSize: '1.1em' }}>{t('session.lobby.waitingForHostTitle')}</div>
+        <div style={{ opacity: 0.6, fontSize: '0.9em' }}>{t('session.lobby.waitingForHostDesc')}</div>
       </div>
     )
   }
@@ -3010,7 +3012,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             <button
               className="novel-hdr-btn"
               onClick={() => setShowSheetPanel(v => !v)}
-              title="キャラクターシート"
+              title={t('session.header.charSheetTitle')}
               style={{ opacity: showSheetPanel ? 1 : 0.55 }}
             >📋</button>
           )}
@@ -3030,12 +3032,12 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           )}
           {myRole !== 'host' && (
             <span style={{ fontSize: '0.78em', padding: '3px 10px', borderRadius: 4, border: '1px solid var(--border-color, rgba(128,128,128,0.3))', opacity: 0.75, whiteSpace: 'nowrap' }}>
-              {myRole === 'gm' ? '🎩 キーパー' : myRole === 'player' ? '🎭 プレイヤー' : '👁 観戦者'}
+              {myRole === 'gm' ? t('trpg.role.keeper') : myRole === 'player' ? t('session.roleBadge.player') : t('session.roleBadge.observer')}
             </span>
           )}
           {myRole === 'host'
             ? <button className="end-btn" onClick={() => endSession()}>{t('session.header.endBtn')}</button>
-            : <button className="end-btn" style={{ background: '#888' }} onClick={() => endSession(true)}>退出</button>
+            : <button className="end-btn" style={{ background: '#888' }} onClick={() => endSession(true)}>{t('session.header.leaveBtn')}</button>
           }
         </div>
       </div>
@@ -3220,9 +3222,9 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ opacity: 0.5 }}>
-                      <th style={{ textAlign: 'left', padding: '1px 3px', fontWeight: 'normal' }}>能力</th>
-                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>現在値</th>
-                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>最大値</th>
+                      <th style={{ textAlign: 'left', padding: '1px 3px', fontWeight: 'normal' }}>{t('session.stats.ability')}</th>
+                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>{t('session.stats.current')}</th>
+                      <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'normal' }}>{t('session.stats.max')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3235,7 +3237,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                     ))}
                   </tbody>
                 </table>
-                {isDead && <div style={{ marginTop: 4, fontSize: '0.85em', opacity: 0.7 }}>死亡 — 死者視点で継続</div>}
+                {isDead && <div style={{ marginTop: 4, fontSize: '0.85em', opacity: 0.7 }}>{t('session.stats.deadStatus')}</div>}
               </div>
             )
           })}
@@ -3257,7 +3259,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                   {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
                 </button>
               ) : autoAdvance ? (
-                <span className="auto-advance-btn active" style={{ cursor: 'default', opacity: 0.7 }} title="キーパーが自動進行中">▶▶ 自動進行中</span>
+                <span className="auto-advance-btn active" style={{ cursor: 'default', opacity: 0.7 }} title={t('session.autoAdvance.keeperActiveTitle')}>{t('session.autoAdvance.keeperActiveLabel')}</span>
               ) : null}
               {autoStopMsg && !autoAdvance && (
                 <span style={{ fontSize: 11, color: 'var(--error-color, #e74c3c)', opacity: 0.85 }}>⚠ {autoStopMsg}</span>
@@ -3344,7 +3346,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
               {autoAdvance ? t('session.ctrl.autoBtn.stop') : t('session.ctrl.autoBtn.auto')}
             </button>
           ) : autoAdvance ? (
-            <span className="auto-advance-btn active" style={{ cursor: 'default', opacity: 0.7 }} title="キーパーが自動進行中">▶▶ 自動進行中</span>
+            <span className="auto-advance-btn active" style={{ cursor: 'default', opacity: 0.7 }} title={t('session.autoAdvance.keeperActiveTitle')}>{t('session.autoAdvance.keeperActiveLabel')}</span>
           ) : null}
           {autoStopMsg && !autoAdvance && (
             <span style={{ fontSize: 11, color: 'var(--error-color, #e74c3c)', opacity: 0.85 }}>⚠ {autoStopMsg}</span>
@@ -3555,7 +3557,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontWeight: 600, minWidth: 72, flexShrink: 0 }}>{t('trpg.diceDialog.stat')}</span>
                     <select className="session-select" style={{ flex: 1 }} value={diceDialogStatKey} onChange={e => setDiceDialogStatKey(e.target.value)}>
-                      <option value="">選択…</option>
+                      <option value="">{t('common.selectPlaceholder')}</option>
                       {allStatKeys.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     <button className="keeper-send-btn" disabled={noChars || !diceDialogStatKey} onClick={() => rollDiceDialog('stat', diceDialogStatKey)}>{t('trpg.diceDialog.rollBtn')}</button>
@@ -3565,7 +3567,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontWeight: 600, minWidth: 72, flexShrink: 0 }}>{t('trpg.diceDialog.skill')}</span>
                     <select className="session-select" style={{ flex: 1 }} value={diceDialogSkillKey} onChange={e => setDiceDialogSkillKey(e.target.value)}>
-                      <option value="">選択…</option>
+                      <option value="">{t('common.selectPlaceholder')}</option>
                       {allSkillKeys.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     <button className="keeper-send-btn" disabled={noChars || !diceDialogSkillKey} onClick={() => rollDiceDialog('skill', diceDialogSkillKey)}>{t('trpg.diceDialog.rollBtn')}</button>

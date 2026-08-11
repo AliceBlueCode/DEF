@@ -423,17 +423,17 @@ export default function CharacterTab({ characters, selectedChar, onCharChange, o
             )}
             {showOpenAI && (
               <div className="voice-settings-block">
-                <label className="voice-label">OpenAI TTS 声</label>
+                <label className="voice-label">{t('char.voice.openaiVoice.label')}</label>
                 <select
                   value={selectedOpenAIVoice}
                   onChange={e => setSelectedOpenAIVoice(e.target.value)}
                 >
-                  <option value="alloy">alloy（中性的）</option>
-                  <option value="nova">nova（女性・明るい）</option>
-                  <option value="shimmer">shimmer（女性・柔らか）</option>
-                  <option value="fable">fable（女性・温か）</option>
-                  <option value="echo">echo（男性・低め）</option>
-                  <option value="onyx">onyx（男性・深い）</option>
+                  <option value="alloy">{t('char.voice.openai.alloy')}</option>
+                  <option value="nova">{t('char.voice.openai.nova')}</option>
+                  <option value="shimmer">{t('char.voice.openai.shimmer')}</option>
+                  <option value="fable">{t('char.voice.openai.fable')}</option>
+                  <option value="echo">{t('char.voice.openai.echo')}</option>
+                  <option value="onyx">{t('char.voice.openai.onyx')}</option>
                 </select>
                 <div className="voice-btn-row">
                   <button

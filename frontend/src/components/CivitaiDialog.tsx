@@ -86,7 +86,7 @@ export default function CivitaiDialog({ currentModel, onSelect, onClose }: Props
             <input
               type="text"
               className="backend-dir-input"
-              placeholder="例: Illustrious XL v1.0"
+              placeholder={t('civitai.displayNamePlaceholder')}
               value={label}
               onChange={e => setLabel(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && add()}

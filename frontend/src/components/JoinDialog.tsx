@@ -82,7 +82,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
         setCharJsonName(extractedName)
         setError('')
       } catch {
-        setError('JSONの解析に失敗しました')
+        setError(t('session.join.errorBadJson'))
         setCharJson(null)
         setCharJsonName('')
       }
@@ -106,7 +106,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
     } else {
       // 新データで keeper 埋まり判定
       if (selectedSlot === '__gm__' && fresh.gm_taken) {
-        setError('キーパー枠は現在埋まっています')
+        setError(t('session.join.errorGmTaken'))
         return
       }
       if (hadSlotsLoaded) {
@@ -131,7 +131,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
           // 初回ロードでは選択肢をまだ提示できていないため、参加枠一覧を表示して
           // 選んでもらう（観戦者以外を選べる可能性があるのに無言で観戦者として
           // 参加させてしまわないよう、ここでは一旦止める）。
-          setError('参加枠を選んでから、もう一度「参加」を押してください')
+          setError(t('session.join.hintReselect'))
           return
         }
         // 選択肢が観戦者しか無いセッションでは、そのまま観戦者として参加を続行する。
@@ -140,7 +140,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
 
     // オンラインモードでプレイヤーとして参加する場合はJSONが必要
     if ((fresh?.online_mode ?? onlineMode) && selectedSlot === '__player__' && !charJson) {
-      setError('キャラクターJSONを選択してください')
+      setError(t('session.join.errorNoCharJson'))
       return
     }
 
@@ -212,14 +212,14 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
                   {waitingForGm && (
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: gmTaken ? 'not-allowed' : 'pointer', opacity: gmTaken ? 0.4 : 1, padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__gm__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
                       <input type="radio" name="slot" value="__gm__" disabled={gmTaken} checked={selectedSlot === '__gm__'} onChange={() => !gmTaken && setSelectedSlot('__gm__')} />
-                      <span style={{ fontSize: '0.9em' }}>🧙 キーパーとして参加</span>
-                      {gmTaken && <span style={{ fontSize: '0.75em', opacity: 0.6 }}>埋まっています</span>}
+                      <span style={{ fontSize: '0.9em' }}>{t('session.join.gmSlot')}</span>
+                      {gmTaken && <span style={{ fontSize: '0.75em', opacity: 0.6 }}>{t('session.join.gmTakenBadge')}</span>}
                     </label>
                   )}
                   {/* プレイヤーとして参加（キャラJSON持ち込み） */}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: selectedSlot === '__player__' ? 'var(--input-bg, rgba(128,128,128,0.15))' : 'transparent' }}>
                     <input type="radio" name="slot" value="__player__" checked={selectedSlot === '__player__'} onChange={() => setSelectedSlot('__player__')} />
-                    <span style={{ fontSize: '0.9em' }}>🎭 プレイヤーとして参加</span>
+                    <span style={{ fontSize: '0.9em' }}>{t('session.join.playerSlot')}</span>
                   </label>
                 </>
               ) : (
@@ -245,7 +245,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
 
             {onlineMode && selectedSlot === '__player__' && (
               <div style={{ marginTop: 10 }}>
-                <div style={S.label}>キャラクターJSON</div>
+                <div style={S.label}>{t('session.join.charJsonLabel')}</div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -258,7 +258,7 @@ export default function JoinDialog({ onJoined, onClose }: Props) {
                   onClick={() => fileInputRef.current?.click()}
                   style={{ padding: '7px 16px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '0.9em' }}
                 >
-                  {charJsonName ? `✓ ${charJsonName}` : 'JSONファイルを選択...'}
+                  {charJsonName ? `✓ ${charJsonName}` : t('session.join.selectJsonBtn')}
                 </button>
               </div>
             )}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useT } from '../i18n'
 
 type Backend = {
   name: string
@@ -19,6 +20,7 @@ type Props = {
 const CAPABILITIES = ['llm', 'vlm', 't2i', 'tts']
 
 export default function CompatibleBackendDialog({ editing, onClose, onSaved }: Props) {
+  const t = useT()
   const isNew = editing === null
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -58,14 +60,14 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
       setHeadersError('')
       return parsed
     } catch {
-      setHeadersError('Extra Headers は有効なJSONで入力してください')
+      setHeadersError(t('compatibleBackend.errorHeadersInvalid'))
       return null
     }
   }
 
   const save = async () => {
-    if (!name.trim()) { showMsg('名前は必須です'); return }
-    if (!baseUrl.trim()) { showMsg('Base URL は必須です'); return }
+    if (!name.trim()) { showMsg(t('compatibleBackend.errorNameRequired')); return }
+    if (!baseUrl.trim()) { showMsg(t('compatibleBackend.errorBaseUrlRequired')); return }
     const headers = parseHeaders()
     if (headers === null) return
 
@@ -100,19 +102,19 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
     <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog apikey-dialog">
         <div className="dialog-header">
-          <h3>{isNew ? 'OpenAI互換バックエンドを追加' : 'バックエンドを編集'}</h3>
+          <h3>{isNew ? t('compatibleBackend.heading.add') : t('compatibleBackend.heading.edit')}</h3>
           <button className="dialog-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="model-profile-body">
           <div className="profile-row">
-            <label>名前 *</label>
+            <label>{t('compatibleBackend.nameLabel')}</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
               disabled={!isNew}
-              placeholder="grok, local_llama など"
+              placeholder={t('compatibleBackend.namePlaceholder')}
             />
           </div>
           <div className="profile-row">
@@ -130,7 +132,7 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
               type="text"
               value={model}
               onChange={e => setModel(e.target.value)}
-              placeholder="grok-4.5 など（省略可）"
+              placeholder={t('compatibleBackend.modelPlaceholder')}
             />
           </div>
           <div className="profile-row">
@@ -139,11 +141,11 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
               type="password"
               value={apiKey}
               onChange={e => setApiKey(e.target.value)}
-              placeholder={!isNew && editing?.has_key ? '（設定済み・変更する場合のみ入力）' : ''}
+              placeholder={!isNew && editing?.has_key ? t('compatibleBackend.apiKeyPlaceholder') : ''}
             />
           </div>
 
-          <div className="profile-section-title">用途</div>
+          <div className="profile-section-title">{t('compatibleBackend.capabilitiesTitle')}</div>
           {CAPABILITIES.map(cap => (
             <div key={cap} className="profile-row">
               <label>{cap.toUpperCase()}</label>
@@ -155,7 +157,7 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
             </div>
           ))}
 
-          <div className="profile-section-title">Extra Headers（JSON）</div>
+          <div className="profile-section-title">{t('compatibleBackend.extraHeadersTitle')}</div>
           <textarea
             style={{ width: '100%', minHeight: 80, fontFamily: 'monospace', fontSize: 12 }}
             value={extraHeadersText}
@@ -165,14 +167,14 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
 
           <div className="profile-actions">
             <button onClick={save} disabled={saving}>
-              {saving ? '保存中…' : '保存'}
+              {saving ? t('compatibleBackend.saving') : t('compatibleBackend.save')}
             </button>
             {msg && <span className="apikey-msg">{msg}</span>}
           </div>
         </div>
 
         <div className="dialog-footer">
-          <button onClick={onClose}>閉じる</button>
+          <button onClick={onClose}>{t('dialog.closeBtn')}</button>
         </div>
       </div>
     </div>

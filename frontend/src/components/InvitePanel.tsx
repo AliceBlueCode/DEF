@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useT } from '../i18n'
 
 type Props = {
   defaultCode: string
@@ -17,6 +18,7 @@ const RATING_COLORS: Record<Rating, string> = {
 const JOIN_URL_STORAGE_KEY = 'def_join_url'
 
 export default function InvitePanel({ defaultCode, sessionId, hostToken, onCodeChanged }: Props) {
+  const t = useT()
   const [rating, setRating] = useState<Rating>('SFW')
   const [inviteCode, setInviteCode] = useState(defaultCode)
   const [loading, setLoading] = useState(false)
@@ -99,11 +101,11 @@ export default function InvitePanel({ defaultCode, sessionId, hostToken, onCodeC
           type="text"
           value={joinUrl}
           onChange={e => updateJoinUrl(e.target.value)}
-          placeholder="参加用URL（例: https://xxxx.trycloudflare.com）"
+          placeholder={t('session.invite.urlPlaceholder')}
           style={fieldBoxStyle}
         />
         <button className="invite-copy-btn" onClick={copyJoinUrl} disabled={!joinUrl} style={copyBtnStyle(!!joinUrl)}>
-          {urlCopied ? '✓ コピー済み' : 'URLコピー'}
+          {urlCopied ? `✓ ${t('session.invite.copied')}` : t('session.invite.urlCopy')}
         </button>
       </div>
       <div className="invite-rating-row" style={{ ...rowStyle, gap: 6 }}>
@@ -137,7 +139,7 @@ export default function InvitePanel({ defaultCode, sessionId, hostToken, onCodeC
           {loading ? '...' : inviteCode}
         </span>
         <button className="invite-copy-btn" onClick={copy} disabled={loading || !inviteCode} style={copyBtnStyle(!loading && !!inviteCode)}>
-          {copied ? '✓ コピー済み' : 'コピー'}
+          {copied ? `✓ ${t('session.invite.copied')}` : t('session.invite.copy')}
         </button>
       </div>
     </div>

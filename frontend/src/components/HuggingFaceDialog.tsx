@@ -86,7 +86,7 @@ export default function HuggingFaceDialog({ currentModel, onSelect, onClose }: P
             <input
               type="text"
               className="backend-dir-input"
-              placeholder="例: FLUX.1 schnell"
+              placeholder={t('hf.displayNamePlaceholder')}
               value={label}
               onChange={e => setLabel(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && add()}

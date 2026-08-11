@@ -497,15 +497,15 @@ export default function SettingsTab({
 
       {/* ── OpenAI互換バックエンド ── */}
       <div className="settings-section">
-        <h3>OpenAI互換バックエンド</h3>
+        <h3>{t('settings.section.compatibleBackends')}</h3>
         {compatibleBackends.length > 0 && (
           <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ textAlign: 'left', opacity: 0.6 }}>
-                <th style={{ padding: '2px 6px' }}>名前</th>
+                <th style={{ padding: '2px 6px' }}>{t('settings.compatibleBackends.nameCol')}</th>
                 <th style={{ padding: '2px 6px' }}>Base URL</th>
-                <th style={{ padding: '2px 6px' }}>用途</th>
+                <th style={{ padding: '2px 6px' }}>{t('compatibleBackend.capabilitiesTitle')}</th>
                 <th style={{ padding: '2px 6px' }}>Key</th>
                 <th style={{ padding: '2px 6px' }} />
               </tr>
@@ -518,11 +518,11 @@ export default function SettingsTab({
                   <td style={{ padding: '2px 6px' }}>{b.capabilities.join(', ')}</td>
                   <td style={{ padding: '2px 6px' }}>{b.has_key ? '✓' : '—'}</td>
                   <td style={{ padding: '2px 6px' }}>
-                    <button style={{ marginRight: 4 }} onClick={() => { setEditingBackend(b); setShowCompatibleDialog(true) }}>編集</button>
+                    <button style={{ marginRight: 4 }} onClick={() => { setEditingBackend(b); setShowCompatibleDialog(true) }}>{t('settings.compatibleBackends.editBtn')}</button>
                     <button onClick={async () => {
                       await fetch(`/api/settings/compatible-backends/${b.name}`, { method: 'DELETE' })
                       fetchCompatibleBackends()
-                    }}>削除</button>
+                    }}>{t('dialog.deleteBtn')}</button>
                   </td>
                 </tr>
               ))}
@@ -531,7 +531,7 @@ export default function SettingsTab({
           </div>
         )}
         <button className="api-key-open-btn" onClick={() => { setEditingBackend(null); setShowCompatibleDialog(true) }}>
-          ＋ バックエンドを追加
+          {t('settings.compatibleBackends.addBtn')}
         </button>
       </div>
 
@@ -772,7 +772,7 @@ export default function SettingsTab({
             <input
               type="text"
               className="backend-dir-input"
-              placeholder="例: C:\Program Files (x86)\cloudflared"
+              placeholder={t('settings.cloudflaredDirPlaceholder')}
               value={cloudflaredDir}
               onChange={e => setCloudflaredDir(e.target.value)}
             />
