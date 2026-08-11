@@ -2208,6 +2208,16 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
     char_id = sess["players"].pop(token, "")
     if char_id:
         _cancel_disconnect_skip(session_id, char_id)
+    _keeper_handed_off = False
+    if char_id and char_id == sess.get("keeper_char_id"):
+        # 自治規約62行目: 「キーパーが退場した場合はAIキーパーへ交代してセッションを
+        # 継続する」。expel（4006-4013行目）と同じ扱い。空文字列にすると
+        # ai_keeper_narrate()が自動的に無名AIキーパーにフォールバックする。
+        # 従来はexpelのみで処理しており、明示的な退室（このパス）では
+        # keeper_char_idが宙に浮いたまま残っていた。
+        sess["keeper_char_id"] = ""
+        sess["keeper_char_name"] = ""
+        _keeper_handed_off = True
     participant_id = sess.get("token_to_participant", {}).pop(token, char_id or None)
     if payload.get("role") == "gm" and sess.get("invited_gm_token") == token:
         sess["invited_gm_token"] = None
@@ -2229,6 +2239,23 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
     # はメモリ上のみで空に戻るため、退室済みトークンが認証を再び通ってしまい得た
     # （require_*側の_token_currently_activeで最終的には塞がっているが、
     # データ自体を鮮度高く保つのが根本対応）。
+    if _keeper_handed_off:
+        from def_kari.settings import load_settings as _load_settings
+        _v_lang = _load_settings().get("user_language", "ja") or "ja"
+        _notice = _sp("keeper_handoff_notice", _v_lang)
+        sess["history"].append({
+            "role": "user",
+            "content": _notice,
+            "character_id": "_keeper",
+        })
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "character_id": "_keeper",
+            "character_name": "🎩 Keeper",
+            "text": _notice,
+            "action": "keeper_handoff",
+            "counters": dict(sess.get("counters", {})),
+        })
+
     _autosave(session_id)
 
     _game_event_bus.emit(session_id, "PLAYER_LEFT", {
