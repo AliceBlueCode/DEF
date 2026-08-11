@@ -586,7 +586,10 @@ def build_turn_instruction(
     # 文字数上限はrulesの文章内にも書かれているが、履歴が育つにつれその指示が
     # 文脈の重みに埋もれ、ターンを追うごとに応答が長くなっていく傾向があった。
     # 生成直前の短い指示に毎ターン再掲することで直近の重みを稼ぐ（2026-08-10）。
-    _max_chars = session.get("max_chars", 0) if _is_performative else 0
+    # 当初はperformativeスタイル限定にしていたが、discussion系（default.json等）にも
+    # 「発言は2〜200文字程度に」という同種のrules文が存在し、全く同じ理由で無視され続けて
+    # いた不具合が発覚。max_charsの再掲自体はstyleを問わず有効にする（2026-08-11）。
+    _max_chars = session.get("max_chars", 0)
     # ラウンド数の上限も同様にrules文中に埋もれて無視され、13ラウンドを超えても
     # 同じネタを続け一向に終わらない現象が起きていた。max_charsと同じ理由・同じ
     # 対処で、上限超過時は毎ターンの指示文自体を「畳め」という強制指示に差し替える
@@ -601,13 +604,15 @@ def build_turn_instruction(
             if _is_performative:
                 _suffix = f"（1発言は{_max_chars}字以内厳守）" if _max_chars else ""
                 return f"上記のルールに従い、このお題を起点に始めてください。{_suffix}"
-            return "まず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。"
+            _suffix = f"（発言は{_max_chars}字程度を目安に。長くなりすぎないこと）" if _max_chars else ""
+            return f"まず簡潔に自己紹介し、このお題に対するあなたの考えや立場を述べてください。{_suffix}"
         if _is_trpg:
             return "You are an explorer in this scene. Do not introduce yourself as an AI. React naturally to the situation and act as your character."
         if _is_performative:
             _suffix = f" (strictly {_max_chars} characters or fewer)" if _max_chars else ""
             return f"Following the rules above, begin using this topic as your starting point.{_suffix}"
-        return "Start with a brief self-introduction, then state your position on the topic."
+        _suffix = f" (aim for around {_max_chars} characters; do not let responses grow longer over time)" if _max_chars else ""
+        return f"Start with a brief self-introduction, then state your position on the topic.{_suffix}"
     if action_count == 0:
         others_have_spoken = any(
             h.get("role") == "assistant" and h.get("character_id") != current_char_id
@@ -623,9 +628,10 @@ def build_turn_instruction(
                     return f"このネタはもう{_cur_round_num}ラウンド続いています。ここで畳んでください。次のボケで最大のボケ（大落ち）を決め、ツッコミは「ありがとうございましたー！」〔二人でお辞儀〕で締めること。話を広げず、収束させてください。"
                 _suffix = f"（1発言は{_max_chars}字以内厳守。長くなりすぎないこと）" if _max_chars else ""
                 return f"上記のルールとここまでの流れを踏まえ、続けてください。{_suffix}"
+            _suffix = f"（発言は{_max_chars}字程度を目安に。長くなりすぎないこと）" if _max_chars else ""
             if others_have_spoken:
-                return "上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から簡潔に意見を述べてください。"
-            return "上記の発言記録を踏まえ、あなた自身の立場から簡潔に意見を述べてください。"
+                return f"上記の発言記録を踏まえ、他の参加者の発言に触れながら、あなた自身の立場から簡潔に意見を述べてください。{_suffix}"
+            return f"上記の発言記録を踏まえ、あなた自身の立場から簡潔に意見を述べてください。{_suffix}"
         if _is_trpg:
             if others_have_spoken:
                 return "Based on the situation and what other explorers have done, react naturally as your character. No AI meta-commentary. Keep your response to 3 sentences or fewer."
@@ -635,9 +641,10 @@ def build_turn_instruction(
                 return f"This bit has already run for {_cur_round_num} rounds. Wrap it up now: the next boke should deliver the climax (biggest boke), and the tsukkomi should close with a thank-you and a bow. Converge, do not expand further."
             _suffix = f" (strictly {_max_chars} characters or fewer; do not let responses grow longer over time)" if _max_chars else ""
             return f"Following the rules above and the flow so far, continue.{_suffix}"
+        _suffix = f" (aim for around {_max_chars} characters; do not let responses grow longer over time)" if _max_chars else ""
         if others_have_spoken:
-            return "Based on the discussion above, respond concisely to what other participants have said and express your own position."
-        return "Based on the discussion above, express your own position concisely."
+            return f"Based on the discussion above, respond concisely to what other participants have said and express your own position.{_suffix}"
+        return f"Based on the discussion above, express your own position concisely.{_suffix}"
     _cur_round = session.get("round", 1)
     _cur_turn = session.get("turn", 0)
     turn_actions = [
@@ -652,7 +659,11 @@ def build_turn_instruction(
     if _is_ja:
         text = f"このターンであなたは既に以下の発言をしています:\n{prev_block}\n\n"
         text += f"【アクション{action_count + 1}の指示】{directive}" if directive else "続けて発言してください。"
+        if _max_chars:
+            text += f"（1発言は{_max_chars}字程度を目安に。長くなりすぎないこと）"
     else:
         text = f"You have already said the following this turn:\n{prev_block}\n\n"
         text += f"[Action {action_count + 1} directive] {directive}" if directive else "Please continue."
+        if _max_chars:
+            text += f" (aim for around {_max_chars} characters; do not let responses grow longer over time)"
     return text

@@ -123,3 +123,52 @@ def test_discussion_style_reminds_conciseness_after_others_spoke_en():
     history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
     text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "en")
     assert "concisely" in text
+
+
+def test_discussion_style_reminds_max_chars_first_turn():
+    """8.32対策: max_charsの毎ターン再掲がperformativeスタイル限定になっており、
+    discussion系（default.json等、rules文中に「発言は2〜200文字程度」と書いてあるだけ）
+    では全く同じ理由（履歴の重みに埋もれる）で無視され続けていた（2026-08-11発覚）。"""
+    session = {"style": "discussion", "max_chars": 200}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "200字" in text
+
+
+def test_discussion_style_reminds_max_chars_mid_session():
+    session = {"style": "discussion", "max_chars": 200, "round": 1, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "200字" in text
+
+
+def test_discussion_style_reminds_max_chars_mid_session_others_not_spoken():
+    """他の参加者がまだ発言していない1人目の分岐にも同じ再掲が入ること。"""
+    session = {"style": "discussion", "max_chars": 200, "round": 1, "turn": 0}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [{"role": "user", "content": "hi"}], "a", session, {}, "ja")
+    assert "200字" in text
+
+
+def test_discussion_style_reminds_max_chars_en():
+    session = {"style": "discussion", "max_chars": 200, "round": 1, "turn": 0}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "en")
+    assert "200 characters" in text
+
+
+def test_discussion_style_without_max_chars_has_no_reminder():
+    """max_charsが設定されていない（gentle.json等）discussionルールセットでは、
+    存在しない上限を捏造して提示しないこと。"""
+    session = {"style": "discussion"}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "字程度" not in text
+
+
+def test_discussion_style_reminds_max_chars_on_additional_action():
+    """同一ターン内でaction_count > 0（追加アクション）の分岐にも再掲されること。"""
+    session = {"style": "discussion", "max_chars": 200, "round": 1, "turn": 0}
+    history = [{
+        "role": "assistant", "character_id": "a", "content": "A: hello",
+        "round": 1, "turn": 0,
+    }]
+    text = build_turn_instruction(1, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "200字" in text
