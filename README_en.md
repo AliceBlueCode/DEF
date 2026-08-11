@@ -173,6 +173,8 @@ For ongoing publication on a fixed domain, a Named Tunnel (requires a Cloudflare
 > ⚠️ If you share a multiplayer session URL with others, make sure to set a Hard Spending Limit in the
 > management console of each external API provider you use. This is a safety net so you aren't relying solely on the app's own rate limiting.
 
+> ⚠️ When one of your persistent characters joins an online session, what happens there (topic, participants, a summary of what was said) is also stored as part of that character's episodic memory. This memory is kept per-character, not per-user or per-session, so it can resurface in a later conversation with someone else (there is currently no mechanism to keep memories separate per user or session).
+
 -----
 
 ## Character Repository — DEF(Character)

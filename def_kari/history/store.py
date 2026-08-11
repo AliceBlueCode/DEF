@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 
 from def_kari.config import MAX_VISIBLE_TURNS
@@ -14,6 +15,11 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 PRIVATE_DIR = DATA_DIR / "private"
 
 _EXCLUDE_KEYS = {"llm_attempts", "_undo_stack", "_redo_stack"}
+# character_id/session_idはそのままファイル名に使われるため、characters_common.py等
+# 既存箇所と同型のallowlistでパストラバーサルを防ぐ（本モジュールはmain.py経由の
+# ローカル専用APIからのみ到達するが、外部入力を直接ファイル名に使う設計自体を
+# 「サーバー生成だから安全」に依存させないための多層防御）。
+_SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 
 
 def _is_private_character(character_id: str) -> bool:
@@ -24,6 +30,8 @@ def _is_private_character(character_id: str) -> bool:
 
 
 def _history_path(character_id: str) -> Path:
+    if not _SAFE_ID_RE.match(character_id):
+        raise ValueError(f"Invalid character_id: {character_id!r}")
     if _is_private_character(character_id):
         _dir = PRIVATE_DIR / "session_history"
     else:
@@ -40,6 +48,8 @@ def _ensure_dirs() -> None:
 
 
 def load_full(character_id: str = "character_luna_001") -> list[dict]:
+    if not _SAFE_ID_RE.match(character_id):
+        return []
     _ensure_dirs()
     path = _history_path(character_id)
     if not path.exists():
@@ -52,6 +62,8 @@ def load_full(character_id: str = "character_luna_001") -> list[dict]:
 
 
 def _write(full: list[dict], character_id: str = "character_luna_001") -> None:
+    if not _SAFE_ID_RE.match(character_id):
+        return
     _ensure_dirs()
     path = _history_path(character_id)
     tmp_path = str(path) + ".tmp"
@@ -101,6 +113,8 @@ def lazy_load_more(session_history: list[dict], batch: int, character_id: str = 
 
 def clear_history(character_id: str) -> None:
     """指定キャラクターの履歴をクリアする。"""
+    if not _SAFE_ID_RE.match(character_id):
+        return
     path = _history_path(character_id)
     if path.exists():
         _write([], character_id)
@@ -113,6 +127,8 @@ def _is_private_rule_set(rule_set: str) -> bool:
 
 
 def _session_mode_path(session_id: str, participants: list[str], rule_set: str = "") -> Path:
+    if not _SAFE_ID_RE.match(session_id):
+        raise ValueError(f"Invalid session_id: {session_id!r}")
     _is_private = False
     for pid in participants:
         if _is_private_character(pid):
@@ -126,6 +142,8 @@ def _session_mode_path(session_id: str, participants: list[str], rule_set: str =
 
 
 def save_session_mode(session_id: str, participants: list[str], history: list[dict], metadata: dict | None = None) -> None:
+    if not _SAFE_ID_RE.match(session_id):
+        return
     _ensure_dirs()
     _rule_set = (metadata or {}).get("rule_set", "")
     path = _session_mode_path(session_id, participants, _rule_set)
@@ -142,6 +160,8 @@ def save_session_mode(session_id: str, participants: list[str], history: list[di
 
 
 def load_session_mode(session_id: str, participants: list[str] | None = None) -> dict | None:
+    if not _SAFE_ID_RE.match(session_id):
+        return None
     participants = participants or []
     path = _session_mode_path(session_id, participants)
     if not path.exists():
