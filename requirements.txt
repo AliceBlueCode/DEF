@@ -1,14 +1,20 @@
-# DEF(kari) — Python dependencies
+# DEF(kari) - Python dependencies
 # Install: pip install -r requirements.txt
+#
+# NOTE: keep this file pure ASCII. pip decodes requirements files with the
+# system locale when there is no BOM, so non-ASCII comments break
+# "pip install -r requirements.txt" on Japanese Windows (cp932) and other
+# non-UTF-8 locales.
 
 # Web framework
-# fastapiは0.96以降でpydantic v2/starlette 1.x系に連鎖し、コード全体が
-# 前提にしているpydantic v1スタイル（@validator等）と衝突するため上限固定
+# fastapi >= 0.96 pulls in pydantic v2 / starlette 1.x, which conflicts with
+# the pydantic v1 style (@validator etc.) the codebase is written against,
+# so the upper bound is pinned.
 fastapi>=0.95.0,<0.96.0
 uvicorn[standard]>=0.21.0
 python-multipart>=0.0.9
 
-# Authentication (JWT, オンラインセッションの招待コード・ホスト/プレイヤートークン用)
+# Authentication (JWT: online-session invite codes, host/player tokens)
 python-jose>=3.3.0
 
 # HTTP client
@@ -26,13 +32,14 @@ jsonschema>=4.17.0
 # Config / translation tool
 PyYAML>=6.0.0
 
-# Translation (ローカル翻訳プロバイダ)
+# Translation (local translation provider)
 deep-translator>=1.11.0
 
 # --- dev / test ---
 pytest>=8.0.0
 pytest-asyncio>=1.0.0
-# FastAPI TestClient用。新しいhttpx/anyioはfastapi<0.96系のstarletteと
-# 組み合わせるとTestClient初期化や例外伝播の挙動が変わるため上限固定
+# For FastAPI TestClient. Newer httpx/anyio change TestClient initialization
+# and exception propagation when combined with the starlette that
+# fastapi<0.96 requires, so both are pinned.
 httpx==0.23.3
 anyio<4.0.0

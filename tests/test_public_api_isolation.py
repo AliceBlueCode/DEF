@@ -186,19 +186,19 @@ def test_session_local_only_endpoints_not_reachable():
     以前はsession.router丸ごとマウントに巻き込まれて公開されており、直近のセッションの
     LLM生応答（/debug）・保存済みセッションの全履歴（/load）を認証なしで読めていた。
     local_routerはpublic_appにマウントされていないため、これらのパスはGET /{session_id}
-    （session.router側、GETのみ登録）のワイルドカードにフォールバックする。単一セグメント
-    のパス（/debug・/saved）は"session_idが見つからない"という通常のエラーになり（200+
-    {"error": "Session not found"}）、複数セグメントのパス（/saved/{filename}）や
+    （session.router側、GETのみ登録）のワイルドカードにフォールバックする。
+    GET /{session_id}は参加者認証必須（require_participant、2026-08-11）になったため、
+    単一セグメントのパス（/debug・/saved）はAuthorizationヘッダー必須の422で止まる
+    （それ以前は200+{"error": "Session not found"}という無害なフォールバックだった。
+    現在はさらに手前で遮断される）。複数セグメントのパス（/saved/{filename}）や
     GET以外のメソッド（POST /load）はどのパターンにもマッチせず404/405になる。
     いずれの場合も本来のdebug情報・セッション一覧・履歴は一切返らない。
     """
     r_debug = client.get("/api/session/debug")
-    assert r_debug.status_code == 200
-    assert r_debug.json() == {"error": "Session not found"}  # _last_session_debugの中身が漏れていない
+    assert r_debug.status_code == 422  # Authorizationヘッダー必須（_last_session_debugの中身は漏れない）
 
     r_saved = client.get("/api/session/saved")
-    assert r_saved.status_code == 200
-    assert r_saved.json() == {"error": "Session not found"}  # 保存済みセッション一覧が漏れていない
+    assert r_saved.status_code == 422  # 同上（保存済みセッション一覧は漏れない）
 
     assert client.delete("/api/session/saved/nonexistent.json").status_code == 404
     assert client.post("/api/session/load", json={"filename": "nonexistent.json"}).status_code == 405

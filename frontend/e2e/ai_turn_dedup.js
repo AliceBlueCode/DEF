@@ -55,11 +55,17 @@ async function decodeJwtSessionId(page, token) {
   assert(!!sessionId, `session_id decoded from guest JWT: ${sessionId}`)
 
   // 正規クライアント(SessionTab.tsx)が実際に送るのと同じ値を再現するため、
-  // 公開エンドポイントで現在のroundを取得してから8並列送信に載せる
+  // GET /{session_id}で現在のroundを取得してから8並列送信に載せる
   // (「本物のUIから見えている値を、うっかり/意図的に多重送信した」状況の再現。
   // expected_roundを省略/でたらめにするのは「対応していない旧クライアント」の
   // シナリオであり別物 — それは常に拒否されるだけなので検証価値が薄い)。
-  const before = await guest.evaluate(async sid => (await fetch(`/api/session/${sid}`)).json(), sessionId)
+  // GET /{session_id}は参加者認証必須(require_participant、2026-08-11)のため
+  // ゲスト自身のトークンを付ける。
+  const before = await guest.evaluate(
+    async ({ sid, token }) =>
+      (await fetch(`/api/session/${sid}`, { headers: { 'Authorization': `Bearer ${token}` } })).json(),
+    { sid: sessionId, token: guestToken },
+  )
   const expectedRound = before.session?.round
   assert(typeof expectedRound === 'number', `current round fetched before send: ${expectedRound}`)
 

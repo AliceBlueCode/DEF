@@ -475,7 +475,9 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       if (initialHistoryFetchedForRef.current !== sessionId) {
         initialHistoryFetchedForRef.current = sessionId
         try {
-          const res = await fetch(`/api/session/${sessionId}`)
+          const res = await fetch(`/api/session/${sessionId}`, {
+            headers: hostTokenRef.current ? { 'Authorization': `Bearer ${hostTokenRef.current}` } : {},
+          })
           const data = await res.json()
           const history: any[] = data.session?.history || []
           if (history.length > 0 && !cancelled) {
@@ -1560,6 +1562,9 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
       sessionIdRef.current = data.session_id
       setSessionId(data.session_id)
+      // ロード復元セッションにもホストトークンが発行されるようになった
+      // （GET /{session_id} の認証必須化に伴うバックエンド変更）。
+      hostTokenRef.current = data.host_token ?? ''
       initiativeRef.current = data.initiative || []
       setInitiative(data.initiative || [])
       setRound(data.round || 1)

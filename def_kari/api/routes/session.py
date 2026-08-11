@@ -686,6 +686,26 @@ def require_keeper(session_id: str, authorization: str = Header(...)) -> dict:
     return payload
 
 
+def require_participant(session_id: str, authorization: str = Header(...)) -> dict:
+    """全ロール（host / player / gm / observer）を通す読み取り用Dependency。
+    session_idスコープの検証と失効チェック（verify_jwt内のjti revoke）だけを行う。
+
+    GET /{session_id} 用。以前は完全無認証で、session_idを知ってさえいれば
+    退室・追放済みの元参加者や第三者でもセッション全体（history・npc_state等）を
+    読み続けられた。observerは書き込み系（require_player）では拒否されるが、
+    観戦という役割上、読み取りは正当なので通す。"""
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = verify_jwt(token)
+    except _JWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if payload.get("role") not in ("host", "player", "gm", "observer"):
+        raise HTTPException(403, "Participant role required")
+    if payload.get("session_id") != session_id:
+        raise HTTPException(403, "Token session mismatch")
+    return payload
+
+
 def _schedule_idle_shutdown(session_id: str, delay: int = 300) -> None:
     """全員切断後 delay 秒で AI タスクを停止する。再接続時はキャンセルする。"""
     async def _shutdown() -> None:
@@ -4164,11 +4184,20 @@ def load_session(req: SessionLoadRequest):
         "ws_rate": {},
         "human_char_ids": meta.get("human_char_ids", []),
     }
+    # ロードで復元されたセッションにも /start と同様にホストトークンを発行する。
+    # 以前は host_token="" のままトークンを一切発行しておらず、GET /{session_id} の
+    # 認証必須化（require_participant）でロード直後の履歴取得が401になるほか、
+    # そもそも require_keeper/require_player 保護のセッション操作系（keeper発言・
+    # ダイス等）にロード済みセッションから到達する手段が無かった。
+    host_token = issue_player_jwt(new_id, "host")
+    session["host_token"] = host_token
+    session["players"][host_token] = ""  # ホストはキャラなし（/startと同じ扱い）
     if len(_sessions) >= _MAX_SESSIONS:
         _evict_oldest_session()
     _sessions[new_id] = session
     return {
         "session_id": new_id,
+        "host_token": host_token,
         "initiative": session["initiative"],
         "round": session["round"],
         "topic": session["topic"],
@@ -4526,7 +4555,7 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
 
 
 @router.get("/{session_id}")
-def get_session(session_id: str):
+def get_session(session_id: str, _auth: dict = Depends(require_participant)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}

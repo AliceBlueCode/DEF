@@ -79,10 +79,13 @@ WS   /api/session/{session_id}/ws
   -> WebSocket connection endpoint (see Chapter 3 below for details)
 
 GET  /api/session/{session_id}
-  -> Returns the entire session (the full history log, initiative, players, etc.,
-     with sensitive fields such as auth tokens/invite codes excluded). History
-     pagination is unimplemented -- the full log is returned every time. Response
-     bloat as a session grows large is a known limitation
+  headers: Authorization: Bearer {token}  # participant token required (host/player/gm/observer)
+  -> Returns the entire session (the full history log, initiative, etc., with
+     sensitive fields such as auth tokens/invite codes excluded). Readable only
+     with a participant token for that session (no longer readable after the
+     token is revoked by leaving or being expelled). History pagination is
+     unimplemented -- the full log is returned every time. Response bloat as a
+     session grows large is a known limitation
 ```
 
 In addition to the above, session-progression actions such as submitting a human turn, voting, and leaving are performed via individual REST endpoints such as `POST /{session_id}/human_turn` (see Chapter 3).
