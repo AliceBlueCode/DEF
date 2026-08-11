@@ -73,7 +73,7 @@ def test_ws_revoked_token_closes_4001():
         assert exc.value.code == 4001
     finally:
         p = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
-        _revoked_jtis.discard(p["jti"])
+        _revoked_jtis.pop(p["jti"], None)
 
 
 def test_ws_wrong_session_jwt_closes_4001():
@@ -186,7 +186,7 @@ def test_invite_revoked_host_token_401():
         assert resp.status_code == 401
     finally:
         p = _jwt.decode(host_token, _get_jwt_secret(), algorithms=["HS256"])
-        _revoked_jtis.discard(p["jti"])
+        _revoked_jtis.pop(p["jti"], None)
 
 
 def test_join_while_ip_locked_429():

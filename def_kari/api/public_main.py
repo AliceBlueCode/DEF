@@ -58,6 +58,13 @@ public_app = FastAPI(
     openapi_url=None,
 )
 
+# session.py の GET /rules・/rules/{rule_id}・/action-directives が、無認証の公開ポート
+# 経由では data/private/ を除外できるようにするためのマーカー（同じ session.router を
+# main.py 側にもマウントしているため、モジュールレベルのフラグではなくアプリインスタンス
+# 単位で判定する必要がある。dual_run.py は main_app と public_app を同一プロセスに同居
+# させるため、グローバル変数では両者を区別できない）。
+public_app.state.is_public_port = True
+
 public_app.add_middleware(SessionBodySizeLimitMiddleware)
 public_app.add_middleware(SecurityHeadersMiddleware)
 public_app.add_middleware(

@@ -36,7 +36,44 @@ def test_revoke_token_blocks_verify():
     from jose import jwt as _jwt
     from def_kari.api.routes.session import _get_jwt_secret
     p = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
-    _revoked_jtis.discard(p["jti"])
+    _revoked_jtis.pop(p["jti"], None)
+
+
+def test_revoke_token_stores_expiry_and_cleanup_prunes_expired_only():
+    """以前は_cleanup_revoked_jtisがsession["players"]からpop済みのトークンを対象に
+    difference_updateしており、revoke_token()で追加したjtiが実質永久にブラックリストへ
+    残り続けるバグがあった（join/leaveを繰り返すたびに無制限に増加）。expベースの
+    間引きに変更したことを検証する。"""
+    import time as _time
+    from def_kari.api.routes.session import (
+        issue_player_jwt, revoke_token, _revoked_jtis,
+        _cleanup_expired_revoked_jtis, _revoked_jtis_last_cleanup,
+    )
+    from jose import jwt as _jwt
+    from def_kari.api.routes.session import _get_jwt_secret
+
+    expired_token = issue_player_jwt("sess-cleanup-1", "player")
+    fresh_token = issue_player_jwt("sess-cleanup-2", "player")
+    revoke_token(expired_token)
+    revoke_token(fresh_token)
+
+    expired_jti = _jwt.decode(expired_token, _get_jwt_secret(), algorithms=["HS256"])["jti"]
+    fresh_jti = _jwt.decode(fresh_token, _get_jwt_secret(), algorithms=["HS256"])["jti"]
+    assert expired_jti in _revoked_jtis
+    assert fresh_jti in _revoked_jtis
+
+    try:
+        # 片方だけ期限切れ扱いにする（本来は24h後のexpを過去に書き換えるのと等価）。
+        _revoked_jtis[expired_jti] = _time.time() - 1.0
+        # クリーンアップの間引き間隔（10分）を無視させて即座に実行させる。
+        _revoked_jtis_last_cleanup["t"] = 0.0
+        _cleanup_expired_revoked_jtis()
+
+        assert expired_jti not in _revoked_jtis, "期限切れjtiがクリーンアップ後も残っている"
+        assert fresh_jti in _revoked_jtis, "未失効のjtiが誤って削除された"
+    finally:
+        _revoked_jtis.pop(expired_jti, None)
+        _revoked_jtis.pop(fresh_jti, None)
 
 
 def test_invalid_token_raises():

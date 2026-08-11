@@ -338,7 +338,12 @@ _game_event_bus.subscribe("*", _ws_broadcast_handler)
 from jose import jwt as _jwt, JWTError as _JWTError
 import datetime as _dt
 
-_revoked_jtis: set[str] = set()
+# jti(JWTのユニークID) → 失効理由の有効期限(exp、UTC unixタイムスタンプ)。
+# 値はトークン自身のexpをそのまま流用する: exp到来後はverify_jwtのjose.decode自体が
+# 期限切れとして拒否するため、それより後までブラックリストに残しておく意味がない。
+_revoked_jtis: dict[str, float] = {}
+_revoked_jtis_last_cleanup = {"t": 0.0}
+_REVOKED_JTIS_CLEANUP_INTERVAL = 600.0  # 10分
 
 # 招待コード生成
 _INVITE_CHARS_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ"  # O・I除く
@@ -370,8 +375,26 @@ def issue_player_jwt(session_id: str, role: str, char_id: str = "") -> str:
     return _jwt.encode(payload, _get_jwt_secret(), algorithm="HS256")
 
 
+def _cleanup_expired_revoked_jtis() -> None:
+    """期限切れのブラックリストエントリを間引く（_cleanup_invite_rate_stateと同じパターン）。
+
+    以前は_end_session/_evict_oldest_session時にのみ「そのセッションでまだ生きている
+    jti」をブラックリストから除外しようとしていたが、revoke_token()の時点で既にトークンは
+    session["players"]からpopされた後だったため対象が常に空集合になり、実質的に
+    revoked_jtisが一度追加したjtiを二度と削除しないno-opになっていた（join/leaveを
+    繰り返すたびに無制限に増加するバグ）。expのタイムスタンプで判定する方式に変更。
+    """
+    now = time.time()
+    if time.monotonic() - _revoked_jtis_last_cleanup["t"] < _REVOKED_JTIS_CLEANUP_INTERVAL:
+        return
+    _revoked_jtis_last_cleanup["t"] = time.monotonic()
+    for jti in [j for j, exp in _revoked_jtis.items() if exp <= now]:
+        del _revoked_jtis[jti]
+
+
 def verify_jwt(token: str) -> dict:
     """JWTを検証して payloadを返す。失敗時は JWTError を raise する。"""
+    _cleanup_expired_revoked_jtis()
     payload = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
     if payload.get("jti") in _revoked_jtis:
         raise _JWTError("Token revoked")
@@ -382,7 +405,8 @@ def revoke_token(token: str) -> None:
     """退室・強制切断時に jti をブラックリストに追加する。"""
     try:
         payload = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
-        _revoked_jtis.add(payload["jti"])
+        exp = payload.get("exp")
+        _revoked_jtis[payload["jti"]] = float(exp) if exp is not None else time.time() + 86400.0
         sess = _sessions.get(payload.get("session_id", ""))
         if sess:
             # autosaveから復元された直後のセッションは ws_connections キーを
@@ -391,24 +415,6 @@ def revoke_token(token: str) -> None:
             sess.get("ws_connections", {}).pop(token, None)
     except Exception:
         pass
-
-
-def _cleanup_revoked_jtis(session_id: str, session: dict | None = None) -> None:
-    """セッション終了時に当該セッションの jti をブラックリストから掃除する。
-
-    _end_session が _sessions.pop() した後に呼ぶ場合は session を直接渡す。
-    """
-    sess = session or _sessions.get(session_id)
-    if not sess:
-        return
-    alive_jtis: set[str] = set()
-    for token in list(sess.get("players", {}).keys()):
-        try:
-            p = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
-            alive_jtis.add(p["jti"])
-        except Exception:
-            pass
-    _revoked_jtis.difference_update(alive_jtis)
 
 
 def _is_human_char(session: dict, char_id: str, profiles: dict | None = None) -> bool:
@@ -542,7 +548,6 @@ def _evict_oldest_session() -> None:
         _ws_send_locks.pop(token, None)
     for code in list(session.get("invite_codes", {}).keys()):
         _invite_registry.pop(code, None)
-    _cleanup_revoked_jtis(session_id, session=session)
 
     connections = list(session.get("ws_connections", {}).values())
     if connections:
@@ -1096,7 +1101,6 @@ async def _end_session(session_id: str) -> None:
     # 招待コードのグローバルレジストリからも削除
     for code in list(session.get("invite_codes", {}).keys()):
         _invite_registry.pop(code, None)
-    _cleanup_revoked_jtis(session_id, session=session)
 
 
 def _save_session_episodic(session_id: str, session: dict) -> None:
@@ -1177,9 +1181,20 @@ _RULE_DIRS = [
     _BASE / "data" / "public" / "session_rules",
     _BASE / "data" / "private" / "session_rules",
 ]
+# 無認証の公開ポート（public_main.py）向けの探索範囲。data/private/session_rulesを含まない。
+# GET /rules・/rules/{rule_id}は招待コードのみで参加するゲストの画面でも呼ばれるため
+# local_routerには移せない（読み取り自体は許可する）が、私有・NSFWルールセットの
+# フルコンテンツまで無認証で読めてしまっていたため、探索範囲を分離した。
+_PUBLIC_RULE_DIRS = [
+    _BASE / "data" / "public" / "session_rules",
+]
 _DIRECTIVE_DIRS = [
     _BASE / "data" / "public" / "action_directives",
     _BASE / "data" / "private" / "action_directives",
+]
+# 同上（アクションディレクティブ版）。
+_PUBLIC_DIRECTIVE_DIRS = [
+    _BASE / "data" / "public" / "action_directives",
 ]
 _SESSION_HISTORY_DIRS = [
     _BASE / "data" / "public" / "session_history",
@@ -1417,9 +1432,9 @@ def _clean_history_for_retake(history: list, remove: int) -> tuple[list, int]:
     return new_history, removed
 
 
-def _load_action_directives() -> dict:
+def _load_action_directives(public_only: bool = False) -> dict:
     directives: dict = {}
-    for d in _DIRECTIVE_DIRS:
+    for d in (_PUBLIC_DIRECTIVE_DIRS if public_only else _DIRECTIVE_DIRS):
         if d.is_dir():
             for f in sorted(d.iterdir()):
                 if f.suffix == ".json" and f.name != ".gitkeep":
@@ -1547,9 +1562,20 @@ def _ai_action_select(
     return {**_default, **{k: str(v) for k, v in parsed.items()}}
 
 
+def _is_public_request(request: Request) -> bool:
+    """呼び出し元がpublic_app（無認証で外部公開されるポート）経由かを判定する。
+
+    session.router はmain.py（ローカル、フル機能）とpublic_main.py（Cloudflare Tunnel等
+    での公開用）の両方に同一インスタンスがマウントされている。dual_run.pyは両アプリを
+    同一プロセスに同居させるため、モジュールレベルのグローバル変数では区別できない。
+    request.app.state に public_main.py 側だけが立てるフラグを見て判定する。
+    """
+    return bool(getattr(request.app.state, "is_public_port", False))
+
+
 @router.get("/action-directives")
-def get_action_directives():
-    directives = _load_action_directives()
+def get_action_directives(request: Request):
+    directives = _load_action_directives(public_only=_is_public_request(request))
     return {
         "directives": [
             {"id": did, "label": d.get("label", did), "rating": d.get("rating", "general"), "recommended_for": d.get("recommended_for", [])}
@@ -1558,9 +1584,9 @@ def get_action_directives():
     }
 
 
-def _load_session_rules() -> dict:
+def _load_session_rules(public_only: bool = False) -> dict:
     rules = {}
-    for d in _RULE_DIRS:
+    for d in (_PUBLIC_RULE_DIRS if public_only else _RULE_DIRS):
         if d.is_dir():
             for f in sorted(d.iterdir()):
                 if f.suffix == ".json":
@@ -1576,8 +1602,8 @@ def _load_session_rules() -> dict:
 
 
 @router.get("/rules")
-def get_session_rules():
-    rules = _load_session_rules()
+def get_session_rules(request: Request):
+    rules = _load_session_rules(public_only=_is_public_request(request))
     return {
         "rules": [
             {"id": rid, "label": r.get("label", rid)}
@@ -1587,10 +1613,11 @@ def get_session_rules():
 
 
 @router.get("/rules/{rule_id}")
-def get_session_rule_detail(rule_id: str):
+def get_session_rule_detail(rule_id: str, request: Request):
     if not re.match(r'^[A-Za-z0-9_\-]+$', rule_id):
         return {"error": "Invalid rule ID"}
-    for d in _RULE_DIRS:
+    dirs = _PUBLIC_RULE_DIRS if _is_public_request(request) else _RULE_DIRS
+    for d in dirs:
         path = d / f"{rule_id}.json"
         if path.exists():
             try:

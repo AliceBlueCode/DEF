@@ -236,6 +236,65 @@ def test_full_app_can_still_write_rules():
             (d / f"{rule_id}.json").unlink(missing_ok=True)
 
 
+def test_session_rules_and_directives_exclude_private_over_public_app(tmp_path):
+    """private session_rules / action_directives が public_app（無認証）から読めないこと。
+
+    以前はGET /rules・/rules/{rule_id}・/action-directivesがdata/public・data/privateの
+    両方を無差別にマージして返しており、招待コードで参加しただけの第三者・第三者一般が
+    NSFW/私有のルールセット・アクションディレクティブのフルコンテンツを無認証で読めた
+    （8.18のprivateキャラクター画像露出と同じ構造の穴）。session.routerはmain.pyと
+    public_main.pyの両方に同一インスタンスがマウントされているため、request.app.state
+    のフラグでポートを判別し、public_app経由の場合のみdata/private/を除外する。
+    """
+    from def_kari.api.routes import session as session_module
+
+    public_dir = tmp_path / "public_rules"
+    private_dir = tmp_path / "private_rules"
+    public_dir.mkdir()
+    private_dir.mkdir()
+    (public_dir / "standard.json").write_text('{"id": "standard", "label": "Standard"}', encoding="utf-8")
+    (private_dir / "nsfw_secret.json").write_text('{"id": "nsfw_secret", "label": "NSFW Secret"}', encoding="utf-8")
+
+    public_dir_d = tmp_path / "public_directives"
+    private_dir_d = tmp_path / "private_directives"
+    public_dir_d.mkdir()
+    private_dir_d.mkdir()
+    (public_dir_d / "standard.json").write_text('{"id": "standard", "label": "Standard"}', encoding="utf-8")
+    (private_dir_d / "nsfw_directive.json").write_text('{"id": "nsfw_directive", "label": "NSFW Directive"}', encoding="utf-8")
+
+    with patch.object(session_module, "_RULE_DIRS", [public_dir, private_dir]), \
+         patch.object(session_module, "_PUBLIC_RULE_DIRS", [public_dir]), \
+         patch.object(session_module, "_DIRECTIVE_DIRS", [public_dir_d, private_dir_d]), \
+         patch.object(session_module, "_PUBLIC_DIRECTIVE_DIRS", [public_dir_d]):
+
+        # public_app（無認証・外部公開）: privateは一切見えない
+        r_list = client.get("/api/session/rules")
+        rule_ids = [r["id"] for r in r_list.json()["rules"]]
+        assert "nsfw_secret" not in rule_ids
+        assert "standard" in rule_ids
+
+        r_detail_public = client.get("/api/session/rules/standard")
+        assert "Standard" in r_detail_public.json()["content"]
+        r_detail_private = client.get("/api/session/rules/nsfw_secret")
+        assert r_detail_private.json() == {"error": "Rule 'nsfw_secret' not found"}
+
+        r_directives = client.get("/api/session/action-directives")
+        directive_ids = [d["id"] for d in r_directives.json()["directives"]]
+        assert "nsfw_directive" not in directive_ids
+        assert "standard" in directive_ids
+
+        # main.py（ローカル専用・フル機能）: 従来どおりprivateも見える
+        from def_kari.api.main import app
+        full_client = TestClient(app)
+        r_full = full_client.get("/api/session/rules")
+        full_rule_ids = [r["id"] for r in r_full.json()["rules"]]
+        assert "nsfw_secret" in full_rule_ids
+
+        r_full_directives = full_client.get("/api/session/action-directives")
+        full_directive_ids = [d["id"] for d in r_full_directives.json()["directives"]]
+        assert "nsfw_directive" in full_directive_ids
+
+
 def test_session_dead_code_endpoints_removed_everywhere():
     """8.8対策: フロント未使用だったhuman/judgment/allocate/judgment/rollは
     デッドコードとして削除済みであること（main.py側でも到達不能）。
