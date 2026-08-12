@@ -33,7 +33,7 @@ jsonschema>=4.17.0
 PyYAML>=6.0.3
 
 # Translation (local translation provider)
-deep-translator>=1.11.0
+deep-translator>=1.11.4
 
 # --- dev / test ---
 pytest>=8.0.0
