@@ -66,7 +66,7 @@ def test_revoke_token_stores_expiry_and_cleanup_prunes_expired_only():
         # 片方だけ期限切れ扱いにする（本来は24h後のexpを過去に書き換えるのと等価）。
         _revoked_jtis[expired_jti] = _time.time() - 1.0
         # クリーンアップの間引き間隔（10分）を無視させて即座に実行させる。
-        _revoked_jtis_last_cleanup["t"] = 0.0
+        _revoked_jtis_last_cleanup["t"] = float("-inf")
         _cleanup_expired_revoked_jtis()
 
         assert expired_jti not in _revoked_jtis, "期限切れjtiがクリーンアップ後も残っている"

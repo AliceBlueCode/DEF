@@ -242,11 +242,18 @@ def test_config_switch():
     print("PASS: config_switch")
 
 
-def test_config_file():
+def test_config_file(monkeypatch):
     from config_loader import load_config, create_provider_from_config
 
     config = load_config()
     expected = config.get("translation", {}).get("provider", "library")
+
+    # config.yamlのapi_keyは空文字（実運用ではDEEPL_API_KEY環境変数か
+    # secrets_storeの暗号化キーで補われる想定）。このテストはconfig.yamlの
+    # provider指定が正しく反映されるかだけを検証したいので、実キーの有無
+    # （secrets_storeにたまたま保存済みかどうか、開発機ごとに異なりうる）に
+    # 依存しないよう、DeepLプロバイダの構築だけは通るダミーキーを注入する。
+    monkeypatch.setenv("DEEPL_API_KEY", "dummy-key-for-test")
 
     p = create_provider_from_config()
     assert p.provider_name == expected

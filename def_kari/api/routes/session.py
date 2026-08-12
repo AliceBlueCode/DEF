@@ -384,7 +384,8 @@ import datetime as _dt
 # 値はトークン自身のexpをそのまま流用する: exp到来後はverify_jwtのjose.decode自体が
 # 期限切れとして拒否するため、それより後までブラックリストに残しておく意味がない。
 _revoked_jtis: dict[str, float] = {}
-_revoked_jtis_last_cleanup = {"t": 0.0}
+# 0.0ではなく-infにする理由は_autosave_last_cleanupと同じ（1427行目付近参照）。
+_revoked_jtis_last_cleanup = {"t": float("-inf")}
 _REVOKED_JTIS_CLEANUP_INTERVAL = 600.0  # 10分
 
 # 招待コード生成
@@ -1425,7 +1426,11 @@ def _delete_autosave(session_id: str) -> None:
 # （実測1752個）。
 _AUTOSAVE_TTL_SEC = 7 * 24 * 3600.0  # 7日
 _AUTOSAVE_CLEANUP_INTERVAL_SEC = 3600.0  # 稼働中の定期掃除の間隔（1時間）
-_autosave_last_cleanup: dict[str, float] = {"t": 0.0}
+# 0.0ではなく-infにする: time.monotonic()の基準点は不定（システム起動時刻等）で
+# 「経過0秒」を意味しないため、0.0だと起動直後（システム稼働時間がこの間隔未満）の
+# 環境（CIランナー等）で「まだ一度も実行していない」はずの初回呼び出しが誤って
+# 間引かれてしまう。-infなら`now - (-inf)`が必ず間隔を超え、初回は確実に実行される。
+_autosave_last_cleanup: dict[str, float] = {"t": float("-inf")}
 
 
 def _cleanup_stale_autosaves() -> None:
