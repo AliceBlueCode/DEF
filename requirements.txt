@@ -12,7 +12,7 @@
 # so the upper bound is pinned.
 fastapi>=0.95.0,<0.96.0
 uvicorn[standard]>=0.52.1
-python-multipart>=0.0.9
+python-multipart>=0.0.32
 
 # Authentication (JWT: online-session invite codes, host/player tokens)
 python-jose>=3.5.0
