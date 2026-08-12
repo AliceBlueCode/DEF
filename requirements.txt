@@ -36,7 +36,7 @@ PyYAML>=6.0.3
 deep-translator>=1.11.4
 
 # --- dev / test ---
-pytest>=8.0.0
+pytest>=9.1.1
 pytest-asyncio>=1.4.0
 # For FastAPI TestClient. Newer httpx/anyio change TestClient initialization
 # and exception propagation when combined with the starlette that
