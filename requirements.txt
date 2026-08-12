@@ -24,7 +24,7 @@ requests>=2.28.0
 Pillow>=12.3.0
 
 # Encryption
-cryptography>=42.0.0
+cryptography>=50.0.0
 
 # Validation
 jsonschema>=4.17.0
