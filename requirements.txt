@@ -37,7 +37,7 @@ deep-translator>=1.11.0
 
 # --- dev / test ---
 pytest>=8.0.0
-pytest-asyncio>=1.0.0
+pytest-asyncio>=1.4.0
 # For FastAPI TestClient. Newer httpx/anyio change TestClient initialization
 # and exception propagation when combined with the starlette that
 # fastapi<0.96 requires, so both are pinned.
