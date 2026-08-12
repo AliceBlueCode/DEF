@@ -246,7 +246,7 @@ DEF(kari)의 설계・구현・문서는 다음의 협력을 바탕으로 제작
 
 - **설계 철학・기본 설계・논의:** [ChatGPT](https://chatgpt.com/) (OpenAI)
 - **구현・문서・테스트:** [Claude](https://claude.ai/) (Anthropic)
-- **설계 리뷰:** [Gemini](https://gemini.google.com/) (Google)
-- **상담・동행:** [Copilot](https://copilot.microsoft.com/) (Microsoft)
+- **설계 리뷰・보안 리뷰:** [Grok](https://grok.com/) (xAI)
+- **상담:** [Gemini](https://gemini.google.com/) (Google) ・ [Copilot](https://copilot.microsoft.com/) (Microsoft)
 
 본 프로젝트는 AI 주도 개발로 제작되었습니다. 설계 판단과 최종 책임은 모두 작가(AliceBlueCode)에게 귀속됩니다.

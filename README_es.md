@@ -246,7 +246,7 @@ DEF(kari) fue diseñado, implementado y documentado con la colaboración de:
 
 - **Filosofía de diseño, diseño básico, discusión:** [ChatGPT](https://chatgpt.com/) (OpenAI)
 - **Implementación, documentación, pruebas:** [Claude](https://claude.ai/) (Anthropic)
-- **Revisión de diseño:** [Gemini](https://gemini.google.com/) (Google)
-- **Consulta, acompañamiento:** [Copilot](https://copilot.microsoft.com/) (Microsoft)
+- **Revisión de diseño, revisión de seguridad:** [Grok](https://grok.com/) (xAI)
+- **Consulta:** [Gemini](https://gemini.google.com/) (Google) · [Copilot](https://copilot.microsoft.com/) (Microsoft)
 
 Este proyecto fue construido mediante desarrollo impulsado por IA. Todas las decisiones de diseño y la responsabilidad final pertenecen al autor (AliceBlueCode).
