@@ -10,6 +10,13 @@ updates:
     # セキュリティ影響の大きい依存は個別にレビューしやすいようグルーピングしない。
     # python-jose / cryptography / Pillow は特にセキュリティ影響が大きいため
     # PRタイトルで見分けやすいよう先頭アルファベット順のまま個別更新とする。
+    ignore:
+      # requirements.txtに理由を明記した意図的な上限固定（Pydantic v1スタイル依存の
+      # 互換性維持）。Pydantic v2移行が完了するまでは更新提案そのものが無意味なため、
+      # PRが毎週再送され続けるのを止める。移行完了時にこのignoreごと削除すること。
+      - dependency-name: "fastapi"
+      - dependency-name: "httpx"
+      - dependency-name: "anyio"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
