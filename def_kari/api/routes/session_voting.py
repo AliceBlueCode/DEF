@@ -327,6 +327,103 @@ async def _apply_vote_expel(session_id: str, session: dict, initiative: list, ta
     return keeper_handed_off, expelled_participant_id
 
 
+def _resolve_vote_results(
+    session: dict, req: VoteCommitRequest, initiative: list, name_map: dict,
+    pending: dict, vram_lock, force_approve: bool, lang: str,
+) -> dict[str, bool]:
+    """投票集計: 人間キャラは keeper_vote（ボタンクリック）を直接使い、AIキャラは
+    LLM判定、提案者不在時のキーパー票はkeeper_vote、提案者あり時は追加のLLM判定で
+    決める（`vote_commit`から切り出し、2026-08-15、`session.py`分割・第二段階）。
+    vram_lockは呼び出し元と共有（取得・解放は各LLM呼び出しの前後で行う）。
+    """
+    char_backends = session.get("char_backends", {})
+    default_backend = session.get("backend", DEFAULT_LLM_BACKEND)
+    profiles = load_profiles()
+    vote_label = pending["vote_label"]
+    detail_text = pending["detail_text"]
+    deliberation_texts = pending["deliberation_texts"]
+    proposer_id = pending.get("proposer_id", "")
+
+    # _is_human_charはturn_engine（session.py側）に依存するため、循環import回避のため遅延import。
+    from def_kari.api.routes.session import _is_human_char
+
+    results: dict[str, bool] = {}
+    for char_id in initiative:
+        char = get_character(char_id, profiles)
+
+        # 人間プレイヤーは LLM 判定せず keeper_vote（ボタンクリック）を直接使う
+        if _is_human_char(session, char_id, profiles):
+            results[char_id] = req.keeper_vote
+            continue
+
+        bid = char_backends.get(char_id) or default_backend
+        if bid not in LLM_BACKENDS:
+            bid = DEFAULT_LLM_BACKEND
+        model = _resolve_model(bid)
+        dialogue = deliberation_texts.get(char_id, "")
+
+        if force_approve:
+            results[char_id] = True
+            continue
+
+        judge_prompt = _sp("judge_prompt", lang).format(
+            dialogue=dialogue, vote_label=vote_label, detail_text=detail_text,
+            yes_word=_sp("yes_word", lang), no_word=_sp("no_word", lang),
+        )
+        try:
+            chat_fn = LLM_BACKENDS[bid]["chat"]
+            messages = [
+                {"role": "system", "content": char.get("persona_description", "")},
+                {"role": "user", "content": judge_prompt},
+            ]
+            if not vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+                raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
+            try:
+                reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 32})
+            finally:
+                vram_lock.release()
+            results[char_id] = _sp("yes_word", lang) in reply or "yes" in reply.lower()
+        except Exception:
+            results[char_id] = True
+
+    if proposer_id and proposer_id != "_keeper":
+        # 人間キャラが発議: LLM がキーパーとして追加投票
+        bid = default_backend if default_backend in LLM_BACKENDS else DEFAULT_LLM_BACKEND
+        model = _resolve_model(bid)
+        if force_approve:
+            results["_keeper"] = True
+        else:
+            all_texts = "\n".join(
+                f"{name_map.get(cid, cid)}: {text}"
+                for cid, text in deliberation_texts.items()
+                if text
+            )
+            keeper_judge_prompt = _sp("keeper_judge_prompt", lang).format(
+                vote_label=vote_label, detail_text=detail_text, all_texts=all_texts,
+                yes_word=_sp("yes_word", lang), no_word=_sp("no_word", lang),
+            )
+            try:
+                chat_fn = LLM_BACKENDS[bid]["chat"]
+                keeper_msgs = [
+                    {"role": "system", "content": _sp("keeper_system", lang) or "あなたはセッションのキーパー（GM・司会者）です。"},
+                    {"role": "user", "content": keeper_judge_prompt},
+                ]
+                if not vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+                    raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
+                try:
+                    reply = chat_fn(keeper_msgs, model, json_mode=False, options={"num_predict": 32})
+                finally:
+                    vram_lock.release()
+                results["_keeper"] = _sp("yes_word", lang) in reply or "yes" in reply.lower()
+            except Exception:
+                results["_keeper"] = True
+    else:
+        # 人間キャラなし: キーパー票はボタンクリックで決まる
+        results["_keeper"] = req.keeper_vote
+
+    return results
+
+
 @router.post("/{session_id}/vote/commit")
 async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request, _auth: dict = Depends(require_keeper)):
     """キーパー票を受け取り、AI票と合算して集計・効果適用する。
@@ -358,102 +455,26 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
 
     initiative = session["initiative"]
     name_map = session["name_map"]
-    char_backends = session.get("char_backends", {})
-    default_backend = session.get("backend", DEFAULT_LLM_BACKEND)
-    profiles = load_profiles()
 
     vote_type = pending["vote_type"]
     vote_label = pending["vote_label"]
     detail_text = pending["detail_text"]
     detail = pending["detail"]
     target_id = pending["target_id"]
-    deliberation_texts = pending["deliberation_texts"]
+    proposer_id = pending.get("proposer_id", "")
 
     from def_kari.resources.vram_lock import get_vram_lock
     from def_kari.settings import load_settings as _load_settings
     _vram_lock = get_vram_lock()
     _force_approve = bool(_load_settings().get("vote_force_approve", False))
-
-    proposer_id = pending.get("proposer_id", "")
     _v_lang = _load_settings().get("user_language", "ja") or "ja"
 
-    # _is_human_char/_cancel_disconnect_skip/_end_sessionはturn_engine
-    # （session.py側）に依存するため、循環import回避のため遅延import。
-    from def_kari.api.routes.session import _is_human_char, _cancel_disconnect_skip, _end_session
+    # _end_sessionはturn_engine（session.py側）に依存するため、循環import回避のため遅延import。
+    from def_kari.api.routes.session import _end_session
 
-    results: dict[str, bool] = {}
-    for char_id in initiative:
-        char = get_character(char_id, profiles)
-
-        # 人間プレイヤーは LLM 判定せず keeper_vote（ボタンクリック）を直接使う
-        if _is_human_char(session, char_id, profiles):
-            results[char_id] = req.keeper_vote
-            continue
-
-        bid = char_backends.get(char_id) or default_backend
-        if bid not in LLM_BACKENDS:
-            bid = DEFAULT_LLM_BACKEND
-        model = _resolve_model(bid)
-        dialogue = deliberation_texts.get(char_id, "")
-
-        if _force_approve:
-            results[char_id] = True
-            continue
-
-        judge_prompt = _sp("judge_prompt", _v_lang).format(
-            dialogue=dialogue, vote_label=vote_label, detail_text=detail_text,
-            yes_word=_sp("yes_word", _v_lang), no_word=_sp("no_word", _v_lang),
-        )
-        try:
-            chat_fn = LLM_BACKENDS[bid]["chat"]
-            messages = [
-                {"role": "system", "content": char.get("persona_description", "")},
-                {"role": "user", "content": judge_prompt},
-            ]
-            if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
-                raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
-            try:
-                reply = chat_fn(messages, model, json_mode=False, options={"num_predict": 32})
-            finally:
-                _vram_lock.release()
-            results[char_id] = _sp("yes_word", _v_lang) in reply or "yes" in reply.lower()
-        except Exception:
-            results[char_id] = True
-
-    if proposer_id and proposer_id != "_keeper":
-        # 人間キャラが発議: LLM がキーパーとして追加投票
-        bid = default_backend if default_backend in LLM_BACKENDS else DEFAULT_LLM_BACKEND
-        model = _resolve_model(bid)
-        if _force_approve:
-            results["_keeper"] = True
-        else:
-            all_texts = "\n".join(
-                f"{name_map.get(cid, cid)}: {text}"
-                for cid, text in deliberation_texts.items()
-                if text
-            )
-            keeper_judge_prompt = _sp("keeper_judge_prompt", _v_lang).format(
-                vote_label=vote_label, detail_text=detail_text, all_texts=all_texts,
-                yes_word=_sp("yes_word", _v_lang), no_word=_sp("no_word", _v_lang),
-            )
-            try:
-                chat_fn = LLM_BACKENDS[bid]["chat"]
-                keeper_msgs = [
-                    {"role": "system", "content": _sp("keeper_system", _v_lang) or "あなたはセッションのキーパー（GM・司会者）です。"},
-                    {"role": "user", "content": keeper_judge_prompt},
-                ]
-                if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
-                    raise RuntimeError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
-                try:
-                    reply = chat_fn(keeper_msgs, model, json_mode=False, options={"num_predict": 32})
-                finally:
-                    _vram_lock.release()
-                results["_keeper"] = _sp("yes_word", _v_lang) in reply or "yes" in reply.lower()
-            except Exception:
-                results["_keeper"] = True
-    else:
-        # 人間キャラなし: キーパー票はボタンクリックで決まる
-        results["_keeper"] = req.keeper_vote
+    results = _resolve_vote_results(
+        session, req, initiative, name_map, pending, _vram_lock, _force_approve, _v_lang,
+    )
 
     yes_count = sum(1 for v in results.values() if v)
     no_count = len(results) - yes_count

@@ -462,16 +462,17 @@ class SessionNextRequest(BaseModel):
     model: str = ""
 
 
-def next_turn(req: SessionNextRequest):
-    """AIターンを1回進める内部ロジック。以前は`POST /api/session/next`として無認証で
-    公開されており、session_idさえ分かればkeeper権限を経ずにLLM呼び出しを無制限に
-    実行できてしまっていた（8.8参照）。フロントからは未使用だったためエンドポイントは
-    廃止したが、`_execute_ai_turn`が内部関数として直接呼び出すためこの関数自体は残す。
-    """
-    session = _sessions.get(req.session_id)
-    if not session:
-        return {"error": "Session not found"}
+def _resolve_turn_start(session: dict, req: SessionNextRequest):
+    """ターン開始時の解決: ラウンド繰り上げ・GM指名の適用・発言力マイナス時の
+    強制スキップ・人間ターンの入力待ち判定（`next_turn`から切り出し、2026-08-15、
+    `session.py`分割・第二段階）。
 
+    戻り値は `(early_result, ctx)` の2要素タプル。強制スキップ/人間待ちで即座に
+    返すべき場合は `early_result` にレスポンス辞書、`ctx` は`None`。通常続行の
+    場合は `early_result` が`None`、`ctx`に以降の処理へ渡す値一式
+    （current_char_id・turn・counters・profiles・char・backend_id・model・
+    _skip_gen_before）を持つ辞書を返す。
+    """
     initiative = session["initiative"]
     turn = session["turn"]
     _skip_gen_before = session.get("_skip_gen", 0)  # keeper_skip 競合検出用
@@ -510,7 +511,7 @@ def next_turn(req: SessionNextRequest):
             "character_name": name_map.get(current_char_id, current_char_id),
             "round": session["round"],
             "counters": dict(counters),
-        }
+        }, None
 
     profiles = load_profiles()
     char = get_character(current_char_id, profiles)
@@ -523,7 +524,7 @@ def next_turn(req: SessionNextRequest):
             "character_name": name_map.get(current_char_id, current_char_id),
             "round": session["round"],
             "counters": dict(counters),
-        }
+        }, None
 
     char_backends = session.get("char_backends", {})
     backend_id = char_backends.get(current_char_id) or req.backend or session.get("backend", DEFAULT_LLM_BACKEND)
@@ -531,12 +532,29 @@ def next_turn(req: SessionNextRequest):
         backend_id = DEFAULT_LLM_BACKEND
     model = _resolve_model(backend_id, req.model)
 
-    # performative系（漫才・落語等）は「直近のネタ/演目」に集中させたいのと、履歴が
-    # 育つほど応答が長文化していく傾向を抑えるため、discussion系より短い窓に絞る
-    # （2026-08-10）。
-    _history_window = 8 if session.get("style") == "performative" else 20
+    return None, {
+        "current_char_id": current_char_id,
+        "turn": turn,
+        "counters": counters,
+        "profiles": profiles,
+        "char": char,
+        "backend_id": backend_id,
+        "model": model,
+        "_skip_gen_before": _skip_gen_before,
+    }
+
+
+def _build_recent_history(session: dict, current_char_id: str, name_map: dict) -> list[dict]:
+    """直近履歴をLLM入力用（本人はassistant、他キャラは`[名前] `プレフィックス付きuser）に
+    整形する（`next_turn`から切り出し、2026-08-15、`session.py`分割・第二段階）。
+
+    performative系（漫才・落語等）は「直近のネタ/演目」に集中させたいのと、履歴が
+    育つほど応答が長文化していく傾向を抑えるため、discussion系より短い窓に絞る
+    （2026-08-10）。
+    """
+    history_window = 8 if session.get("style") == "performative" else 20
     history = []
-    for h in session["history"][-_history_window:]:
+    for h in session["history"][-history_window:]:
         raw_content = h["content"]
         h_role = h.get("role", "user")
         h_char_id = h.get("character_id")
@@ -550,32 +568,38 @@ def next_turn(req: SessionNextRequest):
                 history.append({"role": "user", "content": f"[{other_name}] {text}"})
         else:
             history.append({"role": h_role, "content": raw_content})
+    return history
 
-    _settings = load_settings()
-    _user_lang = _settings.get("user_language", "ja") or "ja"
-    _allowed_sexual = _settings.get("allowed_rating_sexual", ["general"])
-    _allowed_violence = _settings.get("allowed_rating_violence", ["general"])
 
-    rules = session.get("rules", [])
-    speaker_name = name_map.get(current_char_id, current_char_id)
-    topic = session.get("topic", "")
-    action_count = session.get("action_count", 0)
-    other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
+def _resolve_ai_action(
+    session: dict, req: SessionNextRequest, current_char_id: str, turn: int, counters: dict,
+    initiative: list, name_map: dict, speaker_name: str, backend_id: str, model: str,
+    char: dict, user_lang: str,
+):
+    """TRPGモード Round>=2 のAI行動選択（none/skip/vote/designate/extend）と、
+    各選択肢の発言力消費・状態反映を行う（`next_turn`から切り出し、2026-08-15、
+    `session.py`分割・第二段階）。
 
-    # --- 挿入点①: TRPGモード Round>=2 の AI 行動選択 ---
-    _ai_action: dict = {"action": "none"}
-    _designated_target_name = ""
+    戻り値は `(early_result, ai_action, designated_target_name)` の3要素タプル。
+    skip・vote（発言力3以上）は即座にレスポンスを返すべき操作のため、その場合は
+    `early_result`にレスポンス辞書を入れて返す（`next_turn`はこれを見て即returnする）。
+    それ以外は`early_result`が`None`で、解決済みの`ai_action`辞書
+    （designate/extend不成立時は`{"action": "none"}`に落とされる）と、
+    designateが成立した場合のみ非空の`designated_target_name`を返す。
+    """
+    ai_action: dict = {"action": "none"}
+    designated_target_name = ""
     if session.get("trpg_mode") and session["round"] >= 2:
-        _ai_action = _ai_action_select(
+        ai_action = _ai_action_select(
             backend_id, model, char,
             current_char_id,
             counters.get(current_char_id, 0),
             session["round"], session["history"],
-            initiative, name_map, speaker_name, _user_lang,
+            initiative, name_map, speaker_name, user_lang,
         )
-        _log.info("[action] %s chose: %s", speaker_name, _ai_action.get("action"))
+        _log.info("[action] %s chose: %s", speaker_name, ai_action.get("action"))
 
-    if _ai_action["action"] == "skip":
+    if ai_action["action"] == "skip":
         _ctr_before_skip = counters.get(current_char_id, 0)
         counters[current_char_id] = _ctr_before_skip + 1
         session["turn"] = turn + 1
@@ -589,9 +613,9 @@ def next_turn(req: SessionNextRequest):
             "character_name": name_map.get(current_char_id, current_char_id),
             "round": session["round"],
             "counters": dict(counters),
-        }
+        }, ai_action, designated_target_name
 
-    if _ai_action["action"] == "vote":
+    if ai_action["action"] == "vote":
         _cur = counters.get(current_char_id, 0)
         if _cur >= 3:
             counters[current_char_id] = 0
@@ -600,98 +624,114 @@ def next_turn(req: SessionNextRequest):
                 "action": "vote_proposal",
                 "character_id": current_char_id,
                 "character_name": name_map.get(current_char_id, current_char_id),
-                "vote_type": _ai_action.get("vote_type", "topic_change"),
-                "vote_detail": _ai_action.get("vote_detail", ""),
-                "proposer_text": _ai_action.get("reason", ""),
+                "vote_type": ai_action.get("vote_type", "topic_change"),
+                "vote_detail": ai_action.get("vote_detail", ""),
+                "proposer_text": ai_action.get("reason", ""),
                 "round": session["round"],
                 "counters": dict(counters),
-            }
+            }, ai_action, designated_target_name
         else:
-            _ai_action["action"] = "none"
+            ai_action["action"] = "none"
 
-    if _ai_action["action"] == "designate":
-        _target_name = _ai_action.get("target_name", "")
+    if ai_action["action"] == "designate":
+        _target_name = ai_action.get("target_name", "")
         _target_id = next((c for c in initiative if name_map.get(c, c) == _target_name), None)
         _cur = counters.get(current_char_id, 0)
         if _target_id and _target_id != current_char_id and _cur >= 1:
             counters[current_char_id] = _cur - 1
             session["designated_next"] = _target_id
-            _designated_target_name = _target_name
+            designated_target_name = _target_name
         else:
-            _ai_action["action"] = "none"
+            ai_action["action"] = "none"
 
-    if _ai_action["action"] == "extend":
+    if ai_action["action"] == "extend":
         _cur = counters.get(current_char_id, 0)
         if _cur >= 1:
             counters[current_char_id] = _cur - 1
         else:
-            _ai_action["action"] = "none"
+            ai_action["action"] = "none"
 
+    return None, ai_action, designated_target_name
+
+
+def _build_turn_prompt_context(
+    session: dict, current_char_id: str, char: dict, initiative: list, name_map: dict,
+    profiles: dict, speaker_name: str, topic: str, rules: list, action_count: int,
+    other_names: list, user_lang: str,
+) -> tuple[str, str, bool]:
+    """LLMに渡すセッション文脈（同基底衝突アンカー文・死者視点の注入込み）と、
+    毎ターンの指示文を構築する（`next_turn`から切り出し、2026-08-15、
+    `session.py`分割・第二段階）。戻り値は `(session_ctx, user_text, is_dead)`。
+
+    プロンプト文脈構築を`context_builder.py`（既に`build_session_context`/
+    `build_turn_instruction`を持つ）へ統合し直す案がTODO.mdに残っているが、
+    今回は`next_turn`本体からの切り出しに留めた。
+    """
     directive_set_id = session.get("action_directive_set", "default")
-    _directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
+    directives = _load_action_directives().get(directive_set_id, {}).get("directives", {})
 
-    _trpg_ctx = ""
-    _scenario = None
+    trpg_ctx = ""
+    scenario = None
     if session.get("trpg_mode"):
-        _rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
-        _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
-        _trpg_ctx = _build_for_player(
-            current_char_id, char, _rulebook, _scenario or None, session, _user_lang
+        rulebook = _load_trpg_rulebook(session.get("trpg_rulebook", ""))
+        scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+        trpg_ctx = _build_for_player(
+            current_char_id, char, rulebook, scenario or None, session, user_lang
         )
 
     effective_topic = (
-        _scenario.get("title", topic) if session.get("trpg_mode") and _scenario else topic
+        scenario.get("title", topic) if session.get("trpg_mode") and scenario else topic
     )
     session_ctx = _build_session_context(
-        effective_topic, rules, initiative, name_map, speaker_name, _user_lang,
-        trpg_context=_trpg_ctx,
+        effective_topic, rules, initiative, name_map, speaker_name, user_lang,
+        trpg_context=trpg_ctx,
     )
 
     # 同基底衝突処理: 同一 base_entity_id を持つキャラが複数参加している場合にアンカー文注入
-    _base_entity_groups: dict[str, list[tuple[str, str]]] = {}
-    for _cid in initiative:
-        _c = get_character(_cid, profiles)
-        if not _c:
+    base_entity_groups: dict[str, list[tuple[str, str]]] = {}
+    for cid in initiative:
+        c = get_character(cid, profiles)
+        if not c:
             continue
-        _beid = _c.get("base_entity_id")
-        if not _beid:
+        beid = c.get("base_entity_id")
+        if not beid:
             continue
-        _cname = name_map.get(_cid, _cid)
-        _core = (_c.get("character_constitution") or {}).get("core", "")
-        _base_entity_groups.setdefault(_beid, []).append((_cname, _core))
-    for _beid, _group in _base_entity_groups.items():
-        if len(_group) < 2:
+        cname = name_map.get(cid, cid)
+        core = (c.get("character_constitution") or {}).get("core", "")
+        base_entity_groups.setdefault(beid, []).append((cname, core))
+    for beid, group in base_entity_groups.items():
+        if len(group) < 2:
             continue
-        if _user_lang == "ja":
-            _anchor_lines = "\n".join(
-                f"- {_n}：{_k}" if _k else f"- {_n}"
-                for _n, _k in _group
+        if user_lang == "ja":
+            anchor_lines = "\n".join(
+                f"- {n}：{k}" if k else f"- {n}"
+                for n, k in group
             )
             session_ctx += (
                 f"\n\n【重要：共通表現参照キャラクター】"
-                f"以下のキャラクターは共通の表現参照（{_beid}）を持ちますが、"
+                f"以下のキャラクターは共通の表現参照（{beid}）を持ちますが、"
                 "それぞれ完全に独立したアイデンティティを持ちます。"
                 "互いの人格・価値観・口調を混同・継承してはなりません。\n"
-                f"{_anchor_lines}"
+                f"{anchor_lines}"
             )
         else:
-            _anchor_lines = "\n".join(
-                f"- {_n}: {_k}" if _k else f"- {_n}"
-                for _n, _k in _group
+            anchor_lines = "\n".join(
+                f"- {n}: {k}" if k else f"- {n}"
+                for n, k in group
             )
             session_ctx += (
                 f"\n\n[IMPORTANT: Shared Expression Reference] "
-                f"The following characters share a common expression reference ({_beid}), "
+                f"The following characters share a common expression reference ({beid}), "
                 "but are completely independent identities. "
                 "They must NOT inherit or borrow personality, values, or speech patterns from each other.\n"
-                f"{_anchor_lines}"
+                f"{anchor_lines}"
             )
 
     # 死者視点：runtime_statsでステータスが0になっているキャラは死者として発言させる
-    _runtime_stats = session.get("runtime_stats", {}).get(current_char_id, {})
-    _is_dead = bool(_runtime_stats) and any(v <= 0 for v in _runtime_stats.values())
-    if _is_dead:
-        if _user_lang == "ja":
+    runtime_stats = session.get("runtime_stats", {}).get(current_char_id, {})
+    is_dead = bool(runtime_stats) and any(v <= 0 for v in runtime_stats.values())
+    if is_dead:
+        if user_lang == "ja":
             session_ctx += (
                 "\n\n【重要：死者視点】"
                 f"あなた（{speaker_name}）はこのセッションで死亡しています。"
@@ -710,9 +750,26 @@ def next_turn(req: SessionNextRequest):
 
     user_text = _build_turn_instruction(
         action_count, speaker_name, other_names, effective_topic,
-        session["history"], current_char_id, session, _directives, _user_lang,
+        session["history"], current_char_id, session, directives, user_lang,
     )
 
+    return session_ctx, user_text, is_dead
+
+
+def _generate_ai_turn_reply(
+    session: dict, current_char_id: str, char: dict, user_text: str, history: list,
+    model: str, backend_id: str, session_ctx: str, allowed_sexual: list, allowed_violence: list,
+    name_map: dict, topic: str, turn: int, is_dead: bool,
+):
+    """LLM呼び出し（vram_lock込み・1回だけ自動リトライ）と結果パースを行う
+    （`next_turn`から切り出し、2026-08-15、`session.py`分割・第二段階）。
+
+    戻り値は `(early_result, text, emotion, tags, image_prompt_en)` の5要素タプル。
+    vram_lock取得タイムアウト・LLM呼び出し自体の例外はエラーレスポンスをそのまま
+    返すべきケースのため`early_result`にレスポンス辞書を入れて返す。それ以外は
+    `early_result`が`None`で、パース済みの発言（生成失敗時は
+    "(generation failed)"のプレースホルダー文言）を返す。
+    """
     prev_emotion = next(
         (h.get("emotion", "neutral") for h in reversed(session["history"])
          if h.get("character_id") == current_char_id),
@@ -723,34 +780,34 @@ def next_turn(req: SessionNextRequest):
 
     global _last_session_debug
     from def_kari.resources.vram_lock import get_vram_lock
-    _vram_lock = get_vram_lock()
-    if not _vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
+    vram_lock = get_vram_lock()
+    if not vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
         err = f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s"
         _last_session_debug = {"error": err, "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
-        return {"error": err, "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {err})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}
+        return {"error": err, "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {err})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
     try:
-        _narrate_kwargs = dict(
+        narrate_kwargs = dict(
             character=char,
             user_text=user_text,
             history=history,
             model=model,
             backend=backend_id,
             session_context=session_ctx,
-            allowed_sexual=_allowed_sexual,
-            allowed_violence=_allowed_violence,
+            allowed_sexual=allowed_sexual,
+            allowed_violence=allowed_violence,
             current_emotion=prev_emotion,
             char_id=current_char_id,
         )
-        result = _player_agent.narrate(**_narrate_kwargs)
+        result = _player_agent.narrate(**narrate_kwargs)
         if not result.get("success"):
             import time as _time
             _time.sleep(1)
-            result = _player_agent.narrate(**_narrate_kwargs)
+            result = _player_agent.narrate(**narrate_kwargs)
     except Exception as e:
         _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
-        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}
+        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
     finally:
-        _vram_lock.release()
+        vram_lock.release()
 
     text = ""
     emotion = "neutral"
@@ -759,7 +816,7 @@ def next_turn(req: SessionNextRequest):
     if result.get("success") and result.get("result"):
         parsed = result["result"]
         text = parsed.get("dialogue", "")
-        if _is_dead and text:
+        if is_dead and text:
             text = f"『行動不能』{text}"
         emotion = parsed.get("emotion", "neutral")
         raw_tags = parsed.get("tags", [])
@@ -797,6 +854,18 @@ def next_turn(req: SessionNextRequest):
             "user_text": user_text,
         }
 
+    return None, text, emotion, tags, image_prompt_en
+
+
+def _finalize_ai_turn(
+    session: dict, req: SessionNextRequest, current_char_id: str, name_map: dict, counters: dict,
+    initiative: list, turn: int, text: str, emotion: str, tags: list, image_prompt_en: str,
+    backend_id: str, skip_gen_before: int, ai_action: dict, designated_target_name: str,
+) -> dict:
+    """生成された発言を履歴に反映し、リピートペナルティ判定・ターン/action_count
+    の進行・autosave・レスポンス組み立てを行う（`next_turn`から切り出し、
+    2026-08-15、`session.py`分割・第二段階）。
+    """
     session["history"].append({
         "role": "assistant",
         "content": f"{name_map.get(current_char_id, current_char_id)}: {text}",
@@ -835,7 +904,7 @@ def next_turn(req: SessionNextRequest):
         else:
             next_t = turn + 1
         # LLM 実行中に keeper_skip が入った場合は turn を上書きしない
-        if session.get("_skip_gen", 0) == _skip_gen_before:
+        if session.get("_skip_gen", 0) == skip_gen_before:
             session["turn"] = next_t
         session["action_count"] = 0
     else:
@@ -844,7 +913,7 @@ def next_turn(req: SessionNextRequest):
     _autosave(req.session_id)
     _char_name = name_map.get(current_char_id, current_char_id)
     _log.info("[next] Round %d | Turn %d | %s (%s) | %d chars | action=%s",
-              session["round"], turn + 1, _char_name, backend_id, len(text), _ai_action.get("action", "none"))
+              session["round"], turn + 1, _char_name, backend_id, len(text), ai_action.get("action", "none"))
     return {
         "character_id": current_char_id,
         "character_name": _char_name,
@@ -856,9 +925,73 @@ def next_turn(req: SessionNextRequest):
         "turn": turn + 1,
         "counters": dict(counters),
         "penalty_message": penalty_message,
-        "ai_action": _ai_action.get("action", "none"),
-        "designated_name": _designated_target_name or None,
+        "ai_action": ai_action.get("action", "none"),
+        "designated_name": designated_target_name or None,
     }
+
+
+def next_turn(req: SessionNextRequest):
+    """AIターンを1回進める内部ロジック。以前は`POST /api/session/next`として無認証で
+    公開されており、session_idさえ分かればkeeper権限を経ずにLLM呼び出しを無制限に
+    実行できてしまっていた（8.8参照）。フロントからは未使用だったためエンドポイントは
+    廃止したが、`_execute_ai_turn`が内部関数として直接呼び出すためこの関数自体は残す。
+    """
+    session = _sessions.get(req.session_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    early_result, _ctx = _resolve_turn_start(session, req)
+    if early_result is not None:
+        return early_result
+
+    initiative = session["initiative"]
+    name_map = session["name_map"]
+    current_char_id = _ctx["current_char_id"]
+    turn = _ctx["turn"]
+    counters = _ctx["counters"]
+    profiles = _ctx["profiles"]
+    char = _ctx["char"]
+    backend_id = _ctx["backend_id"]
+    model = _ctx["model"]
+    _skip_gen_before = _ctx["_skip_gen_before"]
+
+    history = _build_recent_history(session, current_char_id, name_map)
+
+    _settings = load_settings()
+    _user_lang = _settings.get("user_language", "ja") or "ja"
+    _allowed_sexual = _settings.get("allowed_rating_sexual", ["general"])
+    _allowed_violence = _settings.get("allowed_rating_violence", ["general"])
+
+    rules = session.get("rules", [])
+    speaker_name = name_map.get(current_char_id, current_char_id)
+    topic = session.get("topic", "")
+    action_count = session.get("action_count", 0)
+    other_names = [name_map.get(c, c) for c in initiative if name_map.get(c, c) != speaker_name]
+
+    early_result, _ai_action, _designated_target_name = _resolve_ai_action(
+        session, req, current_char_id, turn, counters, initiative, name_map,
+        speaker_name, backend_id, model, char, _user_lang,
+    )
+    if early_result is not None:
+        return early_result
+
+    session_ctx, user_text, _is_dead = _build_turn_prompt_context(
+        session, current_char_id, char, initiative, name_map, profiles,
+        speaker_name, topic, rules, action_count, other_names, _user_lang,
+    )
+
+    early_result, text, emotion, tags, image_prompt_en = _generate_ai_turn_reply(
+        session, current_char_id, char, user_text, history, model, backend_id,
+        session_ctx, _allowed_sexual, _allowed_violence, name_map, topic, turn, _is_dead,
+    )
+    if early_result is not None:
+        return early_result
+
+    return _finalize_ai_turn(
+        session, req, current_char_id, name_map, counters, initiative, turn,
+        text, emotion, tags, image_prompt_en, backend_id, _skip_gen_before,
+        _ai_action, _designated_target_name,
+    )
 
 
 @router.post("/{session_id}/retake")
@@ -989,6 +1122,70 @@ class HumanTurnRequest(BaseModel):
         return v
 
 
+def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: dict, current_char_id: str) -> None:
+    """human_turn_actionのアクション別認可チェック。違反時はHTTPExceptionを送出し、
+    問題なければ何も返さない（`session.py`分割・第二段階、2026-08-15切り出し）。
+
+    ── ターン所有権チェック(2026-08-08修正) ────────────────────────
+    send/extend/skip は「今まさに initiative[turn] の人間キャラの番である」ことを
+    前提に session["turn"] を進める。だが従来はcurrent_char_idが本当に人間枠か・
+    呼び出しトークンがそのキャラ本人かを一切検証していなかった。そのため同一
+    クライアントからの二重送信(ネットワーク再試行・連打・スクリプトでの連打)が
+    後続の別キャラ(他プレイヤーやAI含む)のターンまで次々と消費してしまっていた
+    (frontend/e2e/ai_turn_dedup.js で実証。8並列送信→4件処理されRoundが進む)。
+
+    当初「turnの読み取りから書き戻しまでの間に割り込まれるTOCTOU」と誤診断していたが、
+    human_turn_action は async def ながら本体に await が一切無く、asyncioの協調
+    スケジューリング上この関数は呼ばれたら他コルーチンに横入りされず単一
+    イベントループ上でアトミックに完走する。実体はレースではなく、この認可漏れ
+    そのものだった(重複送信は真の並行処理ではなく、逐次的に全件処理されていた)。
+
+    host/gm はゲームマスターとして人間キャラを兼任する場合があるが、トークン発行時に
+    char_idを持たない(issue_player_jwt呼び出し側を参照)ため、ここでは対象外のまま
+    維持する(host_tokenでの人間ターン送信は従来通り許可＝既存テスト・挙動を壊さない)。
+    host/gmが他人の人間キャラのターンを送信できてしまう点は既知の残課題としてTODO.mdへ。
+    """
+    if req.action in ("send", "extend", "skip"):
+        if current_char_id not in session.get("human_char_ids", []):
+            raise HTTPException(409, "It is not currently a human player's turn")
+        if auth.get("role") == "player" and auth.get("char_id") != current_char_id:
+            raise HTTPException(409, "It is not your turn")
+        # ── ターンの多重完了ガード(2026-08-08修正) ────────────────────
+        # send/skip はターン(引いてはround)を進める「確定」操作。上のオーナーシップ
+        # チェックだけでは、initiativeに人間が1人しかいない(AI不在の)セッションで
+        # 同一クライアントが同じ送信を連打した場合を防げない: _run_ai_turns側の
+        # 巻き戻り(turn>=len(initiative)時にround+1・turn=0)はLLM呼び出しを伴わず
+        # 同一イベントループtick内で即座に完了し、次の巻き戻り後もcurrent_char_idは
+        # 依然として同じ本人のキャラのままなので、オーナーシップは何度でも一致して
+        # しまう(frontend/e2e/ai_turn_dedup.js で実証)。
+        #
+        # そこでWAITING_FOR_HUMANイベントで配布したroundをクライアントに送り返させ、
+        # サーバー側の現在roundと一致する場合のみ「確定」操作を許可する。1件目の
+        # send/skipが処理された時点でroundは進む(または次のWAITING_FOR_HUMANで
+        # 新しいroundが配布されるまでは)ため、同じexpected_roundを使った残りの
+        # 重複リクエストは以後すべて不一致で拒否される。extendはターンを進めない
+        # 「積む」操作で、1ターン中に複数回呼ばれるのが正規の使い方のためチェック対象外。
+        #
+        # 既知の残課題: designated_next(GM指名による割り込み)で同一roundのまま
+        # current_char_idが同じ人間キャラに再度回ってくる稀なケースはこのroundだけの
+        # 比較では区別できない。実害は小さいためTODO.mdへ別途記録する。
+        if req.action in ("send", "skip") and req.expected_round != session["round"]:
+            raise HTTPException(409, "This turn has already been completed (stale request)")
+
+    # 8.34対策: interrupt/generate_imageはsend/extend/skipと違い「今のターンの本人」
+    # である必要はない（割り込みは他人のターン中に別の人間キャラが横から発言する
+    # 機能のため、req.character_idがcurrent_char_idと異なること自体は仕様通り）。
+    # しかし従来は「そのreq.character_idを名乗るトークンが本当にその本人か」を
+    # 一切検証しておらず、任意のplayerトークンが他人のcharacter_idを指定するだけで
+    # なりすまし発言・他人の発言力を勝手に消費できてしまっていた。
+    if req.action in ("interrupt", "generate_image"):
+        actor_id = req.character_id if req.character_id else current_char_id
+        if actor_id not in session.get("human_char_ids", []):
+            raise HTTPException(409, "Not a human player's character")
+        if auth.get("role") == "player" and auth.get("char_id") != actor_id:
+            raise HTTPException(409, "You can only act as your own character")
+
+
 @router.post("/{session_id}/human_turn")
 async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict = Depends(require_player)):
     """人間プレイヤーのターンアクション（send / extend / skip）。
@@ -1021,63 +1218,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
     counters = session.setdefault("counters", {})
     char_name = name_map.get(current_char_id, current_char_id)
 
-    # ── ターン所有権チェック(2026-08-08修正) ────────────────────────
-    # send/extend/skip は「今まさに initiative[turn] の人間キャラの番である」ことを
-    # 前提に session["turn"] を進める。だが従来はcurrent_char_idが本当に人間枠か・
-    # 呼び出しトークンがそのキャラ本人かを一切検証していなかった。そのため同一
-    # クライアントからの二重送信(ネットワーク再試行・連打・スクリプトでの連打)が
-    # 後続の別キャラ(他プレイヤーやAI含む)のターンまで次々と消費してしまっていた
-    # (frontend/e2e/ai_turn_dedup.js で実証。8並列送信→4件処理されRoundが進む)。
-    #
-    # 当初「turnの読み取りから書き戻しまでの間に割り込まれるTOCTOU」と誤診断していたが、
-    # human_turn_action は async def ながら本体に await が一切無く、asyncioの協調
-    # スケジューリング上この関数は呼ばれたら他コルーチンに横入りされず単一
-    # イベントループ上でアトミックに完走する。実体はレースではなく、この認可漏れ
-    # そのものだった(重複送信は真の並行処理ではなく、逐次的に全件処理されていた)。
-    #
-    # host/gm はゲームマスターとして人間キャラを兼任する場合があるが、トークン発行時に
-    # char_idを持たない(issue_player_jwt呼び出し側を参照)ため、ここでは対象外のまま
-    # 維持する(host_tokenでの人間ターン送信は従来通り許可＝既存テスト・挙動を壊さない)。
-    # host/gmが他人の人間キャラのターンを送信できてしまう点は既知の残課題としてTODO.mdへ。
-    if req.action in ("send", "extend", "skip"):
-        if current_char_id not in session.get("human_char_ids", []):
-            raise HTTPException(409, "It is not currently a human player's turn")
-        if _auth.get("role") == "player" and _auth.get("char_id") != current_char_id:
-            raise HTTPException(409, "It is not your turn")
-        # ── ターンの多重完了ガード(2026-08-08修正) ────────────────────
-        # send/skip はターン(引いてはround)を進める「確定」操作。上のオーナーシップ
-        # チェックだけでは、initiativeに人間が1人しかいない(AI不在の)セッションで
-        # 同一クライアントが同じ送信を連打した場合を防げない: _run_ai_turns側の
-        # 巻き戻り(turn>=len(initiative)時にround+1・turn=0)はLLM呼び出しを伴わず
-        # 同一イベントループtick内で即座に完了し、次の巻き戻り後もcurrent_char_idは
-        # 依然として同じ本人のキャラのままなので、オーナーシップは何度でも一致して
-        # しまう(frontend/e2e/ai_turn_dedup.js で実証)。
-        #
-        # そこでWAITING_FOR_HUMANイベントで配布したroundをクライアントに送り返させ、
-        # サーバー側の現在roundと一致する場合のみ「確定」操作を許可する。1件目の
-        # send/skipが処理された時点でroundは進む(または次のWAITING_FOR_HUMANで
-        # 新しいroundが配布されるまでは)ため、同じexpected_roundを使った残りの
-        # 重複リクエストは以後すべて不一致で拒否される。extendはターンを進めない
-        # 「積む」操作で、1ターン中に複数回呼ばれるのが正規の使い方のためチェック対象外。
-        #
-        # 既知の残課題: designated_next(GM指名による割り込み)で同一roundのまま
-        # current_char_idが同じ人間キャラに再度回ってくる稀なケースはこのroundだけの
-        # 比較では区別できない。実害は小さいためTODO.mdへ別途記録する。
-        if req.action in ("send", "skip") and req.expected_round != session["round"]:
-            raise HTTPException(409, "This turn has already been completed (stale request)")
-
-    # 8.34対策: interrupt/generate_imageはsend/extend/skipと違い「今のターンの本人」
-    # である必要はない（割り込みは他人のターン中に別の人間キャラが横から発言する
-    # 機能のため、req.character_idがcurrent_char_idと異なること自体は仕様通り）。
-    # しかし従来は「そのreq.character_idを名乗るトークンが本当にその本人か」を
-    # 一切検証しておらず、任意のplayerトークンが他人のcharacter_idを指定するだけで
-    # なりすまし発言・他人の発言力を勝手に消費できてしまっていた。
-    if req.action in ("interrupt", "generate_image"):
-        _actor_id = req.character_id if req.character_id else current_char_id
-        if _actor_id not in session.get("human_char_ids", []):
-            raise HTTPException(409, "Not a human player's character")
-        if _auth.get("role") == "player" and _auth.get("char_id") != _actor_id:
-            raise HTTPException(409, "You can only act as your own character")
+    _check_human_turn_authorization(session, req, _auth, current_char_id)
 
     if req.action == "interrupt":
         if not req.text.strip():
