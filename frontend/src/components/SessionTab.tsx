@@ -250,6 +250,13 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // hiddenHistory/hasMoreと同じ考え方)。リロード・途中参加時に会話が全部消える
   // 問題(2026-08-08発覚)への対応。
   const [hiddenSessionHistory, setHiddenSessionHistory] = useState<SessionMessage[]>([])
+  // GET /{session_id}のname_map（サーバー正本）。ヘッダーの発言順表示は従来
+  // characters（App.tsxからのprop、ローカル専用ポートの/api/characters/でしか
+  // 取得できない）とparticipantsだけから名前を合成していたため、公開ポート経由の
+  // ゲストではAIキャラの名前が解決できずraw character_id（日付サフィックス付き）が
+  // そのまま表示されていた（2026-08-16、リロード動確中にユーザーが実機で発見）。
+  // 公開ポートでも読めるGET /{session_id}のname_mapを正本として持たせる。
+  const [sessionNameMap, setSessionNameMap] = useState<Record<string, string>>({})
   const initialHistoryFetchedForRef = useRef('')
   // AUDIO_READY（human_turn_action・vote/deliberateの人間/AI発言読み上げ）の
   // request_id → messages配列インデックス対応表。AUDIO_READY受信時にここを引いて
@@ -376,9 +383,16 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           })
           const data = await res.json()
           if (!res.ok) console.error('initial history fetch failed:', data.detail || res.status)
+          if (res.ok && !cancelled && data.session?.initiative) {
+            initiativeRef.current = data.session.initiative
+            setInitiative(data.session.initiative)
+          }
+          const nameMap: Record<string, string> = data.session?.name_map || {}
+          if (res.ok && !cancelled && data.session?.name_map) {
+            setSessionNameMap(nameMap)
+          }
           const history: any[] = res.ok ? (data.session?.history || []) : []
           if (history.length > 0 && !cancelled) {
-            const nameMap: Record<string, string> = data.session?.name_map || {}
             const charMapForHistory = Object.fromEntries(characters.map(c => [c.id, c]))
             const reconstructed = reconstructMessages(history, nameMap, charMapForHistory)
             if (reconstructed.length > RECENT_COUNT) {
@@ -404,6 +418,26 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       wsRef.current = null
     }
   }, [sessionId])
+
+  // ── リロード復帰時、charactersが遅れて届いた場合のimageColor補完 ──────
+  // connectAfterInitialHistory（上のuseEffect内）はマウント直後の1回だけ
+  // reconstructMessagesを実行するが、その時点でApp.tsx側のキャラ一覧取得
+  // （/api/characters/、非同期）がまだ完了していないと、charMapForHistoryが
+  // 空のままimageColorが全メッセージでundefinedになり、二度と補完されない
+  // 問題があった（2026-08-15発覚、2026-08-16修正）。charactersが後から
+  // 届いた時点で、既存messages/hiddenSessionHistoryのimageColorを再計算する。
+  useEffect(() => {
+    if (characters.length === 0) return
+    const charMap = Object.fromEntries(characters.map(c => [c.id, c]))
+    const backfillImageColor = (msgs: SessionMessage[]) =>
+      msgs.map(m => {
+        const color = charMap[m.character_id]?.image_color
+        return color && m.imageColor !== color ? { ...m, imageColor: color } : m
+      })
+    setMessages(prev => backfillImageColor(prev))
+    setHiddenSessionHistory(prev => backfillImageColor(prev))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characters])
 
   // ── WS イベントハンドラ ────────────────────────────────────────
   const handleSessionEvent = async (event: { type: string; payload: any }) => {
@@ -2721,9 +2755,13 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   }
 
   // ── セッション中 ──────────────────────────────────────────
+  // characters（App.tsxのprop、ローカル専用ポートの/api/characters/でしか取得できず
+  // 公開ポート経由のゲストでは常に空）だけでは足りないため、公開ポートでも読める
+  // sessionNameMap（GET /{session_id}のname_map）を正本として最後に重ねる。
   const nameMap: Record<string, string> = {
     ...Object.fromEntries(characters.map(c => [c.id, c.name])),
     ...Object.fromEntries(participants.filter(p => p.char_id && p.display_name).map(p => [p.char_id, p.display_name])),
+    ...sessionNameMap,
   }
 
   console.log('[SessionTab] render: sessionId=', sessionId, 'lobbyActive=', lobbyActive)

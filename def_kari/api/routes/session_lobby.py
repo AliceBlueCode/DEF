@@ -727,6 +727,13 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
             sess["name_map"][req.host_char_id] = char.get("name", req.host_char_id)
             if char.get("player_type") == "human":
                 sess.setdefault("human_char_ids", []).append(req.host_char_id)
+    # オンラインセッションのinitiativeは参加/追加された順（join_session・
+    # lobby_add_ai・上のホストキャラ追加、いずれも.append）で積み上がるだけで、
+    # ここまでランダム化する処理が無かった。オフラインセッション（start_session、
+    # random.sample使用）と非対称で、常に最初に参加した人間が1番手固定になる
+    # バグだった（2026-08-16、ユーザーが実機で発見）。ロビー解除＝ゲーム開始の
+    # このタイミングで1回だけシャッフルする。
+    random.shuffle(sess["initiative"])
     # ロビー解除 → 参加者全員に通知
     sess["lobby_active"] = False
     from def_kari.gm.events import game_event_bus, SESSION_STARTED

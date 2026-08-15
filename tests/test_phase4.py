@@ -392,6 +392,64 @@ def test_lobby_config_preserves_observer_host_keeper_mode():
     assert _sessions[sid]["host_keeper_mode"] is False
 
 
+def test_lobby_config_shuffles_initiative():
+    """オンラインセッションのinitiativeは参加/追加順に積み上がるだけでランダム化されて
+    いなかった（常に最初に参加した人間が1番手固定）バグの回帰テスト。
+    lobby_config（ロビー解除=ゲーム開始）でrandom.shuffleが呼ばれること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    for cid in ("character_aoi_001", "character_claude_001", "character_hanfei_001"):
+        resp = client.post(f"/api/session/{sid}/lobby/add_ai", json={"character_id": cid}, headers=headers)
+        assert resp.status_code == 200
+
+    with patch("def_kari.api.routes.session_lobby.random.shuffle") as mock_shuffle:
+        resp = client.post(
+            f"/api/session/{sid}/lobby_config",
+            json={"max_players": 4, "host_char_id": ""},
+            headers=headers,
+        )
+    assert resp.status_code == 200
+    mock_shuffle.assert_called_once()
+    # shuffle対象はこの時点のsess["initiative"]そのもの（参照渡し、in-place shuffle）
+    assert mock_shuffle.call_args[0][0] == _sessions[sid]["initiative"]
+
+
+def test_lobby_config_shuffle_preserves_initiative_membership():
+    """random.shuffleは実際にはリストをin-placeで並べ替えるだけなので、要素の集合
+    （メンバー・人数）自体は変化しないこと（モックしない実挙動での回帰確認）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    for cid in ("character_aoi_001", "character_claude_001", "character_hanfei_001"):
+        client.post(f"/api/session/{sid}/lobby/add_ai", json={"character_id": cid}, headers=headers)
+    before = set(_sessions[sid]["initiative"])
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby_config",
+        json={"max_players": 4, "host_char_id": ""},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    after = _sessions[sid]["initiative"]
+    assert set(after) == before
+    assert len(after) == len(before)
+
+
 # ── PATCH /lobby/mode & /lobby/keeper_source ─────────────────────────
 
 def test_lobby_set_trpg_mode():
