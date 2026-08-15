@@ -105,30 +105,32 @@ def test_build_for_npc_dynamic_relationship_overrides_static():
 def test_build_initial_npc_state_from_scenario(monkeypatch=None):
     """_build_initial_npc_state がシナリオの NPC を正しく初期化する。"""
     import def_kari.api.routes.session as session_module
+    import def_kari.api.routes.session_lobby as session_lobby_module
 
     # _load_trpg_scenario をモンキーパッチ
-    original = session_module._load_trpg_scenario
-    session_module._load_trpg_scenario = lambda _, public_only=False: _SCENARIO
+    original = session_lobby_module._load_trpg_scenario
+    session_lobby_module._load_trpg_scenario = lambda _, public_only=False: _SCENARIO
     try:
         state = session_module._build_initial_npc_state("dummy_scenario")
         assert "butler" in state
         assert "館に地下室がある" in state["butler"]["knowledge"]
         assert state["butler"]["relationship"]["char_hanfei"]["trust"] == 40
     finally:
-        session_module._load_trpg_scenario = original
+        session_lobby_module._load_trpg_scenario = original
 
     print("PASS: _build_initial_npc_state populates from scenario NPC data")
 
 
 def test_build_initial_npc_state_empty_scenario():
     import def_kari.api.routes.session as session_module
-    original = session_module._load_trpg_scenario
-    session_module._load_trpg_scenario = lambda _, public_only=False: {}
+    import def_kari.api.routes.session_lobby as session_lobby_module
+    original = session_lobby_module._load_trpg_scenario
+    session_lobby_module._load_trpg_scenario = lambda _, public_only=False: {}
     try:
         state = session_module._build_initial_npc_state("dummy_scenario")
         assert state == {}
     finally:
-        session_module._load_trpg_scenario = original
+        session_lobby_module._load_trpg_scenario = original
     print("PASS: _build_initial_npc_state returns {} for scenario with no NPCs")
 
 

@@ -707,7 +707,7 @@ def test_claim_char_id_rating_exceeds_invite_rejected():
     _sessions[sid]["name_map"]["char_hentai_roster"] = "RosterChar"
 
     fake_char = {"id": "char_hentai_roster", "content_policy": {"rating_sexual": "hentai"}}
-    with patch("def_kari.api.routes.session.get_character", return_value=fake_char):
+    with patch("def_kari.api.routes.session_lobby.get_character", return_value=fake_char):
         resp = client.post("/api/session/join", json={
             "invite_code": code,
             "claim_char_id": "char_hentai_roster",
@@ -838,7 +838,7 @@ def test_join_character_json_rate_limited():
     from def_kari.api.routes.session import _sessions
     _sessions[sid]["max_players"] = 0  # 無制限にし、キャパシティ制限ではなくレート制限だけを検証する
 
-    with patch("def_kari.api.routes.session._generate_visitor_images"):
+    with patch("def_kari.api.routes.session_lobby._generate_visitor_images"):
         statuses = []
         for i in range(6):
             resp = client.post("/api/session/join", json={

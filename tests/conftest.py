@@ -24,7 +24,7 @@ from def_kari.safety.character_audit import AuditResult
 @pytest.fixture(autouse=True)
 def _stub_character_audit():
     with patch(
-        "def_kari.api.routes.session.audit_character_json",
+        "def_kari.api.routes.session_lobby.audit_character_json",
         return_value=AuditResult(passed=True, reason="stubbed"),
     ) as m:
         yield m

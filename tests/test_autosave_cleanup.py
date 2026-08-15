@@ -20,7 +20,7 @@ def test_cleanup_removes_stale_inactive_session_files(tmp_path):
     os.utime(stale, (old_time, old_time))
 
     assert "stale_session" not in _sessions
-    with patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+    with patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
         _autosave_last_cleanup["t"] = float("-inf")  # 呼び出し頻度制限をリセットして即実行させる
         _cleanup_stale_autosaves()
 
@@ -34,7 +34,7 @@ def test_cleanup_keeps_fresh_files(tmp_path):
     fresh = tmp_path / "fresh_session.json"
     fresh.write_text("{}", encoding="utf-8")
 
-    with patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+    with patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
         _autosave_last_cleanup["t"] = float("-inf")
         _cleanup_stale_autosaves()
 
@@ -54,7 +54,7 @@ def test_cleanup_keeps_stale_files_for_active_sessions(tmp_path):
 
     _sessions[sid] = {"id": sid}
     try:
-        with patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+        with patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
             _autosave_last_cleanup["t"] = float("-inf")
             _cleanup_stale_autosaves()
         assert active.exists()
@@ -72,7 +72,7 @@ def test_cleanup_respects_rate_limit(tmp_path):
     import os
     os.utime(stale, (old_time, old_time))
 
-    with patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+    with patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
         _autosave_last_cleanup["t"] = time.monotonic()  # ついさっき実行済みという体にする
         _cleanup_stale_autosaves()
 

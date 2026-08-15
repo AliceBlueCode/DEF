@@ -289,7 +289,7 @@ def test_session_rules_and_directives_exclude_private_over_public_app(tmp_path):
     public_main.pyの両方に同一インスタンスがマウントされているため、request.app.state
     のフラグでポートを判別し、public_app経由の場合のみdata/private/を除外する。
     """
-    from def_kari.api.routes import session as session_module
+    from def_kari.api.routes import session_rules as session_rules_module
 
     public_dir = tmp_path / "public_rules"
     private_dir = tmp_path / "private_rules"
@@ -305,10 +305,10 @@ def test_session_rules_and_directives_exclude_private_over_public_app(tmp_path):
     (public_dir_d / "standard.json").write_text('{"id": "standard", "label": "Standard"}', encoding="utf-8")
     (private_dir_d / "nsfw_directive.json").write_text('{"id": "nsfw_directive", "label": "NSFW Directive"}', encoding="utf-8")
 
-    with patch.object(session_module, "_RULE_DIRS", [public_dir, private_dir]), \
-         patch.object(session_module, "_PUBLIC_RULE_DIRS", [public_dir]), \
-         patch.object(session_module, "_DIRECTIVE_DIRS", [public_dir_d, private_dir_d]), \
-         patch.object(session_module, "_PUBLIC_DIRECTIVE_DIRS", [public_dir_d]):
+    with patch.object(session_rules_module, "_RULE_DIRS", [public_dir, private_dir]), \
+         patch.object(session_rules_module, "_PUBLIC_RULE_DIRS", [public_dir]), \
+         patch.object(session_rules_module, "_DIRECTIVE_DIRS", [public_dir_d, private_dir_d]), \
+         patch.object(session_rules_module, "_PUBLIC_DIRECTIVE_DIRS", [public_dir_d]):
 
         # public_app（無認証・外部公開）: privateは一切見えない
         r_list = client.get("/api/session/rules")
@@ -353,6 +353,7 @@ def test_start_via_public_app_cannot_pull_private_rule_content(tmp_path):
     で単体テスト済み。
     """
     from def_kari.api.routes import session as session_module
+    from def_kari.api.routes import session_rules as session_rules_module
 
     public_dir = tmp_path / "public_rules"
     private_dir = tmp_path / "private_rules"
@@ -363,8 +364,8 @@ def test_start_via_public_app_cannot_pull_private_rule_content(tmp_path):
         encoding="utf-8",
     )
 
-    with patch.object(session_module, "_RULE_DIRS", [public_dir, private_dir]), \
-         patch.object(session_module, "_PUBLIC_RULE_DIRS", [public_dir]):
+    with patch.object(session_rules_module, "_RULE_DIRS", [public_dir, private_dir]), \
+         patch.object(session_rules_module, "_PUBLIC_RULE_DIRS", [public_dir]):
 
         # public_app（無認証）: private rule_setを指定しても中身は空で作られる
         r_pub = client.post("/api/session/start", json={"character_ids": [], "rule_set": "nsfw_secret"})

@@ -154,10 +154,10 @@ def test_leave_triggers_autosave_removing_stale_token(tmp_path):
     """leave_session が players 除去を即座に autosave へ反映すること
     （以前はここでautosaveしておらず、直後にクラッシュ/再起動すると
     退室済みトークンがautosaveファイルに残ったままになっていた）。"""
-    from def_kari.api.routes import session as session_module
+    from def_kari.api.routes import session_persistence as session_persistence_module
     import json as _json
 
-    with patch.object(session_module, "_AUTOSAVE_DIR", tmp_path):
+    with patch.object(session_persistence_module, "_AUTOSAVE_DIR", tmp_path):
         start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
         d = start.json()
         sid = d["session_id"]
@@ -172,7 +172,7 @@ def test_leave_triggers_autosave_removing_stale_token(tmp_path):
 
         # join自体はautosaveしない（guest_charsのみ_autosave_visitorsで永続化）ため、
         # セッション進行中の何らかの操作で後からautosaveされた状態を模して1回呼ぶ。
-        session_module._autosave(sid)
+        session_persistence_module._autosave(sid)
         autosave_path = tmp_path / f"{sid}.json"
         assert autosave_path.exists()
         saved_before = _json.loads(autosave_path.read_text(encoding="utf-8"))
@@ -186,7 +186,8 @@ def test_leave_triggers_autosave_removing_stale_token(tmp_path):
             "leave直後にautosaveが更新され、退室済みトークンが除去されているはず"
         )
 
-        session_module._sessions.pop(sid, None)
+        from def_kari.api.routes.session import _sessions
+        _sessions.pop(sid, None)
 
 
 def test_ws_rejects_valid_but_unregistered_token():

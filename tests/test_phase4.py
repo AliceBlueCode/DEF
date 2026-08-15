@@ -41,7 +41,7 @@ async def test_run_ai_turns_stops_at_human():
         "idle_shutdown_task": None,
     }
     called = []
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=lambda s: called.append(s) or {}):
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=lambda s: called.append(s) or {}):
         await _run_ai_turns(sid)
     assert called == []  # AIターンは呼ばれない
     del _sessions[sid]
@@ -66,7 +66,7 @@ async def test_run_ai_turns_stops_on_error():
         calls.append(s)
         return {"error": "backend down"}
 
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute):
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=_fake_execute):
         await _run_ai_turns(sid)
     assert len(calls) == 1  # 1回試みてerrorで停止
     del _sessions[sid]
@@ -90,7 +90,7 @@ async def test_run_ai_turns_stops_on_waiting_for_human():
         calls.append(s)
         return {"waiting_for_human": True}
 
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute):
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=_fake_execute):
         await _run_ai_turns(sid)
     assert len(calls) == 1
     del _sessions[sid]
@@ -119,7 +119,7 @@ async def test_run_ai_turns_cancelled():
         return {}
 
     async def _run():
-        with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_slow_execute):
+        with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=_slow_execute):
             await _run_ai_turns(sid)
 
     task = asyncio.create_task(_run())
@@ -208,8 +208,8 @@ def test_human_turn_send_creates_ai_task():
             # 無条件で呼ぶ別経路（人間プレイヤー自身の発言読み上げ）。これをモックし忘れると
             # threading.Thread が実際にVOICEVOXへの接続を試み、vram_lockを握ったまま
             # ブロックし続ける（asyncioのai_taskとは別物なのでportal.callでは待てない）。
-            with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=lambda s: {}), \
-                 patch("def_kari.api.routes.session._start_background_tts", return_value=""):
+            with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=lambda s: {}), \
+                 patch("def_kari.api.routes.session_turn_engine._start_background_tts", return_value=""):
                 resp = client.post(
                     f"/api/session/{sid}/human_turn",
                     json={"action": "send", "text": "Hello world", "expected_round": sess["round"]},
@@ -250,7 +250,7 @@ def test_vote_deliberate_propagates_tags_from_llm_result():
         "success": True,
         "result": {"dialogue": "そういう話は苦手です……", "emotion": "embarrassed", "tags": ["nsfw"]},
     }
-    with patch("def_kari.api.routes.session.generate_structured_reply", return_value=mock_result), \
+    with patch("def_kari.api.routes.session_gameplay.generate_structured_reply", return_value=mock_result), \
          patch("def_kari.api.routes.session._start_background_tts", return_value=""):
         resp = client.post(
             f"/api/session/{sid}/vote/deliberate",
@@ -283,7 +283,7 @@ def test_vote_deliberate_defaults_to_empty_tags_on_failure():
     sess["initiative"] = ["char_ai"]
     sess["name_map"]["char_ai"] = "AIキャラ"
 
-    with patch("def_kari.api.routes.session.generate_structured_reply", side_effect=RuntimeError("boom")), \
+    with patch("def_kari.api.routes.session_gameplay.generate_structured_reply", side_effect=RuntimeError("boom")), \
          patch("def_kari.api.routes.session._start_background_tts", return_value=""):
         resp = client.post(
             f"/api/session/{sid}/vote/deliberate",
@@ -352,8 +352,8 @@ async def test_run_ai_turns_discards_stale_result_on_skip():
         sess["turn"] = 1  # スキップ後は human ターン
         return {"character_id": "char_ai", "character_name": "AI", "text": "hello"}
 
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute):
-        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=_fake_execute):
+        with patch("def_kari.api.routes.session_turn_engine._game_event_bus") as mock_bus:
             mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
             await _run_ai_turns(sid)
 
@@ -507,9 +507,9 @@ async def test_run_ai_turns_emits_waiting_for_human_after_ai_turn():
     # （本テストの検証対象はWAITING_FOR_HUMANのemit有無であり、TTS/T2I生成の
     # 副作用は想定外）。vram_lockを握ったまま後続テストとデッドロックする
     # 事故が実際に起きたため、この副作用そのものをモックで止める（2026-08-02）。
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute), \
-         patch("def_kari.api.routes.session._maybe_generate_turn_media"):
-        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=_fake_execute), \
+         patch("def_kari.api.routes.session_turn_engine._maybe_generate_turn_media"):
+        with patch("def_kari.api.routes.session_turn_engine._game_event_bus") as mock_bus:
             mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
             await _run_ai_turns(sid)
 
@@ -547,9 +547,9 @@ async def test_run_ai_turns_no_waiting_emit_when_next_is_ai():
         return {"character_id": "char_ai1", "character_name": "AI1", "text": "hi"}
 
     # 理由は test_run_ai_turns_emits_waiting_for_human_after_ai_turn のコメント参照
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=_fake_execute), \
-         patch("def_kari.api.routes.session._maybe_generate_turn_media"):
-        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=_fake_execute), \
+         patch("def_kari.api.routes.session_turn_engine._maybe_generate_turn_media"):
+        with patch("def_kari.api.routes.session_turn_engine._game_event_bus") as mock_bus:
             mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
             await _run_ai_turns(sid)
 
@@ -585,8 +585,8 @@ def test_auto_advance_patch_and_broadcast():
             sid, host_token = d["session_id"], d["host_token"]
             headers = {"Authorization": f"Bearer {host_token}"}
 
-            with patch("def_kari.api.routes.session._game_event_bus") as mock_bus, \
-                 patch("def_kari.api.routes.session._execute_ai_turn", side_effect=lambda s: {}):
+            with patch("def_kari.api.routes.session_gameplay._game_event_bus") as mock_bus, \
+                 patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=lambda s: {}):
                 mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
 
                 # ロビー中: フラグは更新されるが ai_task は起動しない
@@ -659,8 +659,8 @@ async def test_run_ai_turns_error_clears_auto_advance():
     }
     emitted = []
 
-    with patch("def_kari.api.routes.session._execute_ai_turn", side_effect=lambda s: {"error": "backend down"}):
-        with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=lambda s: {"error": "backend down"}):
+        with patch("def_kari.api.routes.session_turn_engine._game_event_bus") as mock_bus:
             mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
             await _run_ai_turns(sid)
 
@@ -765,7 +765,7 @@ def test_join_character_json_persists_visitor_file_on_audit_pass(tmp_path, _stub
     from def_kari.api.routes.session import _sessions
     client = TestClient(app)
 
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path):
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path):
         start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
         d = start.json()
         sid = d["session_id"]
@@ -817,7 +817,7 @@ def test_join_visitor_dir_named_by_server_char_id_not_client_supplied(tmp_path, 
     from def_kari.api.routes.session import _sessions
     client = TestClient(app)
 
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path):
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path):
         start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
         d = start.json()
         sid = d["session_id"]
@@ -841,7 +841,7 @@ def test_autosave_refreshes_visitor_snapshot_with_skill_values(tmp_path, _stub_c
     from def_kari.api.routes.session import _sessions, _autosave
     client = TestClient(app)
 
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path):
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path):
         start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
         d = start.json()
         sid = d["session_id"]
@@ -870,8 +870,8 @@ def test_visitors_dir_cap_skips_new_dirs_but_not_existing(tmp_path, _stub_charac
     (tmp_path / "existing_guest").mkdir()
     (tmp_path / "existing_guest" / "profile.json").write_text("{}", encoding="utf-8")
 
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path), \
-         patch("def_kari.api.routes.session._VISITORS_MAX_FILES", 1):
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path), \
+         patch("def_kari.api.routes.session_persistence._VISITORS_MAX_FILES", 1):
         start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
         d = start.json()
         sid = d["session_id"]
@@ -919,17 +919,17 @@ def test_extract_appearance_tags_empty_when_missing():
 
 def test_generate_visitor_images_skips_when_no_appearance_tags(tmp_path):
     from def_kari.api.routes.session import _generate_visitor_images
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path), \
-         patch("def_kari.api.routes.session._generate_t2i_image") as mock_gen:
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path), \
+         patch("def_kari.api.routes.session_persistence._generate_t2i_image") as mock_gen:
         _generate_visitor_images("sid", "guest_x", {"name": "no tags"})
     mock_gen.assert_not_called()
 
 
 def test_generate_visitor_images_skips_when_no_t2i_backend(tmp_path):
     from def_kari.api.routes.session import _generate_visitor_images
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path), \
-         patch("def_kari.api.routes.session._generate_t2i_image") as mock_gen, \
-         patch("def_kari.api.routes.session.load_settings", return_value={}):
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path), \
+         patch("def_kari.api.routes.session_persistence._generate_t2i_image") as mock_gen, \
+         patch("def_kari.api.routes.session_persistence.load_settings", return_value={}):
         _generate_visitor_images("sid", "guest_x", {"appearance_tags": "1girl"})
     mock_gen.assert_not_called()
 
@@ -952,10 +952,10 @@ def test_generate_visitor_images_saves_icon_and_standing_and_emits_ready(tmp_pat
         return str(fake_icon) if width == 512 else str(fake_standing)
 
     emitted = []
-    with patch("def_kari.api.routes.session._VISITORS_DIR", visitors_dir), \
-         patch("def_kari.api.routes.session._generate_t2i_image", side_effect=_fake_generate), \
-         patch("def_kari.api.routes.session.load_settings", return_value={"t2i_backend": "a1111"}), \
-         patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", visitors_dir), \
+         patch("def_kari.api.routes.session_persistence._generate_t2i_image", side_effect=_fake_generate), \
+         patch("def_kari.api.routes.session_persistence.load_settings", return_value={"t2i_backend": "a1111"}), \
+         patch("def_kari.api.routes.session_persistence._game_event_bus") as mock_bus:
         mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
         _generate_visitor_images("sid-1", "guest_y", {"appearance_tags": "1girl, glitch"})
 
@@ -972,9 +972,9 @@ def test_generate_visitor_images_saves_icon_and_standing_and_emits_ready(tmp_pat
 def test_generate_visitor_images_fails_silently_on_exception(tmp_path):
     """T2Iバックエンドが例外を投げても呼び出し元に伝播しないこと（fail-silent）。"""
     from def_kari.api.routes.session import _generate_visitor_images
-    with patch("def_kari.api.routes.session._VISITORS_DIR", tmp_path), \
-         patch("def_kari.api.routes.session.load_settings", return_value={"t2i_backend": "a1111"}), \
-         patch("def_kari.api.routes.session._generate_t2i_image", side_effect=RuntimeError("t2i backend down")):
+    with patch("def_kari.api.routes.session_persistence._VISITORS_DIR", tmp_path), \
+         patch("def_kari.api.routes.session_persistence.load_settings", return_value={"t2i_backend": "a1111"}), \
+         patch("def_kari.api.routes.session_persistence._generate_t2i_image", side_effect=RuntimeError("t2i backend down")):
         _generate_visitor_images("sid", "guest_z", {"appearance_tags": "1girl"})  # 例外を投げないことがテスト
 
 
@@ -990,7 +990,7 @@ def test_join_character_json_triggers_background_image_generation(_stub_characte
     from def_kari.api.routes.session import _sessions
     client = TestClient(app)
 
-    with patch("def_kari.api.routes.session._generate_visitor_images") as mock_gen:
+    with patch("def_kari.api.routes.session_lobby._generate_visitor_images") as mock_gen:
         start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
         d = start.json()
         sid = d["session_id"]
@@ -1249,7 +1249,7 @@ def test_leave_removes_participant_and_emits_player_left():
     assert any(p["participant_id"] == char_id for p in _sessions[sid]["joined_participants"])
 
     emitted = []
-    with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_lobby._game_event_bus") as mock_bus:
         mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
         resp = client.post(f"/api/session/{sid}/leave", headers={"Authorization": f"Bearer {player_token}"})
     assert resp.status_code == 200
@@ -1384,7 +1384,7 @@ def test_ws_disconnect_emits_player_disconnected_but_keeps_participant():
     player_token = join_res["player_token"]
 
     emitted = []
-    with patch("def_kari.api.routes.session._game_event_bus") as mock_bus:
+    with patch("def_kari.api.routes.session_turn_engine._game_event_bus") as mock_bus:
         mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
         with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
             ws.send_json({"type": "auth", "token": player_token})
@@ -1447,7 +1447,7 @@ def test_end_session_idempotent_episodic_write():
     headers = {"Authorization": f"Bearer {host_token}"}
 
     calls = []
-    with patch("def_kari.api.routes.session._save_session_episodic", side_effect=lambda s, sess: calls.append(s)):
+    with patch("def_kari.api.routes.session_lobby._save_session_episodic", side_effect=lambda s, sess: calls.append(s)):
         r1 = client.post(f"/api/session/{sid}/end", headers=headers)
         assert r1.status_code == 200
         # _end_session の猶予期間中の再POSTをシミュレート（セッションはまだ残っている想定）

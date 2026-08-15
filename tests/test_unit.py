@@ -1167,7 +1167,7 @@ class TestLoadActionDirectives:
             json.dumps(d, ensure_ascii=False), encoding="utf-8"
         )
         with mock.patch(
-            "def_kari.api.routes.session._DIRECTIVE_DIRS",
+            "def_kari.api.routes.session_rules._DIRECTIVE_DIRS",
             [tmp_path, tmp_path / "nonexistent"],
         ):
             result = _load_action_directives()
@@ -1178,7 +1178,7 @@ class TestLoadActionDirectives:
     def test_malformed_json_skipped(self, tmp_path):
         (tmp_path / "bad.json").write_text("{invalid", encoding="utf-8")
         with mock.patch(
-            "def_kari.api.routes.session._DIRECTIVE_DIRS",
+            "def_kari.api.routes.session_rules._DIRECTIVE_DIRS",
             [tmp_path, tmp_path / "nonexistent"],
         ):
             result = _load_action_directives()
@@ -1188,7 +1188,7 @@ class TestLoadActionDirectives:
     def test_gitkeep_ignored(self, tmp_path):
         (tmp_path / ".gitkeep").write_text("", encoding="utf-8")
         with mock.patch(
-            "def_kari.api.routes.session._DIRECTIVE_DIRS",
+            "def_kari.api.routes.session_rules._DIRECTIVE_DIRS",
             [tmp_path, tmp_path / "nonexistent"],
         ):
             result = _load_action_directives()
@@ -1236,7 +1236,7 @@ class TestSessionAutosave:
         sid = "test_session_001"
         _sessions[sid] = self._make_session(sid)
         try:
-            with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+            with mock.patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
                 _autosave(sid)
             assert (tmp_path / f"{sid}.json").exists()
             data = json.loads((tmp_path / f"{sid}.json").read_text(encoding="utf-8"))
@@ -1251,7 +1251,7 @@ class TestSessionAutosave:
         session["history"].append({"role": "user", "content": "hello", "character_id": "human"})
         _sessions[sid] = session
         try:
-            with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+            with mock.patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
                 _autosave(sid)
             restored = json.loads((tmp_path / f"{sid}.json").read_text(encoding="utf-8"))
             assert len(restored["history"]) == 2
@@ -1259,7 +1259,7 @@ class TestSessionAutosave:
             _sessions.pop(sid, None)
 
     def test_autosave_nonexistent_session_noop(self, tmp_path):
-        with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+        with mock.patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
             _autosave("nonexistent_session_xyz")
         assert list(tmp_path.iterdir()) == []
 
@@ -1267,12 +1267,12 @@ class TestSessionAutosave:
         sid = "test_session_003"
         f = tmp_path / f"{sid}.json"
         f.write_text('{"id": "test_session_003"}', encoding="utf-8")
-        with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+        with mock.patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
             _delete_autosave(sid)
         assert not f.exists()
 
     def test_delete_autosave_missing_file_noop(self, tmp_path):
-        with mock.patch("def_kari.api.routes.session._AUTOSAVE_DIR", tmp_path):
+        with mock.patch("def_kari.api.routes.session_persistence._AUTOSAVE_DIR", tmp_path):
             _delete_autosave("does_not_exist")  # should not raise
 
     def test_startup_restore(self, tmp_path):
@@ -1616,7 +1616,7 @@ class TestApplyCharTags:
         """image_name_tags がプロンプト先頭に来る。"""
         fn = self._get_fn()
         char = self._make_char(name_tags="katarina_claes", appearance="1girl, brown hair")
-        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+        with mock.patch('def_kari.api.routes.session_image.get_character', return_value=char):
             result = fn("indoor scene", "test_char")
         assert result.startswith("katarina_claes"), f"先頭にname_tagsがない: {result}"
 
@@ -1624,7 +1624,7 @@ class TestApplyCharTags:
         """appearance_tags がプロンプトに追加される。"""
         fn = self._get_fn()
         char = self._make_char(appearance="1girl, brown hair, blue eyes")
-        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+        with mock.patch('def_kari.api.routes.session_image.get_character', return_value=char):
             result = fn("indoor scene", "test_char")
         assert "brown hair" in result
         assert "blue eyes" in result
@@ -1633,7 +1633,7 @@ class TestApplyCharTags:
         """既にプロンプトにあるタグは重複追加されない。"""
         fn = self._get_fn()
         char = self._make_char(appearance="1girl, brown hair")
-        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+        with mock.patch('def_kari.api.routes.session_image.get_character', return_value=char):
             result = fn("1girl, indoor scene", "test_char")
         tags = [t.strip() for t in result.split(',')]
         assert tags.count("1girl") == 1, f"1girl が重複: {result}"
@@ -1643,7 +1643,7 @@ class TestApplyCharTags:
         fn = self._get_fn()
         lora = [{"name": "TestLoRA", "weight": 0.8, "trigger_tags": "test_trigger"}]
         char = self._make_char(lora=lora)
-        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+        with mock.patch('def_kari.api.routes.session_image.get_character', return_value=char):
             result = fn("indoor scene", "test_char")
         assert "<lora:TestLoRA:0.8>" in result
         assert result.index("<lora:TestLoRA:0.8>") > result.index("indoor scene")
@@ -1659,7 +1659,7 @@ class TestApplyCharTags:
         fn = self._get_fn()
         lora = [{"name": "KatarinaLoRA", "weight": 0.8, "trigger_tags": "KatarinaClaes"}]
         char = self._make_char(name_tags="katarina_claes", lora=lora)
-        with mock.patch('def_kari.api.routes.session.get_character', return_value=char):
+        with mock.patch('def_kari.api.routes.session_image.get_character', return_value=char):
             result = fn("indoor scene", "test_char")
         assert "KatarinaClaes" in result
         # LoRA syntax は末尾

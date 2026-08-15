@@ -3,141 +3,31 @@ import { useT } from '../i18n'
 import InvitePanel from './InvitePanel'
 import InviteCodeDisplay from './InviteCodeDisplay'
 import JoinDialog from './JoinDialog'
-import ParticipantList, { type Participant } from './ParticipantList'
-
-type Character = { id: string; name: string; image_color?: string; player_type?: string }
-
-type SessionMessage = {
-  character_id: string
-  character_name: string
-  text: string
-  emotion: string
-  tags: string[]
-  imageColor?: string
-  isHuman?: boolean
-  isRevealed?: boolean
-  isSceneImage?: boolean
-  isKeeperVote?: boolean
-  audioUrl?: string
-  imageStatus?: 'generating' | 'done' | 'error'
-  imageUrl?: string
-  imageError?: string
-  _genId?: string
-  // AIターン自動生成の挿絵/音声（TURN_IMAGE_READY・TURN_AUDIO_READY）をこのメッセージに
-  // 紐付けるための識別子。サーバー側は history のインデックスを持たないため round+turn を使う
-  turnRound?: number
-  turnTurn?: number
-}
-
-type SavedSession = {
-  filename: string
-  topic: string
-  saved_at: string
-  round: number
-  character_names: string[]
-  trpg_scenario_title?: string
-  rule_set?: string
-  rule_set_label?: string
-  online_mode?: boolean
-}
-
-// 生の history 配列(セーブファイル読み込み・GET /{session_id}どちらも同じ形)から
-// 表示用の SessionMessage[] を組み立てる。loadSavedSession() と、接続時の
-// 履歴取得の両方から使う共通ロジック。
-function reconstructMessages(
-  history: any[],
-  nameMap: Record<string, string>,
-  charMap: Record<string, Character>,
-): SessionMessage[] {
-  // _dice 旧データ用: "🎲 CharName【stat】..." からキャラ名を逆引き
-  const reverseNameMap: Record<string, string> = {}
-  for (const [id, n] of Object.entries(nameMap)) reverseNameMap[n] = id
-
-  return history.map(h => {
-    if (h.character_id === 'human') {
-      return { character_id: 'human', character_name: 'You', text: h.content, emotion: '', tags: [], isHuman: true }
-    }
-    if (h.character_id === '_scene_image') {
-      return {
-        character_id: '__scene__',
-        character_name: '',
-        text: '',
-        emotion: '',
-        tags: [],
-        isSceneImage: true,
-        imageStatus: h.image_url ? 'done' : 'error',
-        imageUrl: (h.image_url as string) || undefined,
-      } as SessionMessage
-    }
-    let cid: string = h.character_id || ''
-    // 旧セーブデータ互換: _dice → コンテンツからキャラ名を解析して実IDに変換
-    if (cid === '_dice') {
-      const m = h.content.match(/^🎲\s+(.+?)(?:【|$)/)
-      const parsedName = m?.[1]?.trim()
-      const resolvedId = parsedName ? reverseNameMap[parsedName] : undefined
-      if (resolvedId) cid = resolvedId
-    }
-    const name = cid === '_keeper' ? '🎩 Keeper' : (nameMap[cid] || cid)
-    const prefix = name + ': '
-    const text = h.content.startsWith(prefix) ? h.content.slice(prefix.length) : h.content
-    return {
-      character_id: cid,
-      character_name: name,
-      text,
-      emotion: h.emotion || '',
-      tags: h.tags || [],
-      imageColor: charMap[cid]?.image_color,
-      imageUrl: (h.image_url as string) || undefined,
-      audioUrl: (h.audio_url as string) || undefined,
-    }
-  })
-}
-
-// リロード後もセッションへ復帰できるよう、参加/作成が成功した時点の最小限の
-// 情報をsessionStorageへ書く(タブを閉じれば消える。localStorageではなく
-// sessionStorageなのは、複数タブでホスト/ゲストを別々に開くテスト等での
-// 汚染を避けるため)。App.tsxは同じキーを「起動時にsessionタブを開くか」の
-// 判定にのみ使い、値の中身は読まない。
-const SESSION_RESTORE_KEY = 'def_active_session'
-
-type SessionRestoreState = {
-  sessionId: string
-  token: string
-  role: 'host' | 'player' | 'observer' | 'gm'
-  charId: string
-  displayName: string
-}
-
-function saveSessionRestoreState(state: SessionRestoreState) {
-  try { sessionStorage.setItem(SESSION_RESTORE_KEY, JSON.stringify(state)) } catch { /* ignore */ }
-}
-
-function loadSessionRestoreState(): SessionRestoreState | null {
-  try {
-    const raw = sessionStorage.getItem(SESSION_RESTORE_KEY)
-    return raw ? JSON.parse(raw) : null
-  } catch { return null }
-}
-
-function clearSessionRestoreState() {
-  try { sessionStorage.removeItem(SESSION_RESTORE_KEY) } catch { /* ignore */ }
-}
+import ParticipantList from './ParticipantList'
+import {
+  type Character,
+  type SessionMessage,
+  reconstructMessages,
+  saveSessionRestoreState,
+  loadSessionRestoreState,
+  clearSessionRestoreState,
+  isContentBlocked,
+} from './sessionUtils'
+import { useSafetyFilter } from './useSafetyFilter'
+import { useTurnState } from './useTurnState'
+import { useHumanTurn } from './useHumanTurn'
+import { useVoteAndDesignate } from './useVoteAndDesignate'
+import { useCharSheetAndDice, type KeeperJudgment } from './useCharSheetAndDice'
+import { useCharBackendConfig } from './useCharBackendConfig'
+import { useAiAssignWizard } from './useAiAssignWizard'
+import { useLobbySession } from './useLobbySession'
+import { useParticipants } from './useParticipants'
 
 type Props = {
   characters: Character[]
   backend: string
   ttsBackend: string
   t2iBackend: string
-}
-
-const SEXUAL_TAGS = ['sfw', 'nsfw', 'hentai']
-const VIOLENCE_TAGS = ['violence', 'gore', 'extreme']
-
-function isContentBlocked(tags: string[], allowedSexual: string[], allowedViolence: string[]): boolean {
-  return tags.some(tag =>
-    (SEXUAL_TAGS.includes(tag) && !allowedSexual.includes(tag)) ||
-    (VIOLENCE_TAGS.includes(tag) && !allowedViolence.includes(tag))
-  )
 }
 
 // ── ダイスローラー（投票行の右に配置）────────────────────────
@@ -223,155 +113,168 @@ function CharMultiSelect({
 }
 
 // ── メインコンポーネント ──────────────────────────────────────
-type RuleOption = { id: string; label: string }
-type DirectiveOption = { id: string; label: string; rating: string; recommended_for: number[] }
-type RulebookOption = { id: string; label: string; dice_system: string }
-type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string }
-type KeeperJudgment = { character_id: string; character_name: string; stat: string; stat_value: number; damage_on?: 'failure' | 'fumble' | 'any' }
 
 export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   const t = useT()
-  const [selectedChars, setSelectedChars] = useState<string[]>([])
-  const [topic, setTopic] = useState('')
-  const [ruleSet, setRuleSet] = useState('default')
-  const [trpgMode, setTrpgMode] = useState(false)
-  const trpgModeRef = useRef(false)
-  const [rulebookOptions, setRulebookOptions] = useState<RulebookOption[]>([])
-  const [selectedRulebook, setSelectedRulebook] = useState('')
-  const [scenarioOptions, setScenarioOptions] = useState<ScenarioOption[]>([])
-  const [selectedScenario, setSelectedScenario] = useState('')
-  const [ruleOptions, setRuleOptions] = useState<RuleOption[]>([])
-  const [directiveSet, setDirectiveSet] = useState('default')
-  const [directiveOptions, setDirectiveOptions] = useState<DirectiveOption[]>([])
+
+  // ── 分割済みカスタムフック（TODO.md「SessionTab.tsxのコンポーネント分割」参照）──
+  // 状態宣言とそれ単体で完結するハンドラのみをフックへ移し、handleSessionEvent等の
+  // 複数ドメインにまたがる横断関数はこのコンポーネント本体に残す（session.py分割の
+  // 「機能グループ別ファイル分割」と同じ発想）。
+  const {
+    allowedSexual, setAllowedSexual, allowedSexualRef,
+    allowedViolence, setAllowedViolence, allowedViolenceRef,
+    safetyLevel, setSafetyLevel, safetyLevelRef,
+    auditWarnings, setAuditWarnings,
+    setTtsEnabled, ttsEnabledRef, ttsHumanEnabledRef,
+  } = useSafetyFilter()
+  const {
+    round, setRound,
+    currentSceneIndex, setCurrentSceneIndex,
+    activeTurnCharId, setActiveTurnCharId,
+    initiative, setInitiative, initiativeRef,
+    autoAdvance, setAutoAdvance, autoAdvanceRef,
+    autoStopMsg, setAutoStopMsg,
+    actionsPerTurn, setActionsPerTurn, actionsPerTurnRef,
+    counters, setCounters,
+    maxCounter, setMaxCounter, maxCounterRef,
+    loading, setLoading,
+    sceneImageStatus, setSceneImageStatus,
+    standingFallback, setStandingFallback,
+    wasAutoAdvancingRef, keeperFiredRoundRef,
+    capCounters,
+  } = useTurnState()
+  const {
+    humanKeeper, setHumanKeeper,
+    waitingForKeeperTurn, setWaitingForKeeperTurn, isHumanKeeperRef,
+    keeperInput, setKeeperInput,
+    pendingActions, setPendingActions,
+    waitingForHuman, setWaitingForHuman,
+    humanCharId, setHumanCharId,
+    humanCharName, setHumanCharName,
+    humanInput, setHumanInput,
+    humanPending, setHumanPending,
+    interruptMode, setInterruptMode,
+    hasDiscarded, setHasDiscarded,
+    addKeeperAction: _addKeeperAction, addHumanAction: _addHumanAction,
+  } = useHumanTurn()
+  const {
+    designateTarget, setDesignateTarget,
+    showVoteDialog, setShowVoteDialog,
+    voteType, setVoteType,
+    voteDetail, setVoteDetail,
+    voteTarget, setVoteTarget,
+    voteProposerText, setVoteProposerText,
+    voteLoading, setVoteLoading,
+  } = useVoteAndDesignate()
+  const {
+    charSheetData, setCharSheetData,
+    showSheetPanel, setShowSheetPanel,
+    showDiceDialog, setShowDiceDialog,
+    diceDialogChars, setDiceDialogChars,
+    diceDialogLocked,
+    diceDialogStatKey, setDiceDialogStatKey,
+    diceDialogSkillKey, setDiceDialogSkillKey,
+    autoJudgmentStat, setAutoJudgmentStat, autoJudgmentStatRef,
+    pendingJudgments, setPendingJudgments,
+    openDiceDialog: _openDiceDialog, openDiceDialogForHuman: _openDiceDialogForHuman,
+    isCharDead, shouldApplyDamage, normalizeSheetStats,
+  } = useCharSheetAndDice()
+  const {
+    charBackends, setCharBackends,
+    llmBackendOptions, setLlmBackendOptions,
+    showBackendDialog, setShowBackendDialog,
+    charGameSheets, setCharGameSheets,
+    charGameSheetOptions,
+    showGameSheetDialog, setShowGameSheetDialog,
+    charRoles, setCharRoles,
+    keeperCharId, keeperCount,
+    openGameSheetDialog: _openGameSheetDialog,
+  } = useCharBackendConfig()
+  const {
+    assignDialogTarget, setAssignDialogTarget,
+    assignStep, setAssignStep,
+    assignCharId,
+    assignSheetOptions,
+    assignSheetId, setAssignSheetId,
+    assignBackendId, setAssignBackendId,
+    openAssignDialog, selectAssignChar: _selectAssignChar,
+  } = useAiAssignWizard()
+  const {
+    selectedChars, setSelectedChars,
+    topic, setTopic,
+    ruleSet, setRuleSet,
+    trpgMode, setTrpgMode, trpgModeRef,
+    rulebookOptions, setRulebookOptions,
+    selectedRulebook, setSelectedRulebook,
+    scenarioOptions, setScenarioOptions,
+    selectedScenario, setSelectedScenario,
+    ruleOptions, setRuleOptions,
+    directiveSet, setDirectiveSet,
+    directiveOptions, setDirectiveOptions,
+    inviteCode, setInviteCode,
+    sessionStarting, setSessionStarting,
+    lobbyMode, setLobbyMode,
+    lobbyActive, setLobbyActive,
+    lobbyMaxPlayers, setLobbyMaxPlayers,
+    lobbyTrpgMode, setLobbyTrpgMode,
+    keeperSource, setKeeperSource,
+    hostRole, setHostRole,
+    hostCharForLobby, setHostCharForLobby,
+    lobbyKeeperCharId, setLobbyKeeperCharId,
+    lobbyKeeperCharName, setLobbyKeeperCharName,
+    savedSessions,
+    showRuleDialog, setShowRuleDialog,
+    ruleDraft, setRuleDraft,
+    ruleEditId,
+    fetchSavedSessions, patchLobbySettings: _patchLobbySettings,
+    openRuleDialog, saveRule, applyRule,
+  } = useLobbySession()
+  const {
+    participants, setParticipants,
+    showJoinDialog, setShowJoinDialog,
+    myRole, setMyRole, myRoleRef,
+    myCharIdRef,
+    extraNameMap, setExtraNameMap,
+    showParticipantPanel, setShowParticipantPanel,
+    setIconVersion,
+    iconUrl, standingUrl,
+  } = useParticipants()
+
+  // ── セッション識別・接続まわりはメッセージ履歴と同様、ほぼ全域から参照されるため
+  // 独立させずこのコンポーネント本体に残す（TODO.md参照）。
   const [sessionId, setSessionId] = useState('')
   const sessionIdRef = useRef('')
-  const [inviteCode, setInviteCode] = useState('')
-  const [extraNameMap, setExtraNameMap] = useState<Record<string, string>>({})
   const [messages, setMessages] = useState<SessionMessage[]>([])
   // 接続時に取得した既存履歴のうち、直近分以外を隠しておく置き場(ChatTab.tsxの
   // hiddenHistory/hasMoreと同じ考え方)。リロード・途中参加時に会話が全部消える
   // 問題(2026-08-08発覚)への対応。
   const [hiddenSessionHistory, setHiddenSessionHistory] = useState<SessionMessage[]>([])
   const initialHistoryFetchedForRef = useRef('')
-  const [loading, setLoading] = useState(false)
-  const [sessionStarting, setSessionStarting] = useState(false)
-  const [lobbyMode, setLobbyMode] = useState(false)
-  const [lobbyActive, setLobbyActive] = useState(false)  // 参加者側: ホスト開始待ち
-  const [lobbyMaxPlayers, setLobbyMaxPlayers] = useState(4)
-  const [lobbyTrpgMode, setLobbyTrpgMode] = useState(true)
-  const [keeperSource, setKeeperSource] = useState<'ai' | 'participant'>('ai')
-  const [hostRole, setHostRole] = useState<'keeper' | 'player' | 'observer'>('keeper')
-  const [hostCharForLobby, setHostCharForLobby] = useState('')
-  // TODO: aiTakeover機能完成時に復元（TODO.md参照）
-  // const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
-  const [lobbyKeeperCharId, setLobbyKeeperCharId] = useState('')
-  const [lobbyKeeperCharName, setLobbyKeeperCharName] = useState('')
-  // ロビーAI割付けウィザード（スロット/キーパー共通）: キャラ選択 → ゲームキャラシート選択（TRPG+スロットのみ）→ LLM選択
-  const [assignDialogTarget, setAssignDialogTarget] = useState<'slot' | 'keeper' | null>(null)
-  const [assignStep, setAssignStep] = useState<'char' | 'sheet' | 'backend'>('char')
-  const [assignCharId, setAssignCharId] = useState('')
-  const [assignSheetOptions, setAssignSheetOptions] = useState<string[]>([])
-  const [assignSheetId, setAssignSheetId] = useState('')
-  const [assignBackendId, setAssignBackendId] = useState('')
-  const [round, setRound] = useState(1)
-  const [currentSceneIndex, setCurrentSceneIndex] = useState(0)
-  const [activeTurnCharId, setActiveTurnCharId] = useState('')
-  const [initiative, setInitiative] = useState<string[]>([])
-  const initiativeRef = useRef<string[]>([])
-  const [allowedSexual, setAllowedSexual] = useState<string[]>(['sfw'])
-  const [allowedViolence, setAllowedViolence] = useState<string[]>(['violence'])
-  const [safetyLevel, setSafetyLevel] = useState('off')
-  // WSイベントハンドラ(handleSessionEvent)はsessionId確定時に一度だけ張られるクロージャの
-  // ため、その中で最新の安全設定を読むにはstateではなくrefが要る(ttsEnabledRefと同じ理由)。
-  // 音声の自動再生をtags/レーティングでブロックする判定に使う。
-  const allowedSexualRef = useRef<string[]>(['sfw'])
-  const allowedViolenceRef = useRef<string[]>(['violence'])
-  const safetyLevelRef = useRef('off')
-  const [autoAdvance, setAutoAdvance] = useState(false)
-  const autoAdvanceRef = useRef(false)
-  const [autoStopMsg, setAutoStopMsg] = useState<string | null>(null)
-  const [actionsPerTurn, setActionsPerTurn] = useState(0)
-  const [sceneImageStatus, setSceneImageStatus] = useState<'idle' | 'generating' | 'error'>('idle')
-  // 持ち込みキャラのLLM審査がfail-open（未実行のまま通過）になった場合の
-  // ホスト/GM向け警告。CHARACTER_AUDIT_SKIPPED（WS）で追加、×で個別に消せる。
-  const [auditWarnings, setAuditWarnings] = useState<{ id: string; characterId: string; reason: string }[]>([])
-  const actionsPerTurnRef = useRef(0)
-  const [, setTtsEnabled] = useState(false)
-  const ttsEnabledRef = useRef(false)
-  const ttsHumanEnabledRef = useRef(false)
   // AUDIO_READY（human_turn_action・vote/deliberateの人間/AI発言読み上げ）の
   // request_id → messages配列インデックス対応表。AUDIO_READY受信時にここを引いて
   // 該当メッセージへaudioUrlを反映する（2026-08-10、リスナー未実装で自動再生が
   // 常に死んでいたのを発見・修正）。
   const audioRequestIndexRef = useRef<Record<string, number>>({})
   const hostTokenRef = useRef('')
-  const myCharIdRef = useRef('')  // このタブが担当するキャラID（オンライン対戦用）
   const endingRef = useRef(false)  // endSession 再入ガード（SESSION_ENDED 受信での再実行防止）
-  const myRoleRef = useRef<'host' | 'player' | 'observer' | 'gm'>('host')
   const wsRef = useRef<WebSocket | null>(null)
   const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // sessionStorageからの自動復帰試行中フラグ。復帰時の最初の接続が4001(認証切れ)/
   // 4004(セッション消滅)で閉じた場合は、無限に再接続を試み続けず諦めて通常の
   // 作成/参加画面に戻す(トークン失効・ホストのセッション終了後にリロードした場合等)。
   const isRestoringRef = useRef(false)
-  const [standingFallback, setStandingFallback] = useState<Set<string>>(new Set())
-  // 持ち込みキャラのアイコン/立ち絵がバックグラウンド生成完了した際、no-cacheな画像を再取得させるためのバージョン値
-  const [iconVersion, setIconVersion] = useState<Record<string, number>>({})
-  const iconUrl = (charId: string) => `/api/characters/${charId}/icon${iconVersion[charId] ? `?v=${iconVersion[charId]}` : ''}`
-  const standingUrl = (charId: string) => `/api/characters/${charId}/standing${iconVersion[charId] ? `?v=${iconVersion[charId]}` : ''}`
-  const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
   const [saveStatus, setSaveStatus] = useState('')
-  const [showRuleDialog, setShowRuleDialog] = useState(false)
-  const [ruleDraft, setRuleDraft] = useState('')
-  const [ruleEditId, setRuleEditId] = useState('')
-  const [charBackends, setCharBackends] = useState<Record<string, string>>({})
-  const [llmBackendOptions, setLlmBackendOptions] = useState<{ id: string; label: string }[]>([])
-  const [showBackendDialog, setShowBackendDialog] = useState(false)
-  const [charGameSheets, setCharGameSheets] = useState<Record<string, string>>({})
-  const [charGameSheetOptions, setCharGameSheetOptions] = useState<Record<string, string[]>>({})
-  const [showGameSheetDialog, setShowGameSheetDialog] = useState(false)
-  const [charRoles, setCharRoles] = useState<Record<string, 'investigator' | 'keeper'>>({})
-  const keeperCharId = Object.entries(charRoles).find(([, r]) => r === 'keeper')?.[0] ?? ''
-  const keeperCount = Object.values(charRoles).filter(r => r === 'keeper').length
-  const [humanKeeper, setHumanKeeper] = useState(false)
-  const [waitingForKeeperTurn, setWaitingForKeeperTurn] = useState(false)
-  const isHumanKeeperRef = useRef(false)
-  const [keeperInput, setKeeperInput] = useState('')
-  const [pendingActions, setPendingActions] = useState<string[]>([])
-  const [counters, setCounters] = useState<Record<string, number>>({})
-  const [maxCounter, setMaxCounter] = useState(5)
-  const maxCounterRef = useRef(5)
-  const [designateTarget, setDesignateTarget] = useState('')
-  const [showVoteDialog, setShowVoteDialog] = useState(false)
-  const [voteType, setVoteType] = useState<'topic_change' | 'expel' | 'end_session'>('topic_change')
-  const [voteDetail, setVoteDetail] = useState('')
-  const [voteTarget, setVoteTarget] = useState('')
-  const [voteProposerText, setVoteProposerText] = useState('')
-  const [voteLoading, setVoteLoading] = useState(false)
-  const [waitingForHuman, setWaitingForHuman] = useState(false)
-  const [humanCharId, setHumanCharId] = useState('')
-  const [humanCharName, setHumanCharName] = useState('')
-  const [humanInput, setHumanInput] = useState('')
-  const [humanPending, setHumanPending] = useState<string[]>([])
-  const [interruptMode, setInterruptMode] = useState(false)
-  const [hasDiscarded, setHasDiscarded] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const [charSheetData, setCharSheetData] = useState<Record<string, any>>({})
-  const [showSheetPanel, setShowSheetPanel] = useState(false)
-  const [showParticipantPanel, setShowParticipantPanel] = useState(true)
-  const [showDiceDialog, setShowDiceDialog] = useState(false)
-  const [diceDialogChars, setDiceDialogChars] = useState<string[]>([])
-  const [diceDialogLocked, setDiceDialogLocked] = useState(false)
-  const [diceDialogStatKey, setDiceDialogStatKey] = useState('')
-  const [diceDialogSkillKey, setDiceDialogSkillKey] = useState('')
-  const [autoJudgmentStat, setAutoJudgmentStat] = useState('')
-  const autoJudgmentStatRef = useRef('')
-  const [pendingJudgments, setPendingJudgments] = useState<KeeperJudgment[]>([])
-  const wasAutoAdvancingRef = useRef(false)
-  const keeperFiredRoundRef = useRef(0)
-  const [participants, setParticipants] = useState<Participant[]>([])
-  const [showJoinDialog, setShowJoinDialog] = useState(false)
-  const [myRole, setMyRole] = useState<'host' | 'player' | 'observer' | 'gm'>('host')
+
+  // フック側は他ドメインのstate/refを知らないため、必要な引数を橋渡しするラッパー。
+  const addKeeperAction = () => _addKeeperAction(actionsPerTurnRef)
+  const addHumanAction = () => _addHumanAction(actionsPerTurnRef)
+  const openDiceDialog = () => _openDiceDialog(initiative)
+  const openDiceDialogForHuman = () => _openDiceDialogForHuman(humanCharId)
+  const openGameSheetDialog = () => _openGameSheetDialog(selectedChars)
+  const selectAssignChar = (charId: string) => _selectAssignChar(charId, lobbyTrpgMode)
+  const patchLobbySettings = (body: Record<string, string | number>) => _patchLobbySettings(body, sessionIdRef, hostTokenRef)
 
   // JWT を自動付与する fetch ラッパー（hostTokenRef = 自タブのトークン）
   const authFetch = (path: string, init: RequestInit = {}) =>
@@ -391,13 +294,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     const data = await res.json().catch(() => ({}))
     if (!res.ok && !data.error) return { ...data, error: data.detail || `HTTP ${res.status}` }
     return data
-  }
-
-  const fetchSavedSessions = () => {
-    fetch('/api/session/saved')
-      .then(r => r.json())
-      .then(d => setSavedSessions(d.sessions || []))
-      .catch(() => {})
   }
 
   // ── マウント時のセッション復帰（リロード対策） ──────────────────
@@ -1062,16 +958,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     }
   }
 
-  // ロビー中のセッション設定変更（お題・ルール・ルールブック・シナリオ・参加人数）。ホスト専用
-  const patchLobbySettings = (body: Record<string, string | number>) => {
-    if (!sessionIdRef.current) return
-    void fetch(`/api/session/${sessionIdRef.current}/lobby/settings`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
-      body: JSON.stringify(body),
-    })
-  }
-
   const playAudio = (url: string): Promise<void> =>
     new Promise(resolve => {
       const audio = new Audio(url)
@@ -1306,21 +1192,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     }
   }
 
-  const isCharDead = (charId: string, sheetOverride?: Record<string, any>): boolean => {
-    const sheet = (sheetOverride ?? charSheetData)[charId]
-    if (!sheet?.stats) return false
-    return Object.values(sheet.stats as Record<string, { current: number }>).some(s => s.current <= 0)
-  }
-
-  const shouldApplyDamage = (judgment: { success?: boolean; fumble?: boolean; critical?: boolean } | null | undefined, damageOn?: string): boolean => {
-    if (!judgment) return false
-    if (!damageOn) return !!judgment.fumble
-    if (damageOn === 'fumble') return !!judgment.fumble
-    if (damageOn === 'failure') return !judgment.success
-    if (damageOn === 'any') return true
-    return !!judgment.fumble
-  }
-
   const rollDamage = async (charId: string, charName: string) => {
     try {
       const res = await fetch('/api/trpg/damage', {
@@ -1437,35 +1308,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   //   setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
   // }
 
-  const normalizeSheetStats = (sheet: any): any => {
-    if (!sheet?.stats) return sheet
-    const stats: Record<string, any> = {}
-    for (const [k, v] of Object.entries(sheet.stats)) {
-      if (typeof v === 'number') {
-        stats[k] = { current: v, max: v }
-      } else {
-        stats[k] = v
-      }
-    }
-    return { ...sheet, stats }
-  }
-
-  const capCounters = (c: Record<string, number>) =>
-    Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Math.min(v, maxCounterRef.current)]))
-
-  const openDiceDialog = () => {
-    const withSheet = initiative.filter(id => charSheetData[id])
-    setDiceDialogChars(withSheet)
-    setDiceDialogLocked(false)
-    setShowDiceDialog(true)
-  }
-
-  const openDiceDialogForHuman = () => {
-    setDiceDialogChars(humanCharId ? [humanCharId] : [])
-    setDiceDialogLocked(true)
-    setShowDiceDialog(true)
-  }
-
   const rollDiceDialog = async (type: 'stat' | 'skill', key: string) => {
     if (!key) return
     for (const charId of diceDialogChars) {
@@ -1505,49 +1347,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         console.error(e)
       }
     }
-  }
-
-  const openGameSheetDialog = async () => {
-    const opts: Record<string, string[]> = {}
-    await Promise.all(selectedChars.map(async id => {
-      try {
-        const res = await fetch(`/api/characters/${id}/game_sheets`)
-        const data = await res.json()
-        opts[id] = Object.keys(data.game_sheets ?? {})
-      } catch {
-        opts[id] = []
-      }
-    }))
-    setCharGameSheetOptions(opts)
-    setShowGameSheetDialog(true)
-  }
-
-  const openRuleDialog = async () => {
-    const id = ruleSet || (ruleOptions[0]?.id ?? 'default')
-    setRuleEditId(id)
-    try {
-      const res = await fetch(`/api/session/rules/${id}`)
-      const data = await res.json()
-      if (data.content) setRuleDraft(JSON.stringify(JSON.parse(data.content), null, 2))
-    } catch {}
-    setShowRuleDialog(true)
-  }
-
-  const saveRule = async () => {
-    await fetch(`/api/session/rules/${ruleEditId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: ruleDraft }),
-    })
-  }
-
-  const applyRule = async () => {
-    await saveRule()
-    setRuleSet(ruleEditId)
-    const res = await fetch('/api/session/rules')
-    const data = await res.json()
-    if (data.rules) setRuleOptions(data.rules)
-    setShowRuleDialog(false)
   }
 
   const loadSavedSession = async (filename: string) => {
@@ -1787,45 +1586,12 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     setAssignDialogTarget(null)
   }
 
-  // AI割付けウィザード: キャラ選択 → (TRPG+スロットのみ)ゲームキャラシート選択 → LLM選択
-  const openAssignDialog = (target: 'slot' | 'keeper') => {
-    setAssignDialogTarget(target)
-    setAssignStep('char')
-    setAssignCharId('')
-    setAssignSheetOptions([])
-    setAssignSheetId('')
-    setAssignBackendId('')
-  }
-
-  const selectAssignChar = async (charId: string) => {
-    setAssignCharId(charId)
-    if (lobbyTrpgMode && assignDialogTarget === 'slot') {
-      try {
-        const res = await fetch(`/api/characters/${charId}/game_sheets`)
-        const data = await res.json()
-        setAssignSheetOptions(Object.keys(data.game_sheets ?? {}))
-      } catch {
-        setAssignSheetOptions([])
-      }
-      setAssignStep('sheet')
-    } else {
-      setAssignStep('backend')
-    }
-  }
-
   const confirmAssignDialog = () => {
     if (assignDialogTarget === 'slot') {
       void lobbyAddAi(assignCharId, assignSheetId, assignBackendId)
     } else if (assignDialogTarget === 'keeper') {
       void lobbySetKeeperChar(assignCharId, assignBackendId)
     }
-  }
-
-  const addKeeperAction = () => {
-    if (!keeperInput.trim()) return
-    if (actionsPerTurnRef.current > 0 && pendingActions.length >= actionsPerTurnRef.current) return
-    setPendingActions(prev => [...prev, keeperInput.trim()])
-    setKeeperInput('')
   }
 
   const commitKeeperActions = async () => {
@@ -1902,13 +1668,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     if (data.error) return
     if (data.counters) setCounters(capCounters(data.counters))
     generateSceneImage()
-  }
-
-  const addHumanAction = () => {
-    if (!humanInput.trim()) return
-    if (actionsPerTurnRef.current > 0 && humanPending.length >= actionsPerTurnRef.current) return
-    setHumanPending(prev => [...prev, humanInput.trim()])
-    setHumanInput('')
   }
 
   const submitHumanTurn = async (action: 'send' | 'extend' | 'skip' | 'interrupt') => {

@@ -96,9 +96,10 @@ def test_generate_image_jti_bypass_blocked_by_ip_limit(monkeypatch):
     見かけ上は毎回「制限内」になるが、同一IPからの呼び出しはIPベースの上限
     （1分あたり20回）に引っかかって最終的に429になること。"""
     from def_kari.api.routes import session as session_module
+    from def_kari.api.routes import session_image as session_image_module
 
     monkeypatch.setattr(
-        session_module, "_generate_session_image_impl",
+        session_image_module, "_generate_session_image_impl",
         lambda session_id, req: {"url": "/api/t2i/image/stub.png"},
     )
 
@@ -277,9 +278,10 @@ def test_expelled_character_json_cannot_rejoin_with_same_identity(monkeypatch):
     同一character_jsonでの再参加を拒否する。character_jsonの内容が違えば
     （＝別人として振る舞えば）引き続き参加できること（過剰な制限になっていないか）も確認。"""
     from def_kari.api.routes import session as session_module
+    from def_kari.api.routes import session_lobby as session_lobby_module
     from def_kari.api.routes.session import _sessions
 
-    monkeypatch.setattr(session_module, "_generate_visitor_images", lambda *a, **k: None)
+    monkeypatch.setattr(session_lobby_module, "_generate_visitor_images", lambda *a, **k: None)
 
     start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
     d = start.json()

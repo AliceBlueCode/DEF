@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from def_kari.api.main import app
 from def_kari.api.routes import session as session_module
+from def_kari.api.routes import session_ws as session_ws_module
 
 client = TestClient(app)
 
@@ -48,7 +49,7 @@ def test_acquire_and_release_slot_tracks_per_ip_and_total():
 
 def test_acquire_rejects_when_per_ip_limit_reached(monkeypatch):
     from def_kari.api.routes.session import _try_acquire_ws_pending_auth_slot
-    monkeypatch.setattr(session_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 2)
+    monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 2)
     assert _try_acquire_ws_pending_auth_slot("1.2.3.4") is True
     assert _try_acquire_ws_pending_auth_slot("1.2.3.4") is True
     assert _try_acquire_ws_pending_auth_slot("1.2.3.4") is False
@@ -58,7 +59,7 @@ def test_acquire_rejects_when_per_ip_limit_reached(monkeypatch):
 
 def test_acquire_rejects_when_total_limit_reached(monkeypatch):
     from def_kari.api.routes.session import _try_acquire_ws_pending_auth_slot
-    monkeypatch.setattr(session_module, "_WS_PENDING_AUTH_LIMIT_TOTAL", 2)
+    monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_TOTAL", 2)
     assert _try_acquire_ws_pending_auth_slot("1.1.1.1") is True
     assert _try_acquire_ws_pending_auth_slot("2.2.2.2") is True
     assert _try_acquire_ws_pending_auth_slot("3.3.3.3") is False
@@ -75,7 +76,7 @@ def test_release_is_idempotent_and_never_goes_negative():
 def test_ws_connection_over_per_ip_limit_closes_1013(monkeypatch):
     """未認証接続をper-IP上限まで保持した状態で、上限超過分は即座にclose(1013)
     され、5秒のauthタイムアウトを待たされないこと。"""
-    monkeypatch.setattr(session_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 2)
+    monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 2)
     sid = _start()
 
     with client.websocket_connect(f"/api/session/{sid}/ws"):
@@ -91,7 +92,7 @@ def test_ws_connection_within_limit_still_authenticates_normally(monkeypatch):
     """上限以内であれば、既存のauth成功フローに一切影響しないこと（回帰確認）。"""
     from def_kari.api.routes.session import issue_player_jwt
 
-    monkeypatch.setattr(session_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 20)
+    monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 20)
     sid = _start()
     token = issue_player_jwt(sid, "host")
     session_module._sessions[sid]["players"][token] = ""
@@ -108,7 +109,7 @@ def test_slot_released_after_successful_auth_allows_reuse(monkeypatch):
     （上限に達したまま塞がれっぱなしにならないこと）。"""
     from def_kari.api.routes.session import issue_player_jwt
 
-    monkeypatch.setattr(session_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 1)
+    monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 1)
     sid = _start()
     token = issue_player_jwt(sid, "host")
     session_module._sessions[sid]["players"][token] = ""

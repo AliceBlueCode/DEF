@@ -37,7 +37,7 @@ async def test_apply_skip_advances_turn_and_increments_counter():
     sid = "_apply_skip_test"
     _sessions[sid] = _base_session(sid, ["char_a", "char_b"], turn=0)
     try:
-        with patch("def_kari.api.routes.session._run_ai_turns"):
+        with patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             result = _apply_skip(sid, _sessions[sid], "char_a")
         assert result["action"] == "skip"
         assert _sessions[sid]["turn"] == 1
@@ -69,8 +69,8 @@ async def test_disconnect_timeout_triggers_auto_skip_for_current_speaker():
     # ws_connections に tok_a が無い＝切断中
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session._disconnect_timeout_sec", return_value=0.05), \
-             patch("def_kari.api.routes.session._run_ai_turns"):
+        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=0.05), \
+             patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             _schedule_disconnect_skip(sid, "char_a")
             await asyncio.sleep(0.15)
             assert _sessions[sid]["turn"] == 1
@@ -93,8 +93,8 @@ async def test_reconnect_cancels_disconnect_timer_and_prevents_skip():
     sess["players"] = {"tok_a": "char_a"}
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session._disconnect_timeout_sec", return_value=0.05), \
-             patch("def_kari.api.routes.session._run_ai_turns"):
+        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=0.05), \
+             patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             _schedule_disconnect_skip(sid, "char_a")
             # 再接続（token再登録 + タイマーキャンセル）を模す
             _sessions[sid]["ws_connections"]["tok_a"] = object()
@@ -115,8 +115,8 @@ async def test_disconnect_timeout_noop_if_turn_already_advanced():
     sess["players"] = {"tok_a": "char_a"}
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session._disconnect_timeout_sec", return_value=0.05), \
-             patch("def_kari.api.routes.session._run_ai_turns"):
+        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=0.05), \
+             patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             _schedule_disconnect_skip(sid, "char_a")
             # タイマー発火前にターンが別経緯で進んでしまったことを模す
             _sessions[sid]["turn"] = 1
@@ -136,7 +136,7 @@ async def test_schedule_disconnect_skip_does_not_duplicate_timer():
     sess["players"] = {"tok_a": "char_a"}
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session._disconnect_timeout_sec", return_value=5.0):
+        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=5.0):
             _schedule_disconnect_skip(sid, "char_a")
             first_task = _sessions[sid]["disconnect_skip_tasks"]["char_a"]
             _schedule_disconnect_skip(sid, "char_a")

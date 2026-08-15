@@ -43,7 +43,7 @@ def test_list_saved_sessions_includes_rule_set_and_online_mode():
         },
     ]
     with mock.patch(
-        "def_kari.api.routes.session.list_session_mode_files", return_value=fake_files
+        "def_kari.api.routes.session_persistence.list_session_mode_files", return_value=fake_files
     ):
         client = TestClient(app)
         resp = client.get("/api/session/saved")

@@ -13,10 +13,10 @@ def test_generate_turn_audio_skips_when_tts_disabled():
     from def_kari.api.routes.session import _generate_turn_audio
 
     with mock.patch(
-        "def_kari.api.routes.session.load_settings",
+        "def_kari.api.routes.session_turn_engine.load_settings",
         return_value={"tts_enabled": False, "tts_backend": "voicevox"},
     ), mock.patch(
-        "def_kari.api.routes.session._synthesize_turn_audio_sync"
+        "def_kari.api.routes.session_turn_engine._synthesize_turn_audio_sync"
     ) as mock_synth:
         _generate_turn_audio("sid", {"text": "hello", "character_id": "char_a"})
 
@@ -27,10 +27,10 @@ def test_generate_turn_audio_runs_when_tts_enabled():
     from def_kari.api.routes.session import _generate_turn_audio
 
     with mock.patch(
-        "def_kari.api.routes.session.load_settings",
+        "def_kari.api.routes.session_turn_engine.load_settings",
         return_value={"tts_enabled": True, "tts_backend": "voicevox"},
     ), mock.patch(
-        "def_kari.api.routes.session._synthesize_turn_audio_sync", return_value=""
+        "def_kari.api.routes.session_turn_engine._synthesize_turn_audio_sync", return_value=""
     ) as mock_synth:
         _generate_turn_audio("sid", {"text": "hello", "character_id": "char_a"})
 
@@ -42,10 +42,10 @@ def test_start_background_tts_skips_by_default():
     from def_kari.api.routes.session import _start_background_tts
 
     with mock.patch(
-        "def_kari.api.routes.session.load_settings",
+        "def_kari.api.routes.session_turn_engine.load_settings",
         return_value={"tts_backend": "voicevox"},
     ), mock.patch(
-        "def_kari.api.routes.session.threading.Thread"
+        "def_kari.api.routes.session_turn_engine.threading.Thread"
     ) as mock_thread:
         result = _start_background_tts("sid", "こんにちは", "char_a")
 
@@ -57,10 +57,10 @@ def test_start_background_tts_runs_when_human_tts_enabled():
     from def_kari.api.routes.session import _start_background_tts
 
     with mock.patch(
-        "def_kari.api.routes.session.load_settings",
+        "def_kari.api.routes.session_turn_engine.load_settings",
         return_value={"tts_backend": "voicevox", "tts_human_enabled": True},
     ), mock.patch(
-        "def_kari.api.routes.session.threading.Thread"
+        "def_kari.api.routes.session_turn_engine.threading.Thread"
     ) as mock_thread:
         result = _start_background_tts("sid", "こんにちは", "char_a")
 
