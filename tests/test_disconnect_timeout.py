@@ -69,7 +69,7 @@ async def test_disconnect_timeout_triggers_auto_skip_for_current_speaker():
     # ws_connections に tok_a が無い＝切断中
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=0.05), \
+        with patch("def_kari.api.routes.session_turn_disconnect._disconnect_timeout_sec", return_value=0.05), \
              patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             _schedule_disconnect_skip(sid, "char_a")
             await asyncio.sleep(0.15)
@@ -93,7 +93,7 @@ async def test_reconnect_cancels_disconnect_timer_and_prevents_skip():
     sess["players"] = {"tok_a": "char_a"}
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=0.05), \
+        with patch("def_kari.api.routes.session_turn_disconnect._disconnect_timeout_sec", return_value=0.05), \
              patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             _schedule_disconnect_skip(sid, "char_a")
             # 再接続（token再登録 + タイマーキャンセル）を模す
@@ -115,7 +115,7 @@ async def test_disconnect_timeout_noop_if_turn_already_advanced():
     sess["players"] = {"tok_a": "char_a"}
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=0.05), \
+        with patch("def_kari.api.routes.session_turn_disconnect._disconnect_timeout_sec", return_value=0.05), \
              patch("def_kari.api.routes.session_turn_engine._run_ai_turns"):
             _schedule_disconnect_skip(sid, "char_a")
             # タイマー発火前にターンが別経緯で進んでしまったことを模す
@@ -136,7 +136,7 @@ async def test_schedule_disconnect_skip_does_not_duplicate_timer():
     sess["players"] = {"tok_a": "char_a"}
     _sessions[sid] = sess
     try:
-        with patch("def_kari.api.routes.session_turn_engine._disconnect_timeout_sec", return_value=5.0):
+        with patch("def_kari.api.routes.session_turn_disconnect._disconnect_timeout_sec", return_value=5.0):
             _schedule_disconnect_skip(sid, "char_a")
             first_task = _sessions[sid]["disconnect_skip_tasks"]["char_a"]
             _schedule_disconnect_skip(sid, "char_a")
@@ -178,3 +178,35 @@ def test_maybe_schedule_skips_chars_without_player_token():
         assert "char_a" not in sess.get("disconnect_skip_tasks", {})
     finally:
         _sessions.pop(sid, None)
+
+
+# ── _end_session: バックグラウンドタスクの後始末 ───────────────────────
+
+@pytest.mark.asyncio
+async def test_end_session_cancels_all_pending_background_tasks():
+    """ai_task・idle_shutdown_task・disconnect_skip_tasksが全てキャンセル済みで
+    残らないこと（タスクキャンセル漏れの回帰防止。手動でのキャンセル漏れ確認は
+    レビューのたび難しいため、ここで機械的に固定する）。"""
+    from def_kari.api.routes.session import _end_session, _schedule_disconnect_skip, _sessions
+
+    async def _never_finishes():
+        await asyncio.sleep(3600)
+
+    sid = "_end_session_cleanup_test"
+    sess = _base_session(sid, ["char_a", "char_b"], turn=0)
+    sess["players"] = {"tok_a": "char_a"}
+    _sessions[sid] = sess
+    with patch("def_kari.api.routes.session_turn_disconnect._disconnect_timeout_sec", return_value=5.0):
+        _schedule_disconnect_skip(sid, "char_a")
+    ai_task = asyncio.create_task(_never_finishes())
+    idle_task = asyncio.create_task(_never_finishes())
+    sess["ai_task"] = ai_task
+    sess["idle_shutdown_task"] = idle_task
+    disconnect_task = sess["disconnect_skip_tasks"]["char_a"]
+
+    await _end_session(sid)
+
+    assert ai_task.cancelled()
+    assert idle_task.cancelled()
+    assert disconnect_task.cancelled()
+    assert sid not in _sessions

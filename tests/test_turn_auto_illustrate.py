@@ -13,9 +13,9 @@ def test_auto_illustrate_off_by_default_skips_image_thread():
     from def_kari.api.routes.session import _maybe_generate_turn_media
 
     with mock.patch(
-        "def_kari.api.routes.session_turn_engine.load_settings", return_value={}
+        "def_kari.api.routes.session_turn_media.load_settings", return_value={}
     ), mock.patch(
-        "def_kari.api.routes.session_turn_engine.threading.Thread"
+        "def_kari.api.routes.session_turn_media.threading.Thread"
     ) as mock_thread:
         _maybe_generate_turn_media("sid", {"text": "hello"})
 
@@ -29,10 +29,10 @@ def test_auto_illustrate_on_starts_image_thread():
     from def_kari.api.routes.session import _maybe_generate_turn_media
 
     with mock.patch(
-        "def_kari.api.routes.session_turn_engine.load_settings",
+        "def_kari.api.routes.session_turn_media.load_settings",
         return_value={"session_auto_illustrate": True},
     ), mock.patch(
-        "def_kari.api.routes.session_turn_engine.threading.Thread"
+        "def_kari.api.routes.session_turn_media.threading.Thread"
     ) as mock_thread:
         _maybe_generate_turn_media("sid", {"text": "hello"})
 

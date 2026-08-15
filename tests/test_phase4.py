@@ -250,7 +250,7 @@ def test_vote_deliberate_propagates_tags_from_llm_result():
         "success": True,
         "result": {"dialogue": "そういう話は苦手です……", "emotion": "embarrassed", "tags": ["nsfw"]},
     }
-    with patch("def_kari.api.routes.session_gameplay.generate_structured_reply", return_value=mock_result), \
+    with patch("def_kari.api.routes.session_voting.generate_structured_reply", return_value=mock_result), \
          patch("def_kari.api.routes.session._start_background_tts", return_value=""):
         resp = client.post(
             f"/api/session/{sid}/vote/deliberate",
@@ -283,7 +283,7 @@ def test_vote_deliberate_defaults_to_empty_tags_on_failure():
     sess["initiative"] = ["char_ai"]
     sess["name_map"]["char_ai"] = "AIキャラ"
 
-    with patch("def_kari.api.routes.session_gameplay.generate_structured_reply", side_effect=RuntimeError("boom")), \
+    with patch("def_kari.api.routes.session_voting.generate_structured_reply", side_effect=RuntimeError("boom")), \
          patch("def_kari.api.routes.session._start_background_tts", return_value=""):
         resp = client.post(
             f"/api/session/{sid}/vote/deliberate",

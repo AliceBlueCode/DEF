@@ -1,54 +1,38 @@
-"""Sessionのターン進行エンジン: AI自律ターン・切断タイムアウト・TTS/T2I自動生成・
-next_turn/human_turn_action/retake/skip/ai_pause/ai_resume・WebSocketエンドポイント。
+"""Sessionのターン進行エンジン: AI自律ターン・next_turn/human_turn_action/retake/skip/
+ai_pause/ai_resume・WebSocketエンドポイント。
+
 `session.py`分割の最終モジュール（他の全モジュールが依存の少ない側から先に
-抽出済みのため、循環importの懸念なくここに残った内容をまとめて移動する）。
+抽出済みのため、循環importの懸念なくここに残った内容をまとめて移動する）として
+作られたが、その後さらに以下の2モジュールへ分離した（TODO.md「session_turn_engine.py
+のさらなる分割」参照）:
+- `session_turn_media.py`: 挿絵・TTS自動生成（ターン進行ロジックへの依存を持たない）
+- `session_turn_disconnect.py`: 切断タイムアウト検知・自動skipスケジューリング
+  （`_apply_skip`のみturn_engine側に依存が残るため遅延import）
 """
 
 import asyncio
-import datetime
-import hashlib
 import json
 import logging
 import os
-import random
 import re
-import secrets
-import shutil
-import threading
-import time
-import uuid as _uuid_mod
-from collections import OrderedDict, deque
-from pathlib import Path
 
 _log = logging.getLogger("def.session")
 
 
-from fastapi import APIRouter, Body, WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from def_kari.characters import load_profiles, get_character
-from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
-from def_kari.llm.client import generate_structured_reply  # vote/deliberate で直接使用
 from def_kari.gm.player_agent import _player_agent
 from def_kari.image_prompt.emotion_tags import apply_emotion_tags
 from def_kari.settings import load_settings
-from def_kari.safety.filters import character_rating_exceeds_invite
-from def_kari.t2i.backend import generate_image as _generate_t2i_image
 from def_kari.gm.context_builder import (
     load_trpg_rulebook as _load_trpg_rulebook,
     load_trpg_scenario as _load_trpg_scenario,
-    build_trpg_context as _build_trpg_context,
     build_for_player as _build_for_player,
     build_session_context as _build_session_context,
     build_turn_instruction as _build_turn_instruction,
-)
-from def_kari.gm.gm_agent import _gm_agent
-from def_kari.safety.character_audit import audit_character_json
-from def_kari.safety.audit_log import (
-    record_generation_event,
-    record_rate_limit_violation,
-    reset_violations as _reset_audit_violations,
 )
 from def_kari.safety.content_filter import contains_blocked_content
 
@@ -57,7 +41,7 @@ from def_kari.safety.content_filter import contains_blocked_content
 # import して自分のエンドポイントを登録できるようにするため、依存の少ない
 # session_state.py側に置く。main.py/public_main.pyの`session.router`属性アクセスは
 # 同一オブジェクトを指すためこのまま動作する。
-from def_kari.api.routes.session_state import router, local_router
+from def_kari.api.routes.session_state import router
 
 _LANG_LABELS = {
     "ja": "日本語", "en": "English", "zh": "中文",
@@ -69,15 +53,7 @@ _LANG_LABELS = {
 
 # session_state.pyへ抽出済み（session.py分割・第一段階）。他のsessionモジュールとの
 # 共有を前提に、`_sessions`辞書・シリアライズ関連の定義はそちらが正本。
-from def_kari.api.routes.session_state import (
-    _MAX_SESSIONS,
-    _sessions,
-    _last_session_debug,
-    _NON_SERIALIZABLE_KEYS,
-    _session_for_json,
-    _PUBLIC_SESSION_KEYS,
-    _session_for_public_json,
-)
+from def_kari.api.routes.session_state import _sessions
 
 
 def _handle_flag_updated(session_id: str, event: dict) -> None:
@@ -105,52 +81,26 @@ _game_event_bus.subscribe(_FLAG_UPDATED, _handle_flag_updated)
 
 
 # ── WebSocket / マルチプレイ ──────────────────────────────────────────
-# `_ws_send_locks`・`_main_loop`・`set_main_loop`もsession_state.pyへ抽出済み
-# （vote_commit・leave_session・autosave等、ws以外からも参照されるため）。
-# `_main_loop`はset_main_loop()内でglobal再代入されるため、名前を直接importすると
-# session.py側の束縛が更新に追従しない。モジュールごとimportし`_session_state._main_loop`
-# の形で参照すること。
-from def_kari.api.routes import session_state as _session_state
-from def_kari.api.routes.session_state import _ws_send_locks, set_main_loop
+# `_ws_send_locks`もsession_state.pyへ抽出済み（vote_commit・leave_session・
+# autosave等、ws以外からも参照されるため）。
+from def_kari.api.routes.session_state import _ws_send_locks
 
 
 # session_ws.pyへ抽出済み（session.py分割）。未認証WS接続の同時数制限・
 # 安全な送信・全接続への配信はそちらが正本。
 from def_kari.api.routes.session_ws import (
-    _ws_pending_auth_by_ip,
-    _ws_pending_auth_total,
-    _WS_PENDING_AUTH_LIMIT_PER_IP,
-    _WS_PENDING_AUTH_LIMIT_TOTAL,
     _try_acquire_ws_pending_auth_slot,
     _release_ws_pending_auth_slot,
     _safe_send,
-    _ws_broadcast_handler,
 )
 
 # session_auth.pyへ抽出済み（session.py分割・第二段階）。
-from def_kari.api.routes.session_auth import (
-    _check_ws_rate,
-    _check_generation_rate,
-    _check_daily_generation_limit,
-    _check_circuit_breaker,
-    _record_violation_and_maybe_trip,
-    _try_acquire_generation_lock,
-    _release_generation_lock,
-)
+from def_kari.api.routes.session_auth import _check_ws_rate
 
 
 # session_auth.pyへ抽出済み（session.py分割・第二段階）。JWT発行/検証/失効・
 # 招待コード生成/レート制限・require_*等はそちらが正本。
-from jose import JWTError as _JWTError
-from def_kari.api.routes.session_auth import (
-    _get_jwt_secret,
-    issue_player_jwt,
-    verify_jwt,
-    revoke_token,
-    _revoked_jtis,
-    _revoked_jtis_last_cleanup,
-    _cleanup_expired_revoked_jtis,
-)
+from def_kari.api.routes.session_auth import verify_jwt
 
 
 def _is_human_char(session: dict, char_id: str, profiles: dict | None = None) -> bool:
@@ -173,26 +123,12 @@ def _is_human_char(session: dict, char_id: str, profiles: dict | None = None) ->
 # session_auth.pyへ抽出済み（session.py分割・第二段階）。招待コード・
 # セッション作成レート制限・セッション追い出し・キャラJSON検証・IP解決・
 # require_*等はそちらが正本。
-from fastapi import Header, HTTPException, Depends, Request
+from fastapi import HTTPException, Depends
 from def_kari.api.routes.session_auth import (
-    _INVITE_RATINGS,
     _invite_registry,
-    _invite_fail_rate,
-    _invite_locked_until,
-    _generate_invite_code,
-    _check_invite_rate,
-    _record_invite_fail,
-    _session_create_rate,
-    _check_session_create_rate,
-    _evict_oldest_session,
-    _character_json_fingerprint,
-    _extract_content_policy_from_json,
     _resolve_client_ip,
-    _token_currently_active,
-    require_host,
     require_player,
     require_keeper,
-    require_participant,
 )
 
 
@@ -204,31 +140,6 @@ from def_kari.api.routes.session_auth import (
 # 環境変数で上書き可能にしているのはテスト実行時間の短縮用（モックし忘れを
 # 60秒待たされず即座に検出できるようにするため）。本番の挙動自体は変えない。
 _VRAM_LOCK_TIMEOUT_SECONDS = float(os.environ.get("DEF_VRAM_LOCK_TIMEOUT", "60"))
-
-
-def _synthesize_turn_audio_sync(text: str, character_id: str, tts_backend: str) -> str:
-    """テキストをTTS合成してassets/に保存し、配信用URLを返す（同期・fail-silent）。
-
-    呼び出し元は必ずバックグラウンドスレッド（_generate_turn_audio /
-    _synthesize_and_notify_audio）経由で呼ぶこと。リクエストハンドラから直接
-    同期呼び出しすると、TTSバックエンドが無応答の場合にHTTPレスポンスごと
-    ブロックされる（2026-08-02、human_turn_actionでの実装ミスで発覚）。
-    """
-    if not tts_backend or not text:
-        return ""
-    try:
-        from def_kari.api.routes.tts import synthesize_and_save
-        from def_kari.resources.vram_lock import get_vram_lock
-        lock = get_vram_lock()
-        if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
-            _log.warning("vram_lock busy for over %.0fs, skipping TTS synthesis", _VRAM_LOCK_TIMEOUT_SECONDS)
-            return ""
-        try:
-            return synthesize_and_save(text, character_id, tts_backend)
-        finally:
-            lock.release()
-    except Exception:
-        return ""
 
 
 # ── サーバー自律AIターン ──────────────────────────────────────────
@@ -274,83 +185,14 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     }
 
 
-_DEFAULT_DISCONNECT_TIMEOUT_SEC = 60.0
-
-
-def _disconnect_timeout_sec() -> float:
-    from def_kari.settings import load_settings
-    try:
-        return max(1.0, float(load_settings().get("disconnect_timeout_sec", _DEFAULT_DISCONNECT_TIMEOUT_SEC)))
-    except (TypeError, ValueError):
-        return _DEFAULT_DISCONNECT_TIMEOUT_SEC
-
-
-def _find_player_token(session: dict, char_id: str) -> str | None:
-    """char_id を担当する人間プレイヤーの token を逆引きする。
-
-    見つからない場合は None（オフラインセッション等、そもそもWS接続を介して
-    操作されていないキャラ）。この場合「切断」の概念自体が存在しないため、
-    呼び出し側は切断タイムアウトの対象外として扱う。
-    """
-    return next((t for t, c in session.get("players", {}).items() if c == char_id), None)
-
-
-def _schedule_disconnect_skip(session_id: str, char_id: str) -> None:
-    """切断中のキャラが設定秒数以内に再接続しなければ、自動的にターンをskipする。
-
-    マルチプレイ設計書§3.7「切断（通信途絶）時のターン処理（決定・一部未実装）」の
-    自動skip部分。現在のターン担当者が切断した場合（ws_endpointのfinallyブロック）と、
-    まだターンが来ていないキャラが切断中のままターンが回ってきた場合
-    （WAITING_FOR_HUMAN発行直後）の両方から呼ぶ。再接続・退室・expel・セッション
-    終了時は必ず _cancel_disconnect_skip を呼ぶこと。
-    """
-    session = _sessions.get(session_id)
-    if not session:
-        return
-    timers: dict[str, asyncio.Task] = session.setdefault("disconnect_skip_tasks", {})
-    existing = timers.get(char_id)
-    if existing and not existing.done():
-        return  # 既にタイマー起動中
-    timeout = _disconnect_timeout_sec()
-
-    async def _do_skip() -> None:
-        try:
-            await asyncio.sleep(timeout)
-        except asyncio.CancelledError:
-            raise
-        sess = _sessions.get(session_id)
-        if not sess:
-            return
-        sess.setdefault("disconnect_skip_tasks", {}).pop(char_id, None)
-        token = _find_player_token(sess, char_id)
-        if token is not None and token in sess.get("ws_connections", {}):
-            return  # 再接続済み
-        if _get_current_speaker(sess) != char_id:
-            return  # 別の経緯で既にターンが進んでいた
-        _apply_skip(session_id, sess, char_id)
-
-    timers[char_id] = asyncio.create_task(_do_skip())
-
-
-def _cancel_disconnect_skip(session_id: str, char_id: str) -> None:
-    session = _sessions.get(session_id)
-    if not session:
-        return
-    timers: dict[str, asyncio.Task] = session.get("disconnect_skip_tasks", {})
-    task = timers.pop(char_id, None)
-    if task and not task.done():
-        task.cancel()
-
-
-def _maybe_schedule_disconnect_skip(session_id: str, session: dict, char_id: str) -> None:
-    """WAITING_FOR_HUMANの対象キャラが既に切断中なら、切断タイムアウトタイマーを仕込む。
-
-    3つのWAITING_FOR_HUMAN送出経路（_emit_waiting_for_human／_run_ai_turns内の
-    waiting_for_human分岐／ロビー開始直後の初回通知）すべてから呼ぶ。
-    """
-    token = _find_player_token(session, char_id)
-    if token is not None and token not in session.get("ws_connections", {}):
-        _schedule_disconnect_skip(session_id, char_id)
+# session_turn_disconnect.pyへ抽出済み（session_turn_engine.pyのさらなる分割）。
+# 切断タイムアウト検知・自動skipスケジューリングはそちらが正本。
+from def_kari.api.routes.session_turn_disconnect import (
+    _disconnect_timeout_sec,
+    _schedule_disconnect_skip,
+    _cancel_disconnect_skip,
+    _maybe_schedule_disconnect_skip,
+)
 
 
 def _execute_ai_turn(session_id: str) -> dict:
@@ -385,126 +227,10 @@ def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
     return True
 
 
-def _generate_turn_image(session_id: str, result: dict) -> None:
-    """AIターン結果の image_prompt_en から挿絵をバックグラウンド生成し、TURN_IMAGE_READY をemitする（fail-silent）。
-
-    従来は各クライアントが個別に POST /api/t2i/ を叩いていたが、それだと画像生成という
-    重い操作を無認証で外部公開する必要が生じてしまう。サーバー側で1回だけ生成してWS配信する
-    ことで、参加者側は読み取り専用の /api/t2i/image/{filename} だけで済むようにする。
-    """
-    try:
-        image_prompt_en = result.get("image_prompt_en", "")
-        if not image_prompt_en:
-            return
-        settings = load_settings()
-        backend = settings.get("t2i_backend", "")
-        if not backend:
-            return
-        model = settings.get(f"t2i_model_{backend}") or None
-        from def_kari.resources.vram_lock import get_vram_lock
-        lock = get_vram_lock()
-        if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
-            _log.warning("vram_lock busy for over %.0fs, skipping turn image generation", _VRAM_LOCK_TIMEOUT_SECONDS)
-            return
-        try:
-            image_path = _generate_t2i_image(prompt=image_prompt_en, backend=backend, model=model)
-        finally:
-            lock.release()
-        filename = Path(image_path).name
-        url = f"/api/t2i/image/{filename}"
-        _game_event_bus.emit(session_id, "TURN_IMAGE_READY", {
-            "character_id": result.get("character_id", ""),
-            "round": result.get("round"),
-            "turn": result.get("turn"),
-            "url": url,
-        })
-    except Exception as e:
-        _log.warning("turn image generation failed for session=%s: %s", session_id, e)
-
-
-def _generate_turn_audio(session_id: str, result: dict) -> None:
-    """AIターン結果のテキストをバックグラウンドでTTS合成し、TURN_AUDIO_READY をemitする（fail-silent）。
-
-    従来は各クライアントが個別に POST /api/tts/ → POST /api/tts/save を叩いていたが、
-    それだと音声合成という重い操作を無認証で外部公開する必要が生じてしまう。
-    サーバー側で1回だけ合成してWS配信する方式に統一した。
-
-    tts_enabled設定がOFFの場合は生成自体をスキップする（以前は常に生成し
-    クライアント側の再生可否のみで制御していたため、誰も聴かない音声を
-    毎ターンvram_lockを使って合成し続ける無駄があった、2026-08-10発覚）。
-    """
-    try:
-        settings = load_settings()
-        if not settings.get("tts_enabled", True):
-            return
-        tts_backend = settings.get("tts_backend", "")
-        url = _synthesize_turn_audio_sync(result.get("text", ""), result.get("character_id", ""), tts_backend)
-        if not url:
-            return
-        _game_event_bus.emit(session_id, "TURN_AUDIO_READY", {
-            "character_id": result.get("character_id", ""),
-            "round": result.get("round"),
-            "turn": result.get("turn"),
-            "url": url,
-        })
-    except Exception as e:
-        _log.warning("turn audio generation failed for session=%s: %s", session_id, e)
-
-
-def _maybe_generate_turn_media(session_id: str, result: dict) -> None:
-    """AIターン完了後の挿絵・TTSをそれぞれ独立したデーモンスレッドでバックグラウンド生成する。
-
-    _run_ai_turns から AI_TURN_COMPLETED emit直後に呼ばれる。参加処理と同様、
-    生成の成否に関わらずターン進行はブロックしない（fail-silent）。
-
-    挿絵の自動生成はsession_auto_illustrate設定（デフォルトOFF）でオプトイン。
-    OFF時は作画ボタン（generate_session_image、発言力消費・認証済み）のみで
-    生成する。TTSは対象外（別軸のまま常時自動生成）。
-    """
-    if load_settings().get("session_auto_illustrate", False):
-        threading.Thread(target=_generate_turn_image, args=(session_id, result), daemon=True).start()
-    threading.Thread(target=_generate_turn_audio, args=(session_id, result), daemon=True).start()
-
-
-def _synthesize_and_notify_audio(session_id: str, text: str, character_id: str, request_id: str) -> None:
-    """バックグラウンドでTTS合成し、完了したら AUDIO_READY イベントをemitする（fail-silent）。
-
-    human_turn_action（人間プレイヤー自己発言）・vote_deliberate（弁明ラウンド）が使う汎用版。
-    AIターン自動読み上げ専用の _generate_turn_audio とは別に、character_id + request_id で
-    紐付ける（呼び出し元ごとにレスポンス形状が異なり round/turn を持たないため）。
-    """
-    try:
-        tts_backend = load_settings().get("tts_backend", "")
-        url = _synthesize_turn_audio_sync(text, character_id, tts_backend)
-        if not url:
-            return
-        _game_event_bus.emit(session_id, "AUDIO_READY", {
-            "character_id": character_id,
-            "request_id": request_id,
-            "url": url,
-        })
-    except Exception as e:
-        _log.warning("audio synth failed for session=%s: %s", session_id, e)
-
-
-def _start_background_tts(session_id: str, text: str, character_id: str) -> str:
-    """TTS合成をバックグラウンドスレッドで起動し、呼び出し元に返すrequest_idを発行する。
-
-    人間プレイヤー自身の発言（human_turn_action・vote_deliberate・vote_proposal）に使う。
-    text が空、tts_human_enabled設定がOFF（デフォルトOFF）、またはTTSバックエンド
-    未設定の場合は空文字列を返しスレッドは起動しない
-    （呼び出し元はaudio_request_idが空なら音声なしとして扱う）。
-    """
-    settings = load_settings()
-    if not text or not settings.get("tts_human_enabled", False) or not settings.get("tts_backend", ""):
-        return ""
-    request_id = _uuid_mod.uuid4().hex[:12]
-    threading.Thread(
-        target=_synthesize_and_notify_audio,
-        args=(session_id, text, character_id, request_id),
-        daemon=True,
-    ).start()
-    return request_id
+# session_turn_media.pyへ抽出済み（session_turn_engine.pyのさらなる分割）。
+# ターン結果の挿絵・TTS自動生成、人間プレイヤー発言のTTSバックグラウンド合成は
+# そちらが正本（ターン進行ロジックへの依存を持たない自己完結モジュールのため）。
+from def_kari.api.routes.session_turn_media import _maybe_generate_turn_media, _start_background_tts
 
 
 async def _run_ai_turns(session_id: str) -> None:
@@ -590,122 +316,13 @@ async def _end_session(session_id: str) -> None:
         _invite_registry.pop(code, None)
 
 
-from def_kari.api.routes.session_persistence import (
-    _save_session_episodic,
-    _autosave_visitors,
-    _extract_appearance_tags,
-    _generate_visitor_images,
-    _autosave,
-    _delete_autosave,
-    _AUTOSAVE_DIR,
-    _AUTOSAVE_TTL_SEC,
-    _AUTOSAVE_CLEANUP_INTERVAL_SEC,
-    _autosave_last_cleanup,
-    _cleanup_stale_autosaves,
-    _VISITORS_DIR,
-    _VISITORS_MAX_FILES,
-    _SAFE_FILENAME_RE,
-    _SESSION_HISTORY_DIRS,
-    get_session_debug,
-    list_saved_sessions,
-    SessionLoadRequest,
-    delete_saved_session,
-    load_session,
-    SaveSessionMediaItem,
-    SaveSessionRequest,
-    save_session,
-)
+from def_kari.api.routes.session_persistence import _autosave
 
+from def_kari.api.routes.session_rules import _load_action_directives
 
-from def_kari.api.routes.session_rules import (
-    _RULE_DIRS,
-    _PUBLIC_RULE_DIRS,
-    _DIRECTIVE_DIRS,
-    _PUBLIC_DIRECTIVE_DIRS,
-    _is_public_request,
-    _load_action_directives,
-    get_action_directives,
-    _load_session_rules,
-    get_session_rules,
-    get_session_rule_detail,
-    SaveRuleRequest,
-    save_session_rule,
-)
+from def_kari.api.routes.session_lobby import _schedule_idle_shutdown, _cancel_idle_shutdown
 
-from def_kari.api.routes.session_lobby import (
-    _load_session_prompts,
-    _sp,
-    _build_initial_npc_state,
-    _schedule_idle_shutdown,
-    _cancel_idle_shutdown,
-    SessionStartRequest,
-    start_session,
-    InviteRequest,
-    create_invite,
-    AvailableSlotsRequest,
-    get_available_slots,
-    JoinRequest,
-    join_session,
-    leave_session,
-    AiTakeoverRequest,
-    ai_takeover,
-    end_session_by_host,
-    LobbyConfigRequest,
-    update_host_role,
-    set_lobby_config,
-    LobbyModeRequest,
-    set_lobby_trpg_mode,
-    LobbyKeeperSourceRequest,
-    set_lobby_keeper_source,
-    LobbySettingsRequest,
-    set_lobby_settings,
-    LobbyAIRequest,
-    lobby_add_ai,
-    LobbyKeeperCharRequest,
-    lobby_set_keeper_char,
-    lobby_remove_ai,
-)
-
-
-from def_kari.api.routes.session_image import (
-    _resolve_model,
-    _apply_char_tags,
-    SessionGenerateImageRequest,
-    generate_session_image,
-    _generate_session_image_impl,
-)
-
-
-from def_kari.api.routes.session_gameplay import (
-    reset_circuit_breaker,
-    AutoAdvanceRequest,
-    set_auto_advance,
-    KeeperMessageRequest,
-    inject_keeper_message,
-    AIKeeperRequest,
-    ai_keeper_narrate,
-    SessionDiceRollRequest,
-    session_dice_roll,
-    advance_scene,
-    advance_chapter,
-    DesignateRequest,
-    designate_next,
-    CounterAdjustRequest,
-    adjust_counter,
-    VoteRequest,
-    VoteCommitRequest,
-    vote_deliberate,
-    vote_commit,
-    get_session_events,
-    NpcKnowledgeRequest,
-    NpcRelationshipRequest,
-    add_npc_knowledge,
-    update_npc_relationship,
-    get_npc_state,
-    get_session,
-    StatSyncRequest,
-    sync_stats,
-)
+from def_kari.api.routes.session_image import _resolve_model
 
 
 def _clean_history_for_retake(history: list, remove: int) -> tuple[list, int]:
