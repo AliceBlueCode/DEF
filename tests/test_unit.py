@@ -1367,6 +1367,36 @@ class TestBuildMetaDirective:
         result = _build_meta_directive({"is_real_person": True, "is_existing_ip": True}, "TestName", "ja")
         assert "TestName" in result  # real_person ブランチを通る
 
+    def test_personification_ja(self):
+        result = _build_meta_directive({"origin_type": "personification"}, "Claude", "ja")
+        assert result == _META_DIRECTIVE["personification"]["ja"].format(name="Claude")
+        assert "Claude" in result
+
+    def test_personification_en(self):
+        result = _build_meta_directive({"origin_type": "personification"}, "Claude", "en")
+        assert result == _META_DIRECTIVE["personification"]["en"].format(name="Claude")
+
+    def test_personification_fallback_name_ja(self):
+        result = _build_meta_directive({"origin_type": "personification"}, "", "ja")
+        assert "このAI製品" in result
+
+    def test_personification_priority_over_existing_ip(self):
+        """origin_type: personification のキャラは is_existing_ip も同時にTrueだが、
+        より具体的な personification 側の文言が使われること（実データ上の実際の組み合わせ）。"""
+        result = _build_meta_directive(
+            {"origin_type": "personification", "is_existing_ip": True}, "Claude", "ja"
+        )
+        assert result == _META_DIRECTIVE["personification"]["ja"].format(name="Claude")
+        assert result != _META_DIRECTIVE["existing_ip"]["ja"]
+
+    def test_real_person_priority_over_personification(self):
+        """is_real_person は personification よりさらに優先されること（実データ上は
+        排他だが、優先順位の取り違えがないことを確認）。"""
+        result = _build_meta_directive(
+            {"is_real_person": True, "origin_type": "personification"}, "TestName", "ja"
+        )
+        assert "本物" in result  # real_person ブランチを通る
+
     def test_unknown_lang_falls_back_to_en(self):
         result = _build_meta_directive({}, "", "zh")
         assert result == _META_DIRECTIVE["default"]["en"]

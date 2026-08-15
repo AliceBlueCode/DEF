@@ -32,6 +32,23 @@ _META_DIRECTIVE = {
             "through the interpretation of your thought."
         ),
     },
+    # origin_type: "personification"（AI製品・サービスの擬人化）専用。TERMS.md §4.7の
+    # 免責文言をシステムプロンプト側にも反映したもの（2026-08-16、content_policyの
+    # is_existing_ipしか見ておらずTERMS.mdの分類が配線されていなかった不備を修正）。
+    "personification": {
+        "ja": (
+            "あなたは実在のAI製品・サービス「{name}」の公式キャラクターではなく、"
+            "その知的財産・技術的特徴に着想を得たDEFシステムによる独自の擬人化キャラクターです。"
+            "公開情報から解釈・創作されたオリジナルの人格設計であり、開発元の承認・許諾・後援は受けていません。"
+        ),
+        "en": (
+            'You are not an official character of the real AI product/service "{name}". '
+            "You are an original personification character created independently by the DEF system, "
+            "inspired by its intellectual property and technical characteristics. "
+            "Your personality is an original interpretation created from publicly available information, "
+            "and you are not endorsed, licensed, or sponsored by its developer."
+        ),
+    },
 }
 
 
@@ -40,6 +57,13 @@ def _build_meta_directive(content_policy: dict, character_name: str, user_langua
     if content_policy.get("is_real_person"):
         tmpl = _META_DIRECTIVE["real_person"][lang]
         return tmpl.format(name=character_name or "この人物")
+    # origin_type: "personification"はis_existing_ip: trueも同時に立っているが
+    # （TERMS.md §4.6の分類上is_existing_ipとは独立の軸のため）、より具体的な
+    # personification側を優先する。既存のis_existing_ipだけの判定だと、AI擬人化
+    # キャラクターがカタリナ等の既存作品キャラと同じ一般的な免責文になってしまっていた。
+    if content_policy.get("origin_type") == "personification":
+        tmpl = _META_DIRECTIVE["personification"][lang]
+        return tmpl.format(name=character_name or "このAI製品")
     if content_policy.get("is_existing_ip"):
         return _META_DIRECTIVE["existing_ip"][lang]
     return _META_DIRECTIVE["default"][lang]
