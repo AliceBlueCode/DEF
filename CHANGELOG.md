@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## v4.0.2 — 2026-08-16
+
+### リファクタリング
+- `session.py`（4,886行・定義120超）を機能単位で9モジュール（`session_state`/
+  `session_auth`/`session_ws`/`session_persistence`/`session_rules`/`session_image`/
+  `session_lobby`/`session_gameplay`/`session_turn_engine`）へ分割。`session.py`
+  自体は純粋な再エクスポート層（236行）に縮小
+- `SessionTab.tsx`（3,598行・useState 97個）を9個のカスタムフック
+  （`useLobbySession`/`useAiAssignWizard`/`useTurnState`/`useSafetyFilter`/
+  `useCharBackendConfig`/`useHumanTurn`/`useVoteAndDesignate`/`useCharSheetAndDice`/
+  `useParticipants`）へ分割
+- `session.py`分割・第二段階: `human_turn_action`（認可ロジック）・`vote_commit`
+  （投票集計ロジック）・`next_turn`（397行、6段階に分解し本体62行のオーケストレータへ）
+  の肥大化した関数をレイヤーごとに切り出し
+- `session_turn_engine.py`の未使用import133個・完全に死んだ再エクスポート19個を削除。
+  挿絵・TTS自動生成（`session_turn_media.py`）・切断タイムアウト検知
+  （`session_turn_disconnect.py`）・投票ロジック（`session_voting.py`）を
+  責務ごとに独立モジュール化
+
+### バグ修正
+- オンラインセッションのinitiative（発言順）がランダム化されておらず、常に最初に
+  参加した人間が1番手固定になっていた問題を修正（オフラインセッションのみ
+  `random.sample`が使われ、オンライン側はjoin順に積み上がるだけだった非対称）
+- リロード（F5）復帰時に`initiative`・持ち込みキャラの`imageColor`・公開ポート
+  （Cloudflare Tunnel）経由ゲストのAIキャラ名表示が抜ける3件の問題を修正
+- AI擬人化キャラクター（Claude/ChatGPT/Gemini/Copilot）のシステムプロンプトが、
+  既存作品の二次創作キャラと同じ一般的な免責文言のままだった問題を修正。
+  TERMS.mdで既に定義されていた`origin_type: "personification"`専用の免責文を
+  システムプロンプト生成（`_build_meta_directive()`）に配線
+
+### 新機能
+- セッションルールに「成熟した恋愛（大人の関係性）」ルールセットを追加
+
+---
+
 ## v4.0.1 — 2026-08-12
 
 ### バグ修正
