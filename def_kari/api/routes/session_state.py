@@ -61,13 +61,16 @@ def _session_for_json(session: dict) -> dict:
 # require_keeperで保護しているのと同じデータが、こちらは無防備に全ロールへ露出していた）・
 # player_knowledge・rules/scene（private ruleset本文がそのまま入りうる）等、新フィールド
 # 追加のたびに「除外し忘れる」リスクを構造的に抱えていた。フロントエンド
-# （SessionTab.tsx）がこのエンドポイントから実際に読むのは`history`/`name_map`のみ
-# （2026-08-11確認）。allowlistは実際に必要なフィールド＋ゲーム進行の表示に使う
-# 非秘匿のメタデータ（数値カウンタ・モードフラグ・ID文字列）に限定し、GM/シナリオ/
-# ルールセット由来の自由記述コンテンツ（npc_state・player_knowledge・rules・scene・
-# char_game_sheets・skill_pool・skill_values・guest_chars等）は一切含めない。
+# （SessionTab.tsx）がこのエンドポイントから実際に読むのは`history`/`name_map`/
+# `initiative`/`char_colors`（2026-08-16、リロード復帰・公開ポート経由ゲストの
+# 名前/色欠落修正で追加。characters一覧APIがローカル専用ポートにしか無く、
+# 公開ポート経由のゲストはそちらを読めないための代替経路）。allowlistは実際に
+# 必要なフィールド＋ゲーム進行の表示に使う非秘匿のメタデータ（数値カウンタ・
+# モードフラグ・ID文字列）に限定し、GM/シナリオ/ルールセット由来の自由記述
+# コンテンツ（npc_state・player_knowledge・rules・scene・char_game_sheets・
+# skill_pool・skill_values・guest_chars等）は一切含めない。
 _PUBLIC_SESSION_KEYS = frozenset({
-    "id", "history", "name_map", "initiative",
+    "id", "history", "name_map", "initiative", "char_colors",
     "round", "turn", "action_count", "actions_per_turn",
     "topic", "trpg_mode", "online_mode", "lobby_active", "host_keeper_mode",
     "human_keeper", "waiting_for_gm", "auto_advance", "human_char_ids",

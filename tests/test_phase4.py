@@ -1158,6 +1158,147 @@ def test_lobby_add_ai_with_game_sheet_and_backend():
     assert resp.status_code == 200
     assert _sessions[sid]["char_game_sheets"]["character_hanfei_001"] == "sheet_a"
     assert _sessions[sid]["char_backends"]["character_hanfei_001"] == "gemini"
+
+
+# ── char_colors（公開ポート経由ゲストのimageColor欠落対策、2026-08-16） ──────
+
+def test_start_session_populates_char_colors():
+    """start_session時点でimage_colorを持つキャラはchar_colorsに反映されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": ["character_hanfei_001"]})
+    d = start.json()
+    sid = d["session_id"]
+    assert _sessions[sid]["char_colors"].get("character_hanfei_001") == "#2a3a50"
+    _sessions.pop(sid, None)
+
+
+def test_lobby_add_ai_populates_char_colors():
+    """/lobby/add_ai で追加したAIキャラのimage_colorがchar_colorsに反映されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/add_ai",
+        json={"character_id": "character_hanfei_001"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert _sessions[sid]["char_colors"]["character_hanfei_001"] == "#2a3a50"
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_flat_populates_char_colors():
+    """持ち込みキャラ（フラット形式）のimage_colorがchar_colorsに反映されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {"name": "ゲスト", "player_type": "human", "image_color": "#ff8844"}
+    resp = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert resp.status_code == 200
+    char_id = resp.json()["character_id"]
+    assert _sessions[sid]["char_colors"][char_id] == "#ff8844"
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_versioned_populates_char_colors():
+    """持ち込みキャラ（{version: {base_profile: {...}}}形式）のimage_colorも
+    同じ両形式判定で拾えること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {"v1": {"base_profile": {"name": "ゲスト2", "player_type": "human", "image_color": "#44ff88"}}}
+    resp = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert resp.status_code == 200
+    char_id = resp.json()["character_id"]
+    assert _sessions[sid]["char_colors"][char_id] == "#44ff88"
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_without_image_color_omits_char_colors_entry():
+    """image_colorを持たない持ち込みキャラはchar_colorsに何も追加しない
+    （空文字列を誤ってキーとして登録しない）こと。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {"name": "色無しゲスト", "player_type": "human"}
+    resp = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert resp.status_code == 200
+    char_id = resp.json()["character_id"]
+    assert char_id not in _sessions[sid].get("char_colors", {})
+    _sessions.pop(sid, None)
+
+
+def test_lobby_config_host_char_populates_char_colors():
+    """lobby_configでホストキャラを確定させた際、そのimage_colorもchar_colorsに
+    反映されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby_config",
+        json={"max_players": 4, "host_char_id": "character_hanfei_001"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert _sessions[sid]["char_colors"]["character_hanfei_001"] == "#2a3a50"
+    _sessions.pop(sid, None)
+
+
+def test_get_session_public_response_includes_char_colors():
+    """GET /{session_id}のallowlist（_PUBLIC_SESSION_KEYS）にchar_colorsが
+    含まれ、公開ポート経由のゲストでも読めること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": ["character_hanfei_001"], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+
+    resp = client.get(f"/api/session/{sid}", headers={"Authorization": f"Bearer {host_token}"})
+    assert resp.status_code == 200
+    assert resp.json()["session"]["char_colors"].get("character_hanfei_001") == "#2a3a50"
+    _sessions.pop(sid, None)
     _sessions.pop(sid, None)
 
 

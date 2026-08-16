@@ -185,9 +185,15 @@ def start_session(req: SessionStartRequest, request: Request):
             if char and char.get("entity_type") == "base_entity":
                 raise HTTPException(400, f"base_entity '{cid}' はセッションに参加できません")
     all_name_map = {}
+    char_colors = {}
     for cid in req.character_ids:
         char = get_character(cid, profiles)
         all_name_map[cid] = char.get("name", cid) if char else cid
+        # image_colorは公開ポート経由のゲストがcharacters一覧APIを読めないため
+        # （ローカル専用ポートにしかない）、GET /{session_id}経由での代替配信元
+        # として持たせる（2026-08-16、TODO.md「ゲスト側imageColor」対応）。
+        if char and char.get("image_color"):
+            char_colors[cid] = char["image_color"]
     keeper_char_id = req.keeper_char_id if req.keeper_char_id in req.character_ids else ""
     player_ids = [c for c in req.character_ids if c != keeper_char_id]
     initiative = [] if req.online_mode else random.sample(player_ids, len(player_ids))
@@ -201,6 +207,7 @@ def start_session(req: SessionStartRequest, request: Request):
     rule_style = _rule_data.get("style", "discussion")
     rule_max_chars = _rule_data.get("max_chars", 0)
     rule_max_rounds = _rule_data.get("max_rounds", 0)
+    rule_reinforced_rules = _rule_data.get("reinforced_rules", [])
     char_backends = {
         cid: bid
         for cid, bid in req.char_backends.items()
@@ -215,6 +222,7 @@ def start_session(req: SessionStartRequest, request: Request):
         "id": session_id,
         "initiative": initiative,
         "name_map": name_map,
+        "char_colors": char_colors,
         "topic": req.topic,
         "backend": req.backend,
         "char_backends": char_backends,
@@ -223,6 +231,7 @@ def start_session(req: SessionStartRequest, request: Request):
         "style": rule_style,
         "max_chars": rule_max_chars,
         "max_rounds": rule_max_rounds,
+        "reinforced_rules": rule_reinforced_rules,
         "scene": scene,
         "round": 1,
         "turn": 0,
@@ -516,10 +525,21 @@ def join_session(req: JoinRequest, request: Request):
              if isinstance(v, dict) and isinstance(v.get("base_profile"), dict) and v["base_profile"].get("name")),
             "Guest"
         )
+        # 持ち込みキャラのimageColorも同じ両形式判定で抽出する。ホスト自身の
+        # characters一覧APIに載らない（guest_xxxはdata/visitors/にしか永続化されない）
+        # ため、これが唯一の配信経路になる（2026-08-16、TODO.md「持ち込みキャラの
+        # imageColor」対応、_extract_content_policy_from_jsonと同じ抽出パターン）。
+        display_color = _cj.get("image_color") or next(
+            (v["base_profile"]["image_color"] for v in _cj.values()
+             if isinstance(v, dict) and isinstance(v.get("base_profile"), dict) and v["base_profile"].get("image_color")),
+            ""
+        )
         # イニシアティブと名前マップに追加（オンラインセッションで参加者が埋めていく）
         if char_id not in sess["initiative"]:
             sess["initiative"].append(char_id)
         sess["name_map"][char_id] = display_name
+        if display_color:
+            sess.setdefault("char_colors", {})[char_id] = display_color
 
     player_token = issue_player_jwt(session_id, role, char_id)
     sess["players"][player_token] = char_id
@@ -725,6 +745,8 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
         if char:
             sess["initiative"].append(req.host_char_id)
             sess["name_map"][req.host_char_id] = char.get("name", req.host_char_id)
+            if char.get("image_color"):
+                sess.setdefault("char_colors", {})[req.host_char_id] = char["image_color"]
             if char.get("player_type") == "human":
                 sess.setdefault("human_char_ids", []).append(req.host_char_id)
     # オンラインセッションのinitiativeは参加/追加された順（join_session・
@@ -828,6 +850,7 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, request: Requ
         sess["style"] = _rule_data.get("style", "discussion")
         sess["max_chars"] = _rule_data.get("max_chars", 0)
         sess["max_rounds"] = _rule_data.get("max_rounds", 0)
+        sess["reinforced_rules"] = _rule_data.get("reinforced_rules", [])
         sess["scene"] = _rule_data.get("scene", "")
     if req.trpg_rulebook is not None:
         sess["trpg_rulebook"] = req.trpg_rulebook
@@ -883,6 +906,8 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, request: Request, auth: d
         raise HTTPException(400, "Cannot add human character as AI slot")
     sess["initiative"].append(char_id)
     sess["name_map"][char_id] = char.get("name", char_id)
+    if char.get("image_color"):
+        sess.setdefault("char_colors", {})[char_id] = char["image_color"]
     if req.game_sheet_id:
         sess.setdefault("char_game_sheets", {})[char_id] = req.game_sheet_id
     if req.backend_id:

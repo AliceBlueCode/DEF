@@ -257,6 +257,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // そのまま表示されていた（2026-08-16、リロード動確中にユーザーが実機で発見）。
   // 公開ポートでも読めるGET /{session_id}のname_mapを正本として持たせる。
   const [sessionNameMap, setSessionNameMap] = useState<Record<string, string>>({})
+  // GET /{session_id}のchar_colors（サーバー正本）。imageColorも上と全く同じ理由
+  // （charactersがローカル専用ポートのAPIでしか取れず、公開ポート経由のゲストは
+  // 常に空のまま）で欠落していた（2026-08-16）。characters一覧が読めないゲストの
+  // ためのimage_color配信経路。
+  const [sessionCharColors, setSessionCharColors] = useState<Record<string, string>>({})
   const initialHistoryFetchedForRef = useRef('')
   // AUDIO_READY（human_turn_action・vote/deliberateの人間/AI発言読み上げ）の
   // request_id → messages配列インデックス対応表。AUDIO_READY受信時にここを引いて
@@ -301,6 +306,24 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     const data = await res.json().catch(() => ({}))
     if (!res.ok && !data.error) return { ...data, error: data.detail || `HTTP ${res.status}` }
     return data
+  }
+
+  // characters（App.tsxのprop、ローカル専用ポートの/api/characters/でしか取得できず
+  // 公開ポート経由のゲストでは常に空）を主としつつ、そこに無い/image_colorが
+  // 欠けているキャラをsessionCharColors（GET /{session_id}経由、公開ポートでも
+  // 読める）で補うCharacterマップを組み立てる（2026-08-16）。3箇所
+  // （履歴再構築・imageColor補完useEffect・WSイベントハンドラ群）で同じ形の
+  // マップが必要なため共通化した。
+  const buildCharMap = (): Record<string, Character> => {
+    const map: Record<string, Character> = Object.fromEntries(characters.map(c => [c.id, c]))
+    for (const [id, color] of Object.entries(sessionCharColors)) {
+      if (!map[id]) {
+        map[id] = { id, name: sessionNameMap[id] || id, image_color: color }
+      } else if (!map[id].image_color) {
+        map[id] = { ...map[id], image_color: color }
+      }
+    }
+    return map
   }
 
   // ── マウント時のセッション復帰（リロード対策） ──────────────────
@@ -391,9 +414,20 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           if (res.ok && !cancelled && data.session?.name_map) {
             setSessionNameMap(nameMap)
           }
+          const charColors: Record<string, string> = data.session?.char_colors || {}
+          if (res.ok && !cancelled && data.session?.char_colors) {
+            setSessionCharColors(charColors)
+          }
           const history: any[] = res.ok ? (data.session?.history || []) : []
           if (history.length > 0 && !cancelled) {
-            const charMapForHistory = Object.fromEntries(characters.map(c => [c.id, c]))
+            // setSessionCharColors直後はまだstateに反映されない（Reactの非同期更新）ため、
+            // ここではstate（sessionCharColors）ではなく取得直後のcharColorsローカル変数を
+            // 直接使ってマージする（buildCharMap()のクロージャ経由だと古い値のまま）。
+            const charMapForHistory: Record<string, Character> = Object.fromEntries(characters.map(c => [c.id, c]))
+            for (const [id, color] of Object.entries(charColors)) {
+              if (!charMapForHistory[id]) charMapForHistory[id] = { id, name: nameMap[id] || id, image_color: color }
+              else if (!charMapForHistory[id].image_color) charMapForHistory[id] = { ...charMapForHistory[id], image_color: color }
+            }
             const reconstructed = reconstructMessages(history, nameMap, charMapForHistory)
             if (reconstructed.length > RECENT_COUNT) {
               setHiddenSessionHistory(reconstructed.slice(0, -RECENT_COUNT))
@@ -426,9 +460,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // 空のままimageColorが全メッセージでundefinedになり、二度と補完されない
   // 問題があった（2026-08-15発覚、2026-08-16修正）。charactersが後から
   // 届いた時点で、既存messages/hiddenSessionHistoryのimageColorを再計算する。
+  // 公開ポート経由のゲストはcharactersが恒久的に空のままのため、
+  // sessionCharColors（GET /{session_id}経由）の到着でも同様に再計算する。
   useEffect(() => {
-    if (characters.length === 0) return
-    const charMap = Object.fromEntries(characters.map(c => [c.id, c]))
+    if (characters.length === 0 && Object.keys(sessionCharColors).length === 0) return
+    const charMap = buildCharMap()
     const backfillImageColor = (msgs: SessionMessage[]) =>
       msgs.map(m => {
         const color = charMap[m.character_id]?.image_color
@@ -437,7 +473,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     setMessages(prev => backfillImageColor(prev))
     setHiddenSessionHistory(prev => backfillImageColor(prev))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [characters])
+  }, [characters, sessionCharColors])
 
   // ── WS イベントハンドラ ────────────────────────────────────────
   const handleSessionEvent = async (event: { type: string; payload: any }) => {
@@ -888,7 +924,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const charMap = Object.fromEntries(characters.map(c => [c.id, c]))
+  const charMap = buildCharMap()
 
   const _initSession = async (data: any, chars: string[]) => {
     setParticipants([])
