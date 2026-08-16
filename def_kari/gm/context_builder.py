@@ -570,12 +570,44 @@ def build_for_npc(
     return "\n".join(parts)
 
 
+def _reinforced_rules_suffix(session: dict, is_ja: bool) -> str:
+    """rules配列の質的指示のうち履歴が伸びるにつれ埋もれて無視されやすいものを
+    毎ターン再掲する（max_chars/max_roundsと同じ理由・同じ対処、2026-08-16）。
+
+    rules配列全体を毎ターン再掲する案(a)ではなくこちらを選んだ理由: 全体再掲は
+    トークンコストが嵩む上、rulesの大半（「これは対話セッションです」等）は
+    履歴が伸びても薄れにくい前提説明であって、実際に薄れて無視されやすいのは
+    ルールセット作成者が【重要】マークを付けた一部の行だけ。ルールセットJSON側で
+    `reinforced_rules`として明示指定されたものだけを狙って再掲する方が、
+    max_chars/max_roundsとも一貫した設計になる。
+    """
+    reinforced = session.get("reinforced_rules", [])
+    if not reinforced:
+        return ""
+    body = "、".join(reinforced) if is_ja else "; ".join(reinforced)
+    return f"（{body}）" if is_ja else f" ({body})"
+
+
 def build_turn_instruction(
     action_count: int, speaker_name: str, other_names: list[str],
     topic: str, session_history: list[dict], current_char_id: str,
     session: dict, directives: dict, user_language: str,
 ) -> str:
-    """ターンごとの発言指示テキストを組み立てる。"""
+    """ターンごとの発言指示テキストを組み立てる。reinforced_rulesの再掲付与は
+    末尾で一括して行う（_build_turn_instruction_text参照）。"""
+    text = _build_turn_instruction_text(
+        action_count, speaker_name, other_names, topic, session_history,
+        current_char_id, session, directives, user_language,
+    )
+    return text + _reinforced_rules_suffix(session, user_language == "ja")
+
+
+def _build_turn_instruction_text(
+    action_count: int, speaker_name: str, other_names: list[str],
+    topic: str, session_history: list[dict], current_char_id: str,
+    session: dict, directives: dict, user_language: str,
+) -> str:
+    """ターンごとの発言指示テキストの本体を組み立てる（reinforced_rules付与前）。"""
     _is_ja = user_language == "ja"
     _is_trpg = session.get("trpg_mode", False)
     # discussion系（default/gentle等）向けの「意見を述べよ」という指示は、manzai/rakugo/

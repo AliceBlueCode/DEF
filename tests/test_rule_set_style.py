@@ -172,3 +172,62 @@ def test_discussion_style_reminds_max_chars_on_additional_action():
     }]
     text = build_turn_instruction(1, "A", ["B"], "topic", history, "a", session, {}, "ja")
     assert "200字" in text
+
+
+# ── reinforced_rules（rules配列の質的指示の毎ターン再掲、2026-08-16） ──────
+
+def test_reinforced_rules_appears_on_first_turn():
+    session = {"style": "discussion", "reinforced_rules": ["対立を恐れず、安易な同意から始めないこと"]}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "対立を恐れず" in text
+
+
+def test_reinforced_rules_appears_mid_session():
+    """履歴が伸びた後（何ターンも経過した状態を模して）も再掲され続けること
+    ——rules配列内の一度きりの記述と違い、埋もれて消えない。"""
+    session = {"style": "discussion", "round": 1, "turn": 0, "reinforced_rules": ["対立を恐れず、安易な同意から始めないこと"]}
+    history = [{"role": "assistant", "character_id": "b", "content": "B: hello"}]
+    text = build_turn_instruction(0, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "対立を恐れず" in text
+
+
+def test_reinforced_rules_appears_on_additional_action():
+    session = {"style": "discussion", "round": 1, "turn": 0, "reinforced_rules": ["対立を恐れず、安易な同意から始めないこと"]}
+    history = [{
+        "role": "assistant", "character_id": "a", "content": "A: hello",
+        "round": 1, "turn": 0,
+    }]
+    text = build_turn_instruction(1, "A", ["B"], "topic", history, "a", session, {}, "ja")
+    assert "対立を恐れず" in text
+
+
+def test_reinforced_rules_joins_multiple_entries():
+    session = {"style": "discussion", "reinforced_rules": ["ルールA", "ルールB"]}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "ルールA" in text
+    assert "ルールB" in text
+
+
+def test_reinforced_rules_absent_when_unset():
+    """reinforced_rulesを持たない（従来からの）ルールセットでは、
+    括弧書きの再掲が余計に付与されないこと。"""
+    session = {"style": "discussion"}
+    text_with = build_turn_instruction(0, "A", ["B"], "topic", [], "a", {"style": "discussion", "reinforced_rules": ["X"]}, {}, "ja")
+    text_without = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "X" not in text_without
+    assert len(text_without) < len(text_with)
+
+
+def test_reinforced_rules_en():
+    session = {"style": "discussion", "reinforced_rules": ["Do not shy away from conflict"]}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "en")
+    assert "Do not shy away from conflict" in text
+
+
+def test_reinforced_rules_combines_with_max_chars_reminder():
+    """max_charsの再掲とreinforced_rulesの再掲が共存すること（片方が片方を
+    上書き・消去しない）。"""
+    session = {"style": "discussion", "max_chars": 200, "reinforced_rules": ["対立を恐れず、安易な同意から始めないこと"]}
+    text = build_turn_instruction(0, "A", ["B"], "topic", [], "a", session, {}, "ja")
+    assert "200字" in text
+    assert "対立を恐れず" in text
