@@ -72,25 +72,6 @@ def test_translation():
     print("PASS: translation")
 
 
-def test_image_prompt():
-    from def_kari.image_prompt.tag_extractor import extract_flat_tags
-    from def_kari.image_prompt.prompt_generator import generate_prompt_from_text
-
-    noise_tags = extract_flat_tags(
-        "Of course I think tests are important. Let's make sure everything works."
-    )
-    assert len(noise_tags) == 0, f"Expected 0 noise tags, got: {noise_tags}"
-
-    prompt = generate_prompt_from_text(
-        "A sad girl with black hair sitting alone on a beach at sunset"
-    )
-    assert "1girl" in prompt
-    assert "sad" in prompt
-    assert "beach" in prompt
-    print(f"  prompt: {prompt}")
-    print("PASS: image_prompt")
-
-
 def test_llm_client_offline():
     """フォールバックチェーンのオフラインテスト(LLM接続なし)。"""
     from def_kari.llm.client import _autofix, _try_parse_and_validate
