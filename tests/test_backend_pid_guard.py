@@ -1,10 +1,18 @@
-"""バックエンド自動起動の.pidファイルガード（_try_claim_pid_slot / _read_pid）のテスト。
+"""バックエンド自動起動の.pidファイルガード（_try_claim_pid_slot / _write_pid /
+_read_pid）のテスト。
 
 従来は「存在確認→生存確認→新規プロセス起動→.pid書き込み」を別々のステップで
 行っており、(1) ほぼ同時に2箇所から呼ばれるとTOCTOUレースで二重起動しうる、
 (2) 死んだプロセスの.pidファイルが残ったままOSが同じPID番号を無関係な別
 プロセスに再利用すると誤って「生存している」と判定してしまう、という2つの
 構造的な弱点を抱えていた（2026-08-16、TODO.md「起動直後のバックエンド多重起動」対応）。
+
+2026-08-17追記: 最初の修正では排他新規作成→呼び出し元がサブプロセス起動後に
+書き込む設計だったため、その間ファイルが一瞬「存在するが空」の状態になり、
+別スレッドがそれを「壊れたファイル」と誤認して横取りしてしまう競合がCIの
+並行性テストで実際に発覚した（Linux CIランナーでは20スレッド中11〜13個が
+獲得に成功してしまっていた）。獲得直後に呼び出し元自身のPID＋時刻を仮の値と
+して即座に書き込む設計に変更し、空ファイルのまま置かれる時間を無くした。
 """
 
 import os
@@ -22,19 +30,20 @@ def _isolated_data_dir(tmp_path, monkeypatch):
 
 
 def test_claim_fresh_slot_succeeds():
-    """.pidファイルが存在しない場合、排他新規作成でfdを獲得できること。"""
-    fd = backends._try_claim_pid_slot("testbackend")
-    assert fd is not None
-    os.close(fd)
-    assert os.path.exists(backends._pid_path("testbackend"))
+    """.pidファイルが存在しない場合、排他新規作成で起動権を獲得できること。
+    獲得直後に自分自身のPID＋時刻が仮の値として書き込まれていること。"""
+    assert backends._try_claim_pid_slot("testbackend") is True
+    pid_path = backends._pid_path("testbackend")
+    assert os.path.exists(pid_path)
+    assert backends._read_pid(pid_path) == str(os.getpid())
 
 
 def test_claim_defers_to_live_recent_process():
-    """生存中かつ起動から間もないPIDが記録されている場合、道を譲る（None）こと。"""
+    """生存中かつ起動から間もないPIDが記録されている場合、道を譲る（False）こと。"""
     pid_path = backends._pid_path("testbackend")
     with open(pid_path, "w") as f:
         f.write(f"{os.getpid()}:{time.time()}")
-    assert backends._try_claim_pid_slot("testbackend") is None
+    assert backends._try_claim_pid_slot("testbackend") is False
 
 
 def test_claim_reclaims_when_pid_is_dead():
@@ -44,9 +53,7 @@ def test_claim_reclaims_when_pid_is_dead():
     # 実在しないと考えられる非常に大きいPID番号を使う
     with open(pid_path, "w") as f:
         f.write(f"999999:{time.time()}")
-    fd = backends._try_claim_pid_slot("testbackend")
-    assert fd is not None
-    os.close(fd)
+    assert backends._try_claim_pid_slot("testbackend") is True
 
 
 def test_claim_reclaims_when_timestamp_is_stale():
@@ -57,9 +64,7 @@ def test_claim_reclaims_when_timestamp_is_stale():
     old_timestamp = time.time() - backends._STALE_AFTER_SEC - 60
     with open(pid_path, "w") as f:
         f.write(f"{os.getpid()}:{old_timestamp}")
-    fd = backends._try_claim_pid_slot("testbackend")
-    assert fd is not None
-    os.close(fd)
+    assert backends._try_claim_pid_slot("testbackend") is True
 
 
 def test_claim_reclaims_legacy_format_without_timestamp():
@@ -68,9 +73,7 @@ def test_claim_reclaims_legacy_format_without_timestamp():
     pid_path = backends._pid_path("testbackend")
     with open(pid_path, "w") as f:
         f.write(str(os.getpid()))
-    fd = backends._try_claim_pid_slot("testbackend")
-    assert fd is not None
-    os.close(fd)
+    assert backends._try_claim_pid_slot("testbackend") is True
 
 
 def test_claim_reclaims_corrupted_file():
@@ -79,16 +82,14 @@ def test_claim_reclaims_corrupted_file():
     pid_path = backends._pid_path("testbackend")
     with open(pid_path, "w") as f:
         f.write("not-a-pid")
-    fd = backends._try_claim_pid_slot("testbackend")
-    assert fd is not None
-    os.close(fd)
+    assert backends._try_claim_pid_slot("testbackend") is True
 
 
 def test_claim_is_exclusive_under_concurrency():
     """ほぼ同時に多数のスレッドから呼んでも、起動権を獲得できるのは1つだけ
     であること（TOCTOUレースの解消。os.open(O_CREAT|O_EXCL)のOSレベルの
     原子性に依拠する部分の回帰確認）。"""
-    results: list[int | None] = [None] * 20
+    results: list[bool] = [False] * 20
     barrier = threading.Barrier(20)
 
     def _worker(i: int) -> None:
@@ -101,9 +102,16 @@ def test_claim_is_exclusive_under_concurrency():
     for t in threads:
         t.join()
 
-    winners = [fd for fd in results if fd is not None]
-    assert len(winners) == 1
-    os.close(winners[0])
+    assert results.count(True) == 1
+
+
+def test_write_pid_overwrites_placeholder():
+    """_try_claim_pid_slotが書く仮のPID（呼び出し元自身）を、
+    _write_pidで実際のサブプロセスPIDに上書きできること。"""
+    assert backends._try_claim_pid_slot("testbackend") is True
+    backends._write_pid("testbackend", 424242)
+    pid_path = backends._pid_path("testbackend")
+    assert backends._read_pid(pid_path) == "424242"
 
 
 def test_read_pid_new_format():

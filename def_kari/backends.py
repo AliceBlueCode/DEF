@@ -42,7 +42,14 @@ def _read_pid(pid_path: str) -> str:
     return content.split(":", 1)[0]
 
 
-def _try_claim_pid_slot(name: str) -> int | None:
+def _write_pid(name: str, pid: int) -> None:
+    """.pidファイルに実際のプロセスIDと現在時刻を書き込む（上書き）。
+    `_try_claim_pid_slot`で起動権を既に獲得済みであることが前提。"""
+    with open(_pid_path(name), "w") as f:
+        f.write(f"{pid}:{time.time()}")
+
+
+def _try_claim_pid_slot(name: str) -> bool:
     """バックエンド起動権を排他的に獲得する。
 
     従来は「.pidファイルの存在確認 → 生存確認 → 新規プロセス起動 → .pid書き込み」を
@@ -53,18 +60,28 @@ def _try_claim_pid_slot(name: str) -> int | None:
     弱点を抱えていた。
 
     `os.open(..., O_CREAT | O_EXCL)`はOSレベルで原子的な排他新規作成のため、
-    ほぼ同時に呼ばれても片方だけが確実にfdを獲得できる（TOCTOU解消）。既に
-    ファイルが存在する場合は生存確認に加えて経過時間もチェックし、
-    `_STALE_AFTER_SEC`を超えていれば古いとみなして道を譲らず起動権を奪い直す
-    （PID再利用の誤検知を無期限には信用しない）。
+    ほぼ同時に呼ばれても片方だけが確実に獲得できる（TOCTOU解消）。既にファイルが
+    存在する場合は生存確認に加えて経過時間もチェックし、`_STALE_AFTER_SEC`を
+    超えていれば古いとみなして道を譲らず起動権を奪い直す（PID再利用の誤検知を
+    無期限には信用しない）。
 
-    戻り値: 起動権を獲得できればファイルディスクリプタ（呼び出し元が
-    `os.write`→`os.close`する）、既に他プロセスが正当に起動中/起動済みとみなす
-    場合はNone。
+    獲得直後に呼び出し元自身のPID＋現在時刻を仮の値として即座に書き込む
+    （2026-08-17修正: 当初は空ファイルのまま呼び出し元がサブプロセス起動後に
+    書き込む設計だったが、その間ファイルが一瞬「存在するが空」の状態になり、
+    別スレッド/プロセスがそれを「壊れたファイル」と誤認して横取りしてしまう
+    競合がCIの並行性テストで実際に発覚した。空のまま置く時間を作らないことで
+    この隙を塞ぐ。呼び出し元は実際のサブプロセス起動後、`_write_pid`で本当の
+    PIDに上書きすること）。
+
+    戻り値: 起動権を獲得できればTrue、既に他プロセスが正当に起動中/起動済みと
+    みなす場合はFalse。
     """
     pid_path = _pid_path(name)
     try:
-        return os.open(pid_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        fd = os.open(pid_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f"{os.getpid()}:{time.time()}".encode())
+        os.close(fd)
+        return True
     except FileExistsError:
         pass
 
@@ -82,7 +99,7 @@ def _try_claim_pid_slot(name: str) -> int | None:
             is_alive = False
         is_stale = (not launched_at) or (time.time() - launched_at) > _STALE_AFTER_SEC
         if is_alive and not is_stale:
-            return None  # 他プロセスが正当に起動中/起動済みとみなし道を譲る
+            return False  # 他プロセスが正当に起動中/起動済みとみなし道を譲る
     except (ValueError, OSError):
         pass  # 壊れた内容のファイル → 古いものとして扱う
 
@@ -91,9 +108,12 @@ def _try_claim_pid_slot(name: str) -> int | None:
     except OSError:
         pass
     try:
-        return os.open(pid_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        fd = os.open(pid_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f"{os.getpid()}:{time.time()}".encode())
+        os.close(fd)
+        return True
     except FileExistsError:
-        return None  # 削除〜再作成の間に他プロセスが取得した（稀）
+        return False  # 削除〜再作成の間に他プロセスが取得した（稀）
 
 
 # ===== TGW =====
@@ -110,17 +130,14 @@ def start_tgw() -> str | None:
         return "TEXTGEN_WEBUI_DIRが未設定です。.envファイルを確認してください。"
     if is_tgw_running():
         return None
-    fd = _try_claim_pid_slot("tgw")
-    if fd is None:
+    if not _try_claim_pid_slot("tgw"):
         return None
     conda_python = os.path.join(TEXTGEN_WEBUI_DIR, "installer_files", "env", "python.exe")
     server_py = os.path.join(TEXTGEN_WEBUI_DIR, "server.py")
     if not os.path.isfile(conda_python):
-        os.close(fd)
         os.remove(_pid_path("tgw"))
         return f"TGWのPython実行ファイルが見つかりません: {conda_python}"
     if not os.path.isfile(server_py):
-        os.close(fd)
         os.remove(_pid_path("tgw"))
         return f"TGWのserver.pyが見つかりません: {server_py}"
     try:
@@ -143,11 +160,9 @@ def start_tgw() -> str | None:
             env=_env,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("tgw", proc.pid)
         return None
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(_pid_path("tgw"))
         except OSError:
@@ -184,14 +199,12 @@ def start_voicevox() -> str | None:
         return "VOICEVOX_DIRが未設定です。バックエンド設定で場所を指定してください。"
     if is_voicevox_running():
         return None
-    fd = _try_claim_pid_slot("voicevox")
-    if fd is None:
+    if not _try_claim_pid_slot("voicevox"):
         return None
     exe_path = os.path.join(vv_dir, "vv-engine", "run.exe")
     if not os.path.isfile(exe_path):
         exe_path = os.path.join(vv_dir, "VOICEVOX.exe")
     if not os.path.isfile(exe_path):
-        os.close(fd)
         os.remove(_pid_path("voicevox"))
         return f"VOICEVOXが見つかりません: {vv_dir}"
     try:
@@ -203,11 +216,9 @@ def start_voicevox() -> str | None:
             cwd=os.path.dirname(exe_path),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("voicevox", proc.pid)
         return None
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(_pid_path("voicevox"))
         except OSError:
@@ -242,12 +253,10 @@ def start_a1111() -> str | None:
         return "A1111_DIRが未設定です。.envファイルを確認してください。"
     if is_a1111_running():
         return None
-    fd = _try_claim_pid_slot("a1111")
-    if fd is None:
+    if not _try_claim_pid_slot("a1111"):
         return None
     bat_path = os.path.join(A1111_DIR, "webui-user.bat")
     if not os.path.isfile(bat_path):
-        os.close(fd)
         os.remove(_pid_path("a1111"))
         return f"webui-user.batが見つかりません: {bat_path}"
     env = os.environ.copy()
@@ -260,11 +269,9 @@ def start_a1111() -> str | None:
             env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("a1111", proc.pid)
         return None
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(_pid_path("a1111"))
         except OSError:
@@ -306,16 +313,13 @@ def start_irodori() -> str | None:
     if is_irodori_running():
         return None
     pid_path = _pid_path("irodori")
-    fd = _try_claim_pid_slot("irodori")
-    if fd is None:
+    if not _try_claim_pid_slot("irodori"):
         return None
     if not os.path.isdir(IRODORI_DIR):
-        os.close(fd)
         os.remove(pid_path)
         return f"Irodori-TTS-Serverが見つかりません: {IRODORI_DIR}"
     _venv_python = os.path.join(IRODORI_DIR, ".venv", "Scripts", "python.exe")
     if not os.path.isfile(_venv_python):
-        os.close(fd)
         os.remove(pid_path)
         return f"Irodori-TTS-Serverのvenvが見つかりません: {_venv_python}"
     try:
@@ -325,11 +329,9 @@ def start_irodori() -> str | None:
             cwd=IRODORI_DIR,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("irodori", proc.pid)
         return None
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(pid_path)
         except OSError:
@@ -371,17 +373,14 @@ def start_kokoro() -> str | None:
     if is_kokoro_running():
         return None
     pid_path = _pid_path("kokoro")
-    fd = _try_claim_pid_slot("kokoro")
-    if fd is None:
+    if not _try_claim_pid_slot("kokoro"):
         return None
     _venv_python = os.path.join(KOKORO_DIR, "venv", "Scripts", "python.exe")
     _server_py = os.path.join(KOKORO_DIR, "server.py")
     if not os.path.isfile(_venv_python):
-        os.close(fd)
         os.remove(pid_path)
         return f"Kokoro TTSのvenvが見つかりません: {_venv_python}"
     if not os.path.isfile(_server_py):
-        os.close(fd)
         os.remove(pid_path)
         return f"Kokoro TTSのserver.pyが見つかりません: {_server_py}"
     try:
@@ -394,11 +393,9 @@ def start_kokoro() -> str | None:
             env=_env,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("kokoro", proc.pid)
         return None
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(pid_path)
         except OSError:
@@ -438,12 +435,10 @@ def start_comfyui() -> str | None:
     if is_comfyui_running():
         return None
     pid_path = _pid_path("comfyui")
-    fd = _try_claim_pid_slot("comfyui")
-    if fd is None:
+    if not _try_claim_pid_slot("comfyui"):
         return None
     _bat = os.path.join(COMFYUI_DIR, "run_nvidia_gpu.bat")
     if not os.path.isfile(_bat):
-        os.close(fd)
         os.remove(pid_path)
         return f"ComfyUIの起動スクリプトが見つかりません: {_bat}"
     try:
@@ -452,11 +447,9 @@ def start_comfyui() -> str | None:
             cwd=COMFYUI_DIR,
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("comfyui", proc.pid)
         return None
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(pid_path)
         except OSError:
@@ -508,27 +501,23 @@ def start_ollama() -> str | None:
     # だけで判定していた（2026-08-16、他バックエンドと同じ保護を追加）。
     if is_ollama_running():
         return None
-    fd = _try_claim_pid_slot("ollama")
-    if fd is None:
+    if not _try_claim_pid_slot("ollama"):
         return None
     try:
         proc = subprocess.Popen(
             ["ollama", "serve"],
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
-        os.write(fd, f"{proc.pid}:{time.time()}".encode())
-        os.close(fd)
+        _write_pid("ollama", proc.pid)
         print(f"[Ollama] Started pid={proc.pid}")
         return None
     except FileNotFoundError:
-        os.close(fd)
         try:
             os.remove(_pid_path("ollama"))
         except OSError:
             pass
         return "ollamaコマンドが見つかりません。Ollamaがインストールされているか確認してください。"
     except Exception as exc:
-        os.close(fd)
         try:
             os.remove(_pid_path("ollama"))
         except OSError:
