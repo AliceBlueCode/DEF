@@ -49,6 +49,41 @@ def _write_pid(name: str, pid: int) -> None:
         f.write(f"{pid}:{time.time()}")
 
 
+def _atomic_link_claim(pid_path: str) -> bool:
+    """一時ファイルに完全な内容（自分自身のPID＋現在時刻）を書き終えてから、
+    `os.link`でその内容ごと`pid_path`へ配置する。
+
+    2026-08-17時点の実装は「`os.open(O_CREAT|O_EXCL)`で排他新規作成→直後に
+    書き込む」方式だったが、CIの並行性テストで実際にレースが再現した
+    （2026-08-18、20スレッド中8個が誤って起動権を獲得）。原因は排他作成の
+    成功から書き込み完了までの間、ファイルが「存在するが空」の状態になる
+    一瞬の隙があり、他スレッドがそれを読むと`int("")`で例外になって
+    「壊れたファイル＝古い」と誤判定し`os.remove`してしまうこと。しかも
+    先着スレッドが握っているfdはunlink後も書き込み自体は成功する
+    （POSIX/Windowsとも、開いたまま削除されたファイルへの書き込みは有効）
+    ため、両方とも成功扱いになるという根深い競合だった。
+
+    `os.link`は既存のファイルにのみ作用する（新規作成のための書き込み
+    バッファを持たない）ため、リンク先パスが出現する瞬間には既に一時ファイル
+    側で書き込みが完了している。「存在するが空」の状態そのものが発生し
+    得ない設計。`os.link`はリンク先が既に存在すれば`FileExistsError`を送出する
+    （Windows/POSIXとも）ため、排他性も保たれる。
+    """
+    tmp_path = f"{pid_path}.tmp.{os.getpid()}.{os.urandom(4).hex()}"
+    try:
+        with open(tmp_path, "w") as f:
+            f.write(f"{os.getpid()}:{time.time()}")
+        os.link(tmp_path, pid_path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 def _try_claim_pid_slot(name: str) -> bool:
     """バックエンド起動権を排他的に獲得する。
 
@@ -59,31 +94,19 @@ def _try_claim_pid_slot(name: str) -> bool:
     `os.kill(pid, 0)`が誤って「生存している」と判定してしまう問題の、2つの構造的な
     弱点を抱えていた。
 
-    `os.open(..., O_CREAT | O_EXCL)`はOSレベルで原子的な排他新規作成のため、
-    ほぼ同時に呼ばれても片方だけが確実に獲得できる（TOCTOU解消）。既にファイルが
-    存在する場合は生存確認に加えて経過時間もチェックし、`_STALE_AFTER_SEC`を
-    超えていれば古いとみなして道を譲らず起動権を奪い直す（PID再利用の誤検知を
-    無期限には信用しない）。
-
-    獲得直後に呼び出し元自身のPID＋現在時刻を仮の値として即座に書き込む
-    （2026-08-17修正: 当初は空ファイルのまま呼び出し元がサブプロセス起動後に
-    書き込む設計だったが、その間ファイルが一瞬「存在するが空」の状態になり、
-    別スレッド/プロセスがそれを「壊れたファイル」と誤認して横取りしてしまう
-    競合がCIの並行性テストで実際に発覚した。空のまま置く時間を作らないことで
-    この隙を塞ぐ。呼び出し元は実際のサブプロセス起動後、`_write_pid`で本当の
-    PIDに上書きすること）。
+    `_atomic_link_claim`（一時ファイル＋`os.link`）で起動権を獲得する。既に
+    ファイルが存在する場合は生存確認に加えて経過時間もチェックし、
+    `_STALE_AFTER_SEC`を超えていれば古いとみなして道を譲らず起動権を奪い直す
+    （PID再利用の誤検知を無期限には信用しない）。獲得できたファイルには
+    呼び出し元自身のPID＋現在時刻が仮の値として入っている。呼び出し元は実際の
+    サブプロセス起動後、`_write_pid`で本当のPIDに上書きすること。
 
     戻り値: 起動権を獲得できればTrue、既に他プロセスが正当に起動中/起動済みと
     みなす場合はFalse。
     """
     pid_path = _pid_path(name)
-    try:
-        fd = os.open(pid_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, f"{os.getpid()}:{time.time()}".encode())
-        os.close(fd)
+    if _atomic_link_claim(pid_path):
         return True
-    except FileExistsError:
-        pass
 
     is_stale = True
     try:
@@ -107,13 +130,7 @@ def _try_claim_pid_slot(name: str) -> bool:
         os.remove(pid_path)
     except OSError:
         pass
-    try:
-        fd = os.open(pid_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, f"{os.getpid()}:{time.time()}".encode())
-        os.close(fd)
-        return True
-    except FileExistsError:
-        return False  # 削除〜再作成の間に他プロセスが取得した（稀）
+    return _atomic_link_claim(pid_path)  # 削除〜再作成の間に他プロセスが取得していればFalse（稀）
 
 
 # ===== TGW =====
