@@ -74,6 +74,7 @@ jobs:
       # 避けて最後に置く（frontend/e2e/README.md参照）。
       - name: Run e2e scenarios
         working-directory: frontend
+        timeout-minutes: 8
         run: |
           npm run e2e:ws-auth
           npm run e2e:message-sync
