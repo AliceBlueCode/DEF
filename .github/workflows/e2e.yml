@@ -45,11 +45,8 @@ jobs:
           TEXTGEN_WEBUI_URL: http://127.0.0.1:5000/v1
         run: |
           python scripts/e2e_mock_llm.py --port 5000 > mock_llm.log 2>&1 &
-          disown
           TEXTGEN_WEBUI_URL="$TEXTGEN_WEBUI_URL" python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 > backend.log 2>&1 &
-          disown
           (cd frontend && npm run dev > ../frontend.log 2>&1 &)
-          disown
 
       - name: Wait for services to be ready
         run: |
