@@ -116,9 +116,18 @@ export async function joinAsPlayer(browser, inviteCode, { charJsonPath = GUEST_C
   return { ctx, page, playerToken }
 }
 
+// セッション開始後、initiativeの先頭がAIキャラクターだと自動では進行しない
+// （SessionTab.tsxのコメント通り、オフライン同様「自動」トグルか「次の発言」で
+// ホストが能動的に始める設計）。initiativeは開始時にシャッフルされるため、
+// 先頭がAI/人間のどちらになるかは実行のたびに変わる——ローカルの手動テストでは
+// 開発者のブラウザに前回操作分の「自動」設定がlocalStorageで残っていて気づかれ
+// なかったが、Playwrightの毎回まっさらなブラウザコンテキストでは先頭がAIだと
+// 誰のターンも進まないまま止まる。ホストとして明示的に「自動」を有効化し、
+// AIターンを含めて確実に進行させる。
 export async function startSession(hostPage) {
   await hostPage.getByRole('button', { name: 'セッション開始' }).click()
   await hostPage.waitForTimeout(1800)
+  await hostPage.locator('button.auto-advance-btn').first().click()
 }
 
 // バックエンドのWS直接URL（フロントのViteプロキシを経由しない生WebSocket接続用）。
