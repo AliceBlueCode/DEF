@@ -1,10 +1,14 @@
 """バックエンド(TGW/VOICEVOX/A1111)の自動起動・状態管理"""
 
+import logging
 import os
 import subprocess
+import threading
 import time
 
 import requests
+
+_log = logging.getLogger("def.backends")
 
 # --- TGW ---
 TEXTGEN_WEBUI_DIR = os.environ.get("TEXTGEN_WEBUI_DIR", "")
@@ -323,6 +327,27 @@ def is_irodori_running() -> bool:
         return False
 
 
+def _log_irodori_torch_info(venv_python: str) -> None:
+    """Irodori-TTSのvenvのtorchがCPU/CUDAどちらでインストールされているかをinfoログに残す。
+
+    venvのpyproject.tomlは`uv sync --extra cu128`等のextra指定が無いと、CUDA用インデックスが
+    選択されずCPU版torchが黙って解決される構成になっている（TODO.md「Irodori-TTS CUDA問題」参照）。
+    CPU版そのものは誤りではない（意図的にCPU運用したい場合もある）ため、警告ではなくinfoとして
+    「今どちらで動いているか」を残すだけに留める。ダウンロードを伴わない軽量チェックで、起動応答を
+    遅らせないようバックグラウンドスレッドで実行し、失敗しても起動自体には影響させない。
+    """
+    try:
+        result = subprocess.run(
+            [venv_python, "-c", "import torch; print(torch.__version__, torch.cuda.is_available())"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            version, _, cuda_available = result.stdout.strip().partition(" ")
+            _log.info("Irodori-TTS: torch %s (CUDA available: %s)", version, cuda_available)
+    except Exception as exc:
+        _log.info("Irodori-TTS: torchのCUDA状態を確認できませんでした（%s）", exc)
+
+
 def start_irodori() -> str | None:
     IRODORI_DIR = os.environ.get("IRODORI_TTS_DIR", "")
     if not IRODORI_DIR:
@@ -347,6 +372,9 @@ def start_irodori() -> str | None:
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
         _write_pid("irodori", proc.pid)
+        threading.Thread(
+            target=_log_irodori_torch_info, args=(_venv_python,), daemon=True
+        ).start()
         return None
     except Exception as exc:
         try:
