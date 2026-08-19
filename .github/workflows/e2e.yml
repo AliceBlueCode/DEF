@@ -1,0 +1,102 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      include_slow:
+        description: "keepalive・all-disconnect-autostop(実時間で計~7分)も実行する"
+        type: boolean
+        default: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      # モックLLMサーバー・バックエンド・フロントエンドをバックグラウンドで起動する。
+      # 実LLM(APIキー・GPU)は使わず、scripts/e2e_mock_llm.pyがDEFの標準TGWバックエンド
+      # (llm/adapters/tgw.py)向けにOpenAI互換の固定レスポンスを返す。CIには
+      # data/llm_services.json（gitignore対象）が存在しないため、LLM_BACKENDは
+      # 未設定時textgen_webuiへ自動フォールバックする(llm/backend.py参照)。
+      - name: Start mock LLM, backend, frontend
+        env:
+          TEXTGEN_WEBUI_URL: http://127.0.0.1:5000/v1
+        run: |
+          python scripts/e2e_mock_llm.py --port 5000 > mock_llm.log 2>&1 &
+          disown
+          TEXTGEN_WEBUI_URL="$TEXTGEN_WEBUI_URL" python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 > backend.log 2>&1 &
+          disown
+          (cd frontend && npm run dev > ../frontend.log 2>&1 &)
+          disown
+
+      - name: Wait for services to be ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5000/v1/models >/dev/null && break
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8511/api/health >/dev/null && break
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000 >/dev/null && break
+            sleep 1
+          done
+
+      # 投票の弁明ラウンド(vote_expel)を含む、実時間待ちの無いシナリオを毎回実行する。
+      # vote_expelは「投票強制賛成」グローバル設定を書き換えるため他シナリオへの影響を
+      # 避けて最後に置く（frontend/e2e/README.md参照）。
+      - name: Run e2e scenarios
+        working-directory: frontend
+        run: |
+          npm run e2e:ws-auth
+          npm run e2e:message-sync
+          npm run e2e:ai-turn-dedup
+          npm run e2e:jwt-regen
+          npm run e2e:disconnect-timeout
+          npm run e2e:rate-limit
+          npm run e2e:host-disconnect
+          npm run e2e:invite-rating
+          npm run e2e:full-integration
+          npm run e2e:vote-expel
+
+      # 実時間で~2分・~6分かかる2本は既定で除外し、手動実行時の任意指定のみで走らせる。
+      - name: Run slow e2e scenarios (optional)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.include_slow == 'true'
+        working-directory: frontend
+        run: |
+          npm run e2e:keepalive
+          npm run e2e:all-disconnect-autostop
+
+      - name: Upload service logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-service-logs
+          path: |
+            mock_llm.log
+            backend.log
+            frontend.log
