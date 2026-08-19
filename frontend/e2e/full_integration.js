@@ -12,12 +12,26 @@ import { assert, createOnlineSession, joinAsPlayer, startSession } from './helpe
 const MARKER_1 = `int-test-g1-${Date.now()}`
 const MARKER_2 = `int-test-g2-${Date.now()}`
 
-async function waitForMyTurnAndSpeak(page, markerText) {
-  const sendBtn = page.getByRole('button', { name: /発言完/ })
-  await sendBtn.waitFor({ state: 'visible', timeout: 30000 })
-  const textarea = page.locator('input.keeper-input')
-  await textarea.fill(markerText)
-  await sendBtn.click()
+// input.keeper-inputは自分のターンでない間disabledのまま描画され続ける（要素自体は
+// 常にDOMに存在する）ため、visible待ちだけでは「今がそのページの番か」を判定できない。
+// isEnabled()を明示的にポーリングする。
+async function waitUntilEnabled(locator, timeoutMs) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (await locator.isEnabled().catch(() => false)) return
+    await new Promise(r => setTimeout(r, 300))
+  }
+  throw new Error(`timed out waiting for ${locator} to become enabled`)
+}
+
+async function waitForMyTurn(page, timeoutMs = 60000) {
+  await page.getByRole('button', { name: /発言完/ }).waitFor({ state: 'visible', timeout: timeoutMs })
+  await waitUntilEnabled(page.locator('input.keeper-input'), timeoutMs)
+}
+
+async function speak(page, markerText) {
+  await page.locator('input.keeper-input').fill(markerText)
+  await page.getByRole('button', { name: /発言完/ }).click()
 }
 
 ;(async () => {
@@ -47,23 +61,35 @@ async function waitForMyTurnAndSpeak(page, markerText) {
       assert(hasSessionUi > 0, `${name} tab reached in-session UI after start`)
     }
 
-    // 4. guest1のターンで発言し、host・guest2の両方にリアルタイム反映されること
-    await waitForMyTurnAndSpeak(guest1, MARKER_1)
-    await host.waitForTimeout(2500)
-    await guest2.waitForTimeout(200)
-    const hostTextAfterG1 = await host.locator('body').innerText()
-    const guest2TextAfterG1 = await guest2.locator('body').innerText()
-    assert(hostTextAfterG1.includes(MARKER_1), 'host tab sees guest1 message in real time')
-    assert(guest2TextAfterG1.includes(MARKER_1), 'guest2 tab sees guest1 message in real time')
+    // 4. guest1・guest2どちらが先にターンを迎えるかはinitiativeのシャッフルにより
+    //    実行のたびに変わるため、両者を同時に監視し、先に順番が来た方から発言させる
+    //    （どちらか一方が先、と決め打ちしない）。
+    const guest1First = await Promise.race([
+      waitForMyTurn(guest1).then(() => true),
+      waitForMyTurn(guest2).then(() => false),
+    ])
+    const [firstPage, firstName, firstMarker, secondPage, secondName, secondMarker] = guest1First
+      ? [guest1, 'guest1', MARKER_1, guest2, 'guest2', MARKER_2]
+      : [guest2, 'guest2', MARKER_2, guest1, 'guest1', MARKER_1]
+    const otherPage = firstPage === guest1 ? guest2 : guest1
 
-    // 5. guest2のターンで発言し、host・guest1の両方にリアルタイム反映されること
-    await waitForMyTurnAndSpeak(guest2, MARKER_2)
+    await speak(firstPage, firstMarker)
     await host.waitForTimeout(2500)
-    await guest1.waitForTimeout(200)
-    const hostTextAfterG2 = await host.locator('body').innerText()
-    const guest1TextAfterG2 = await guest1.locator('body').innerText()
-    assert(hostTextAfterG2.includes(MARKER_2), 'host tab sees guest2 message in real time')
-    assert(guest1TextAfterG2.includes(MARKER_2), 'guest1 tab sees guest2 message in real time')
+    await otherPage.waitForTimeout(200)
+    const hostTextAfterFirst = await host.locator('body').innerText()
+    const otherTextAfterFirst = await otherPage.locator('body').innerText()
+    assert(hostTextAfterFirst.includes(firstMarker), `host tab sees ${firstName} message in real time`)
+    assert(otherTextAfterFirst.includes(firstMarker), `the other guest tab sees ${firstName} message in real time`)
+
+    // 5. 残った方のターンで発言し、host・最初に発言した方の両方にリアルタイム反映されること
+    await waitForMyTurn(secondPage)
+    await speak(secondPage, secondMarker)
+    await host.waitForTimeout(2500)
+    await firstPage.waitForTimeout(200)
+    const hostTextAfterSecond = await host.locator('body').innerText()
+    const firstTextAfterSecond = await firstPage.locator('body').innerText()
+    assert(hostTextAfterSecond.includes(secondMarker), `host tab sees ${secondName} message in real time`)
+    assert(firstTextAfterSecond.includes(secondMarker), `the first guest tab sees ${secondName} message in real time`)
 
     // 6. ホストがセッションを終了し、ゲスト側もSESSION_ENDEDを受けて通常画面に戻ること
     await host.getByRole('button', { name: /セッション終了/ }).click()
