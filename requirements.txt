@@ -20,6 +20,9 @@ python-jose>=3.5.0
 # HTTP client
 requests>=2.34.2
 
+# Process monitoring (VOICEVOX memory watchdog, see backends.py)
+psutil>=6.0.0
+
 # Image processing
 Pillow>=12.3.0
 

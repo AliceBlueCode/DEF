@@ -260,6 +260,106 @@ def stop_voicevox() -> str | None:
         return str(exc)
 
 
+# ===== VOICEVOXメモリウォッチドッグ =====
+# ONNX Runtimeは推論(Run())後の未使用メモリをデフォルトではOSへ返却しない仕様で、
+# VOICEVOX CORE側にもそれを解放する手段が無い（upstream issue
+# VOICEVOX/voicevox_engine#1506・#513・#1691、2026-08-20時点で1年以上未解決・
+# 停滞中）。開発者自身の調査でも「話者を個別アンロードしても一部はグローバルに
+# 確保されたまま残る」と確認されており、確実に回収できるのはエンジンプロセスの
+# 再起動のみ（実機で18.74GB→0.09GBまで回収できたことを確認済み、TODO.md参照）。
+# upstream側を直せない以上、DEF側で定期的に再起動するウォッチドッグを持たせる。
+# 「メモリ閾値超過」を主、「経過時間超過」を保険（閾値の見立てを外した場合の
+# バックストップ）としたハイブリッド判定。生成中(vram_lock使用中)には割り込まない。
+_WATCHDOG_CHECK_INTERVAL_SEC = 300.0     # 5分おきに確認
+_WATCHDOG_MEMORY_THRESHOLD_MB = 4096.0   # 実測の異常値(18.74GB)より十分小さく、
+                                          # 通常の複数話者ロード分よりは十分大きい値
+_WATCHDOG_MAX_UPTIME_SEC = 6 * 3600.0    # 閾値未到達でもこれを超えたら保険として再起動
+_WATCHDOG_RESTART_WAIT_SEC = 10.0        # stop後、ポート解放を待つ上限
+
+
+def _voicevox_process_memory_mb(pid: int) -> float | None:
+    """psutilが未導入・対象PIDが既に存在しない等の場合はNoneを返す(fail-open)。"""
+    try:
+        import psutil
+        return psutil.Process(pid).memory_info().rss / (1024 * 1024)
+    except Exception:
+        return None
+
+
+def _read_pid_and_launched_at(pid_path: str) -> tuple[int, float] | None:
+    try:
+        with open(pid_path) as f:
+            content = f.read().strip()
+        parts = content.split(":", 1)
+        pid = int(parts[0])
+        launched_at = float(parts[1]) if len(parts) > 1 else 0.0
+        return pid, launched_at
+    except (OSError, ValueError):
+        return None
+
+
+def check_voicevox_watchdog_once() -> str | None:
+    """ウォッチドッグの1回分の判定・必要なら再起動を行う（ループ本体から
+    分離、直接呼び出してのテスト用）。戻り値は再起動理由（"memory"/"uptime"）、
+    再起動しなかった場合はNone。"""
+    if not is_voicevox_running():
+        return None
+    parsed = _read_pid_and_launched_at(_pid_path("voicevox"))
+    if parsed is None:
+        return None
+    pid, launched_at = parsed
+
+    mem_mb = _voicevox_process_memory_mb(pid)
+    uptime_sec = (time.time() - launched_at) if launched_at else 0.0
+    over_memory = mem_mb is not None and mem_mb >= _WATCHDOG_MEMORY_THRESHOLD_MB
+    over_uptime = uptime_sec >= _WATCHDOG_MAX_UPTIME_SEC
+    if not (over_memory or over_uptime):
+        return None
+    reason = "memory" if over_memory else "uptime"
+
+    from def_kari.resources.vram_lock import get_vram_lock
+    _vram_lock = get_vram_lock()
+    if not _vram_lock.acquire(blocking=False):
+        _log.info(
+            "[voicevox watchdog] restart due to %s (mem=%s, uptime=%.0fs) skipped: "
+            "generation in progress, retrying next cycle",
+            reason, f"{mem_mb:.0f}MB" if mem_mb is not None else "unknown", uptime_sec,
+        )
+        return None
+    try:
+        _log.info(
+            "[voicevox watchdog] restarting due to %s (mem=%s, uptime=%.0fs)",
+            reason, f"{mem_mb:.0f}MB" if mem_mb is not None else "unknown", uptime_sec,
+        )
+        err = stop_voicevox()
+        if err:
+            _log.info("[voicevox watchdog] stop failed: %s", err)
+            return None
+        for _ in range(int(_WATCHDOG_RESTART_WAIT_SEC / 0.5)):
+            if not is_voicevox_running():
+                break
+            time.sleep(0.5)
+        err = start_voicevox()
+        if err:
+            _log.info("[voicevox watchdog] restart failed: %s", err)
+        else:
+            _log.info("[voicevox watchdog] restart complete")
+    finally:
+        _vram_lock.release()
+    return reason
+
+
+def voicevox_memory_watchdog_loop() -> None:
+    """デーモンスレッドから起動する常駐ループ。例外で死んで監視が止まって
+    しまわないよう、1周ごとに広く例外を握りつぶす。"""
+    while True:
+        time.sleep(_WATCHDOG_CHECK_INTERVAL_SEC)
+        try:
+            check_voicevox_watchdog_once()
+        except Exception as exc:
+            _log.info("[voicevox watchdog] check failed: %s", exc)
+
+
 # ===== A1111 =====
 
 def is_a1111_running() -> bool:

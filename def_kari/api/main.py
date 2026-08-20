@@ -88,6 +88,8 @@ async def lifespan(app: FastAPI):
     from def_kari.api.routes.session import set_main_loop as _set_session_loop
     _set_session_loop(_asyncio.get_running_loop())
     threading.Thread(target=_auto_start, daemon=True).start()
+    from def_kari.backends import voicevox_memory_watchdog_loop
+    threading.Thread(target=voicevox_memory_watchdog_loop, daemon=True).start()
     yield
 
 
