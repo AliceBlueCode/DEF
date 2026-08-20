@@ -17,6 +17,14 @@ type BackendInfo = {
   default: string
 }
 
+// SettingsTabのバックエンド選択プルダウンではクラウドサービスと見分けるために
+// ラベルへ「(ローカル)」を付ける（LLM_BACKEND_LABELS等参照）が、ヘッダーの
+// コンパクトな表示枠では冗長なため削って表示する。
+function headerBackendLabel(backends: BackendInfo | null, id: string): string {
+  const label = backends?.labels[id] || id
+  return label.replace(/\s*\(ローカル\)\s*$/, '')
+}
+
 type TabId = 'character' | 'chat' | 'session' | 'novel' | 'thought' | 'settings' | 'debug'
 
 const TAB_IDS: { id: TabId; key: string; icon: string }[] = [
@@ -46,6 +54,8 @@ function AppInner() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedChar, setSelectedChar] = useState(() => localStorage.getItem(LS_KEY_CHAR) || '')
   const [llmBackends, setLlmBackends] = useState<BackendInfo | null>(null)
+  const [t2iBackends, setT2iBackends] = useState<BackendInfo | null>(null)
+  const [ttsBackends, setTtsBackends] = useState<BackendInfo | null>(null)
   const [selectedBackend, setSelectedBackend] = useState(() => localStorage.getItem(LS_KEY_LLM) || '')
   const [selectedT2iBackend, setSelectedT2iBackend] = useState(() => localStorage.getItem(LS_KEY_T2I) || '')
   const [selectedTtsBackend, setSelectedTtsBackend] = useState(() => localStorage.getItem(LS_KEY_TTS) || 'openai_tts')
@@ -102,7 +112,11 @@ function AppInner() {
           setSelectedBackend(prev => prev || data.llm.default)
         }
         if (data.t2i) {
+          setT2iBackends(data.t2i)
           setSelectedT2iBackend(prev => prev || data.t2i.default)
+        }
+        if (data.tts) {
+          setTtsBackends(data.tts)
         }
       })
   }, [])
@@ -164,11 +178,11 @@ function AppInner() {
               </button>
             ))}
             <div className="header-backends">
-              <span>{llmBackends?.labels[selectedBackend] || selectedBackend}</span>
+              <span>{headerBackendLabel(llmBackends, selectedBackend)}</span>
               <span className="header-sep">×</span>
-              <span>{selectedT2iBackend || '—'}</span>
+              <span>{selectedT2iBackend ? headerBackendLabel(t2iBackends, selectedT2iBackend) : '—'}</span>
               <span className="header-sep">×</span>
-              <span>{selectedTtsBackend || '—'}</span>
+              <span>{selectedTtsBackend ? headerBackendLabel(ttsBackends, selectedTtsBackend) : '—'}</span>
             </div>
           </div>
 
