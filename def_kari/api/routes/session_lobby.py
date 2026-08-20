@@ -735,6 +735,10 @@ def set_lobby_config(session_id: str, req: LobbyConfigRequest, auth: dict = Depe
     if not sess:
         raise HTTPException(404, "Session not found")
     sess["max_players"] = req.max_players
+    # human_turn_actionのオーナーシップチェック（session_turn_engine.py
+    # _check_human_turn_authorization）がhostロールの持ちキャラ判定に使う。
+    # 空文字なら「ホストはキーパー専任、人間ターンを一切送信できない」を意味する。
+    sess["host_char_id"] = req.host_char_id
     # host_keeper_mode は update_host_role で設定済み。キャラがある場合だけ上書き（プレイヤー参加確定）。
     if req.host_char_id:
         sess["host_keeper_mode"] = False

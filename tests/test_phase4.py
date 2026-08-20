@@ -1283,6 +1283,53 @@ def test_lobby_config_host_char_populates_char_colors():
     _sessions.pop(sid, None)
 
 
+def test_lobby_config_persists_host_char_id():
+    """lobby_configのhost_char_idがsession['host_char_id']として永続化されること
+    （session_turn_engine._check_human_turn_authorizationのオンラインhostオーナー
+    シップ判定が参照する、2026-08-20対応）。未指定(空文字)ならキーパー専任を意味する。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start_url = "/api/session/start"
+    start = client.post(start_url, json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby_config",
+        json={"max_players": 4, "host_char_id": "character_hanfei_001"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert _sessions[sid]["host_char_id"] == "character_hanfei_001"
+    _sessions.pop(sid, None)
+
+
+def test_lobby_config_host_char_id_defaults_to_empty_when_keeper_only():
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start_url = "/api/session/start"
+    start = client.post(start_url, json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby_config",
+        json={"max_players": 4, "host_char_id": ""},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert _sessions[sid]["host_char_id"] == ""
+    _sessions.pop(sid, None)
+
+
 def test_get_session_public_response_includes_char_colors():
     """GET /{session_id}のallowlist（_PUBLIC_SESSION_KEYS）にchar_colorsが
     含まれ、公開ポート経由のゲストでも読めること。"""

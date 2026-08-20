@@ -1140,15 +1140,27 @@ def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: 
     イベントループ上でアトミックに完走する。実体はレースではなく、この認可漏れ
     そのものだった(重複送信は真の並行処理ではなく、逐次的に全件処理されていた)。
 
-    host/gm はゲームマスターとして人間キャラを兼任する場合があるが、トークン発行時に
-    char_idを持たない(issue_player_jwt呼び出し側を参照)ため、ここでは対象外のまま
-    維持する(host_tokenでの人間ターン送信は従来通り許可＝既存テスト・挙動を壊さない)。
-    host/gmが他人の人間キャラのターンを送信できてしまう点は既知の残課題としてTODO.mdへ。
+    ── host/gmのオーナーシップ(2026-08-20対応、指摘5/TODO.md該当項目) ─────────
+    host/gmはトークン発行時にchar_idを持たない(issue_player_jwt呼び出し側を参照)。
+    オフライン(ホットシート含む)はhost_token=唯一のローカル操作者であり、そのセッション
+    内の人間キャラ全員を正規に操作できる（他に人間がいないため「なりすまし」が成立し
+    得ない）ため、従来通り対象外のまま維持する。オンラインセッションのみ制限を掛ける:
+    hostは`lobby_config`(session_lobby.py)で自分が登録したhost_char_id(未登録なら
+    空文字＝一切送信不可)、gmはTRPGモードの構造上ずっとkeeper専任(session_lobby.py
+    のset_lobby_config: keeper_char_idはplayer_idsから除外される)で自分の人間キャラを
+    持つケースが存在しないため常に対象外。
     """
+    role = auth.get("role")
+    online = session.get("online_mode")
+
     if req.action in ("send", "extend", "skip"):
         if current_char_id not in session.get("human_char_ids", []):
             raise HTTPException(409, "It is not currently a human player's turn")
-        if auth.get("role") == "player" and auth.get("char_id") != current_char_id:
+        if role == "player" and auth.get("char_id") != current_char_id:
+            raise HTTPException(409, "It is not your turn")
+        if online and role == "host" and current_char_id != session.get("host_char_id", ""):
+            raise HTTPException(409, "It is not your turn")
+        if online and role == "gm":
             raise HTTPException(409, "It is not your turn")
         # ── ターンの多重完了ガード(2026-08-08修正) ────────────────────
         # send/skip はターン(引いてはround)を進める「確定」操作。上のオーナーシップ
@@ -1182,7 +1194,11 @@ def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: 
         actor_id = req.character_id if req.character_id else current_char_id
         if actor_id not in session.get("human_char_ids", []):
             raise HTTPException(409, "Not a human player's character")
-        if auth.get("role") == "player" and auth.get("char_id") != actor_id:
+        if role == "player" and auth.get("char_id") != actor_id:
+            raise HTTPException(409, "You can only act as your own character")
+        if online and role == "host" and actor_id != session.get("host_char_id", ""):
+            raise HTTPException(409, "You can only act as your own character")
+        if online and role == "gm":
             raise HTTPException(409, "You can only act as your own character")
 
 

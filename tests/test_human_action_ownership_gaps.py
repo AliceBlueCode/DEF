@@ -107,9 +107,10 @@ def test_generate_image_allows_own_character():
         _sessions.pop(sid, None)
 
 
-def test_host_interrupt_as_any_character_still_allowed():
-    """host/gmトークンはchar_id claimを持たないため対象外のまま
-    （既知の残課題、Finding #5と同系統でTODO.mdに記録済み）。"""
+def test_offline_host_interrupt_as_any_character_still_allowed():
+    """オフライン(ホットシート含む)はhost_token=唯一のローカル操作者であり、他に
+    人間がいないため「なりすまし」が成立し得ない。従来通り対象外のまま
+    （2026-08-20: オンラインのみ制限するよう修正、指摘5/TODO.md該当項目対応）。"""
     sid, host_token, _token_a, _token_b = _start_session_with_two_humans()
     try:
         resp = client.post(
@@ -118,6 +119,104 @@ def test_host_interrupt_as_any_character_still_allowed():
             headers=_auth(host_token),
         )
         assert resp.status_code == 200
+    finally:
+        _sessions.pop(sid, None)
+
+
+# ── host/gm ownership on ONLINE sessions (2026-08-20対応、指摘5) ──────────
+
+def _start_online_session_with_two_humans(host_char_id=""):
+    """_start_session_with_two_humansのオンライン版。host_char_idを指定すると、
+    ホストがlobby_configで自分のプレイヤーキャラを登録済みという状態を模す。"""
+    sid, host_token, token_a, token_b = _start_session_with_two_humans()
+    _sessions[sid]["online_mode"] = True
+    _sessions[sid]["host_char_id"] = host_char_id
+    gm_token = issue_player_jwt(sid, "gm", "")
+    _sessions[sid]["players"][gm_token] = ""
+    return sid, host_token, token_a, token_b, gm_token
+
+
+def test_online_host_without_registered_character_rejected():
+    """host_char_id未登録(キーパー専任のまま)のhostは、どの人間キャラのターンも
+    送信できない。"""
+    sid, host_token, _token_a, _token_b, _gm_token = _start_online_session_with_two_humans()
+    try:
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "generate_image", "text": "", "character_id": "char_a"},
+            headers=_auth(host_token),
+        )
+        assert resp.status_code == 409
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_online_host_can_act_as_own_registered_character():
+    sid, host_token, _token_a, _token_b, _gm_token = _start_online_session_with_two_humans(host_char_id="char_a")
+    try:
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "generate_image", "text": "", "character_id": "char_a"},
+            headers=_auth(host_token),
+        )
+        assert resp.status_code == 200
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_online_host_rejected_for_other_players_character():
+    sid, host_token, _token_a, _token_b, _gm_token = _start_online_session_with_two_humans(host_char_id="char_a")
+    try:
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "generate_image", "text": "", "character_id": "char_b"},
+            headers=_auth(host_token),
+        )
+        assert resp.status_code == 409
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_online_gm_always_rejected_for_human_turn():
+    """gmはTRPGモードの構造上ずっとkeeper専任で、自分の人間キャラを持つケースが
+    存在しないため常に対象外。"""
+    sid, _host_token, _token_a, _token_b, gm_token = _start_online_session_with_two_humans()
+    try:
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "generate_image", "text": "", "character_id": "char_a"},
+            headers=_auth(gm_token),
+        )
+        assert resp.status_code == 409
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_online_host_send_action_own_character_allowed():
+    """send/extend/skip側の分岐（interrupt/generate_imageとは別ブロック）でも
+    同様に制限されること。"""
+    sid, host_token, _token_a, _token_b, _gm_token = _start_online_session_with_two_humans(host_char_id="char_a")
+    try:
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "skip", "expected_round": _sessions[sid]["round"]},
+            headers=_auth(host_token),
+        )
+        assert resp.status_code == 200
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_online_host_send_action_other_character_rejected():
+    sid, host_token, _token_a, _token_b, _gm_token = _start_online_session_with_two_humans(host_char_id="char_b")
+    try:
+        # turn=0なのでcurrent_char_id="char_a"だがhost_char_id="char_b"なので拒否
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "skip", "expected_round": _sessions[sid]["round"]},
+            headers=_auth(host_token),
+        )
+        assert resp.status_code == 409
     finally:
         _sessions.pop(sid, None)
 
