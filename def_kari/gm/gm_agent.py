@@ -7,40 +7,6 @@ Character を所有しない特殊な管理者Agent。
 import re
 
 from def_kari.characters import load_profiles, get_character
-
-# DEF 定義スキルのホワイトリスト
-_DEF_ALLOWED_SKILLS: frozenset[str] = frozenset({
-    "察知", "調査", "医学", "博学", "推理", "解読", "記憶", "操縦",
-    "説得", "欺瞞", "威圧", "魅了", "意志力", "共感", "煽動", "危機察知",
-    "回避", "格闘", "射撃", "隠密", "運動", "耐久", "治療", "運転",
-    "社交", "情報収集", "調達", "偽装", "生存", "追跡", "潜入", "製作",
-    "思考", "情動", "身体", "環境",
-})
-
-# CoC / 他システム由来の誤りを DEF スキルに補正するマップ
-_SKILL_CORRECTION_MAP: dict[str, str] = {
-    # CoC 技能 → DEF
-    "目星": "察知", "聞き耳": "察知", "斥候": "察知", "観察": "察知",
-    "心理学": "共感", "精神分析": "共感",
-    "説得力": "説得", "交渉": "説得", "弁論": "説得",
-    "機械修理": "製作", "機械工作": "製作", "電気修理": "製作",
-    "製造": "製作", "工作": "製作",
-    "忍び歩き": "隠密", "潜伏": "隠密",
-    "水泳": "運動", "跳躍": "運動", "登攀": "運動", "登山": "運動",
-    "図書館": "調査", "図書館使用": "調査", "文献調査": "調査",
-    "応急手当": "治療", "医療": "医学", "外科": "医学",
-    "ナビゲート": "操縦", "操縦技術": "操縦", "航法": "操縦",
-    "追跡術": "追跡", "尾行": "追跡",
-    "変装": "偽装",
-    "天文学": "博学", "歴史": "博学", "地質学": "博学", "考古学": "博学",
-    "射撃技術": "射撃", "狙撃": "射撃",
-    "格闘技": "格闘", "武道": "格闘", "近接": "格闘",
-    "ハッキング": "解読", "コンピュータ": "解読", "電子機器": "解読",
-    "回避技術": "回避",
-    "サバイバル": "生存",
-    "隠蔽": "隠密",
-    "威圧力": "威圧",
-}
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.settings import load_settings
 from def_kari.gm.context_builder import (
@@ -49,6 +15,7 @@ from def_kari.gm.context_builder import (
     load_trpg_rulebook,
     load_trpg_scenario,
 )
+from def_kari.gm.judgment_planner import plan_judgments
 
 
 class GMAgent:
@@ -185,6 +152,26 @@ class GMAgent:
             # char_game_sheets がない場合でも参加者名を注入する
             char_lines = [f"・{n}" for n in name_map.values()]
 
+        # ── 判定要否の決定(ナレーション生成前に完結させる、2026-08-20設計) ──
+        # 直近履歴を使って先に判定を確定させ、ナレーション側は「判定済みの結果を
+        # 自然に描写する」役割に限定する(judgment_planner.plan_judgments参照)。
+        if backend_id not in LLM_BACKENDS:
+            backend_id = DEFAULT_LLM_BACKEND
+        _loaded_model = ""
+        if backend_id == "textgen_webui":
+            from def_kari.llm.tgw_manager import get_loaded_model_name
+            _loaded_model = get_loaded_model_name() or ""
+        _history_messages: list[dict] = []
+        for h in session.get("history", [])[-20:]:
+            _h_role = h.get("role", "user")
+            _h_content = h.get("content", "")
+            if _h_content:
+                _history_messages.append({"role": _h_role, "content": _h_content})
+        judgments = plan_judgments(
+            session, backend_id, _loaded_model, _history_messages,
+            name_map, char_game_sheets, _profiles, scenario, user_lang,
+        )
+
         if char_lines:
             header = "【探索者】" if _is_ja else "[Investigators]"
             _participant_count = len(char_lines)
@@ -239,24 +226,7 @@ class GMAgent:
                 "・NPCの言動・表情・反応を描写する\n"
                 "・次の展開への布石を置く\n"
                 "・探索者の台詞は書かない\n"
-                "・上記の探索者以外の人物（NPC除く）を絶対に登場させない。シナリオに何人と書かれていても、このセッションの人数が全て\n"
-                "・【判定機会】に記載されたスキルで判定が必要と判断したら、ナレーション末尾に【判定】キャラ名:スキル名 を付記する\n"
-                "・探索者が誰かの心理を読む・何かを調べる・説得する・行動する場面では、ナレーション末尾にシステムシグナルを出力すること\n"
-                "・システムシグナルの形式：【判定】キャラ名:スキル名（最終行のみ、1行で）\n"
-                "・使用できるスキル名は以下のみ。それ以外の名称は絶対に使用禁止（機械工作・鍵開け・水泳などCoCやその他のシステムの技能名は使わない）：\n"
-                "  思考系：察知・調査・医学・博学・推理・解読・記憶・操縦\n"
-                "  情動系：説得・欺瞞・威圧・魅了・意志力・共感・煽動・危機察知\n"
-                "  身体系：回避・格闘・射撃・隠密・運動・耐久・治療・運転\n"
-                "  環境系：社交・情報収集・調達・偽装・生存・追跡・潜入・製作\n"
-                "  またはステータス名：思考・情動・身体・環境\n"
-                "  スキル選択の目安：物や場所を調べる→察知、論理的思考・機械操作→推理、複雑な機器の操作→操縦、修理・制作→製作、"
-                "危険を察知する→危機察知、人の心を読む→共感、走る・跳ぶ→運動、罠を回避→回避\n"
-                "  複数名同時：【判定】Claude:共感|Copilot:察知\n"
-                "  全員に影響する罠・崩落・感電・毒など：参加者全員を列挙する 例→【判定】Alice:察知|Bob:察知|Carol:察知\n"
-                "・禁止：「共感が必要です」「判定が必要そうです」「察知で調べましょう」など判定を文章で表現すること\n"
-                "  NG→「彼の言葉の真意を見抜くため、心理状況を把握する必要があります」\n"
-                "  OK→「彼は語り続けた。\n【判定】Claude:共感」\n"
-                "・【判定】は全角の【】を使うこと。成功・失敗の結果は書かない（ロール後に決まる）"
+                "・上記の探索者以外の人物（NPC除く）を絶対に登場させない。シナリオに何人と書かれていても、このセッションの人数が全て"
             )
         else:
             system_parts.append(
@@ -265,26 +235,30 @@ class GMAgent:
                 "- Portray NPC reactions\n"
                 "- Do not write investigators' dialogue\n"
                 "- Never introduce characters other than the listed investigators (and scenario NPCs). "
-                "The session participant count above is absolute — ignore any other number in the scenario text\n"
-                "- When a check from [Judgment Opportunities] is warranted, append 【判定】CharName:StatName "
-                "on the last line of narration only\n"
-                "- When investigators read someone's psychology, examine objects, or take action, output a system signal on the last line\n"
-                "  Format: 【判定】CharName:Skill (one line, end of narration only)\n"
-                "- ONLY use these exact Japanese skill names — never invent names like 機械工作, 鍵開け, etc.:\n"
-                "  思考-group: 察知, 調査, 医学, 博学, 推理, 解読, 記憶, 操縦\n"
-                "  情動-group: 説得, 欺瞞, 威圧, 魅了, 意志力, 共感, 煽動, 危機察知\n"
-                "  身体-group: 回避, 格闘, 射撃, 隠密, 運動, 耐久, 治療, 運転\n"
-                "  環境-group: 社交, 情報収集, 調達, 偽装, 生存, 追跡, 潜入, 製作\n"
-                "  Or stat names: 思考, 情動, 身体, 環境\n"
-                "  Skill guide: reading emotions/people→共感, examining/observing→察知, sensing danger/presence→危機察知, persuading→説得, "
-                "機器操作/複雑な装置→操縦, 修理・製作→製作, running/jumping→運動, avoiding danger→回避\n"
-                "  Multiple: 【判定】Claude:共感|Copilot:察知\n"
-                "  Scene-wide hazard (trap/collapse/poison affecting everyone): list ALL investigators → 【判定】Alice:察知|Bob:察知|Carol:察知\n"
-                "- BANNED: writing judgment as prose — 'needs a psychology check', 'it seems a check is needed'\n"
-                "  NG→ 'Claude tries to read the truth behind his words, needing to grasp the psychological state'\n"
-                "  OK→ 'He continued speaking.\n【判定】Claude:Psychology'\n"
-                "- Do not write success or failure outcomes — determined after the roll"
+                "The session participant count above is absolute — ignore any other number in the scenario text"
             )
+
+        # ── 判定結果の伝達(2026-08-20設計) ─────────────────────────
+        # 判定要否は上でplan_judgments()により既に確定済み。ナレーション側は
+        # マーカーを自分で判断・出力する必要はなく、確定済みの内容を自然に
+        # 描写するだけでよい（DiceFrameのgm_systemプロンプトと同じ「ナレーション
+        # 専任・再判定禁止」の考え方）。
+        if judgments:
+            _judgment_desc = "・".join(f"{j['character_name']}:{j['stat']}" for j in judgments)
+            if _is_ja:
+                system_parts.append(
+                    f"【判定確定済み】今回のターンでは既に「{_judgment_desc}」の判定が必要と決定済みです。"
+                    "ナレーション本文でこの状況（誰が何のために判定を試みるか）を自然に描写してください。"
+                    "成功・失敗の結果は書かないこと（ロール後に決まる）。"
+                    "新たな【判定】マーカーを出力する必要はありません（システム側が別途処理します）。"
+                )
+            else:
+                system_parts.append(
+                    f"[Check already decided] This turn already determined a check is needed: {_judgment_desc}. "
+                    "Narrate this situation naturally (who is attempting what, and why). "
+                    "Do not write success or failure outcomes — determined after the roll. "
+                    "Do not output a 【判定】 marker yourself — the system handles this separately."
+                )
 
         # キーパーキャラクターの語り口リマインダー（duties より後に置いて優先度を上げる）
         if _keeper_char_id and _keeper_speech_style:
@@ -313,41 +287,28 @@ class GMAgent:
         system_prompt = "\n\n".join(system_parts)
 
         # ── メッセージ構築 ─────────────────────────────────────────
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        for h in session.get("history", [])[-20:]:
-            role = h.get("role", "user")
-            content = h.get("content", "")
-            if content:
-                messages.append({"role": role, "content": content})
+        # 直近履歴は判定決定フェーズで使ったものと同じスライス(_history_messages)
+        # をそのまま再利用する。
+        messages: list[dict] = [{"role": "system", "content": system_prompt}, *_history_messages]
         final_prompt = (
             "キーパーとして、直近の状況を踏まえて場面を進めてください。"
-            "探索者がスキルを使う場面があれば、ナレーション末尾に【判定】キャラ名:スキル名 の1行を出力すること。"
-            "文章で判定を表現することは禁止。"
-            "シーンの目的が達成され次の場面へ進む準備ができたと判断した場合は、ナレーション末尾に【シーン進行】の1行を出力すること（判定がある場合は判定の後）。"
+            "シーンの目的が達成され次の場面へ進む準備ができたと判断した場合は、ナレーション末尾に【シーン進行】の1行を出力すること。"
             "セッション終了条件が達成されたと判断した場合は、ナレーション末尾に【セッション終了提案】の1行を出力すること（【シーン進行】の後）。"
             if _is_ja else
             "As Keeper, advance the scene based on recent events. "
-            "If investigators use a skill, output 【判定】CharName:Skill on the last line only. "
-            "Never express judgment in prose. "
-            "If the scene objectives are met and it is time to move to the next scene, output 【シーン進行】 on the last line (after 【判定】 if present). "
+            "If the scene objectives are met and it is time to move to the next scene, output 【シーン進行】 on the last line. "
             "If the session end condition is met, output 【セッション終了提案】 on the last line (after 【シーン進行】 if present)."
         )
         messages.append({"role": "user", "content": final_prompt})
 
         # ── LLM呼び出し ───────────────────────────────────────────
-        if backend_id not in LLM_BACKENDS:
-            backend_id = DEFAULT_LLM_BACKEND
-
         from def_kari.models.registry import get_llm_profile
 
         # プロファイルの generation_params をベースに、GM固定値で上書き
         _gm_opts: dict = {}
-        if backend_id == "textgen_webui":
-            from def_kari.llm.tgw_manager import get_loaded_model_name
-            _loaded_model = get_loaded_model_name() or ""
-            if _loaded_model:
-                _profile = get_llm_profile(_loaded_model)
-                _gm_opts = dict(_profile.get("generation_params", {}))
+        if _loaded_model:
+            _profile = get_llm_profile(_loaded_model)
+            _gm_opts = dict(_profile.get("generation_params", {}))
         _gm_opts.update({"num_predict": 300, "repetition_penalty": 1.18})
 
         try:
@@ -400,216 +361,10 @@ class GMAgent:
         text = re.sub(r'\*roll_\w+[^*]*\*', '', text)
         text = text.strip()
 
-        # 【判定】行パース（インライン検出 or 2パス）
-        _rev_map = {v: k for k, v in name_map.items()}
-        judgments: list[dict] = []
+        # 判定は既にplan_judgments()で決定済み（本関数冒頭）。ここでは
+        # ナレーションテキストの後処理（シーン進行/セッション終了シグナルの
+        # 検出・hallucination除去）のみを行う。
         clean_text = text
-
-        _DAMAGE_ON_MAP = {"失敗": "failure", "ファンブル": "fumble", "常時": "any"}
-
-        # シナリオの現在シーンから stat→damage_on / all_investigators マップを構築
-        _scene_damage_map: dict[str, str] = {}
-        _scene_all_investigators: set[str] = set()
-        if scenario:
-            _scene_idx = session.get("current_scene_index", 0)
-            _scenes = scenario.get("scenes", [])
-            _cur_scene = _scenes[_scene_idx] if 0 <= _scene_idx < len(_scenes) else {}
-            for _sj in _cur_scene.get("judgments", []):
-                _sj_stat = _sj.get("stat")
-                if not _sj_stat:
-                    continue
-                if _sj.get("damage_on"):
-                    _scene_damage_map[_sj_stat] = _sj["damage_on"]
-                if _sj.get("all_investigators"):
-                    _scene_all_investigators.add(_sj_stat)
-
-        def _stat_val_for(cid: str, stat: str) -> int:
-            _jsheet_id = char_game_sheets.get(cid, '')
-            if not _jsheet_id or not _profiles:
-                return 0
-            _jraw = _profiles.get(cid, {})
-            _jsheet = _jraw.get("game_rules_sheets", {}).get(_jsheet_id, {})
-            _jskills = _jsheet.get("skills", {})
-            _jstats = _jsheet.get("stats", {})
-            if stat in _jskills:
-                return _jskills[stat]
-            if stat in _jstats:
-                return _jstats[stat].get("current", 0)
-            return 0
-
-        def _valid_stats_for_char(cid: str) -> frozenset[str]:
-            """キャラクターシートのスキル/ステータス名 + DEF定義スキルを返す"""
-            _jsheet_id = char_game_sheets.get(cid, '')
-            if not _jsheet_id or not _profiles:
-                return _DEF_ALLOWED_SKILLS
-            _jraw = _profiles.get(cid, {})
-            _jsheet = _jraw.get("game_rules_sheets", {}).get(_jsheet_id, {})
-            char_skills = frozenset(_jsheet.get("skills", {}).keys())
-            char_stats = frozenset(_jsheet.get("stats", {}).keys())
-            return _DEF_ALLOWED_SKILLS | char_skills | char_stats
-
-        def _normalize_stat(stat: str, cid: str) -> str | None:
-            """スキル名を正規化。補正できなければ None（ドロップ対象）"""
-            valid = _valid_stats_for_char(cid)
-            if stat in valid:
-                return stat
-            corrected = _SKILL_CORRECTION_MAP.get(stat)
-            if corrected and corrected in valid:
-                return corrected
-            return None
-
-        def _make_entry(cid: str, cname: str, stat: str, damage_on: str = "") -> dict:
-            entry: dict = {
-                "character_id": cid,
-                "character_name": cname,
-                "stat": stat,
-                "stat_value": _stat_val_for(cid, stat),
-            }
-            resolved = damage_on or _scene_damage_map.get(stat, "")
-            if resolved:
-                entry["damage_on"] = resolved
-            return entry
-
-        def _resolve_judgments_from_pairs(pairs: list[tuple[str, str]], damage_on: str = "") -> list[dict]:
-            # all_investigators スタットが含まれているか先に確認
-            all_inv_stats = {_jstat for _, _jstat in pairs if _jstat in _scene_all_investigators}
-
-            result = []
-            seen: set[tuple[str, str]] = set()
-
-            if all_inv_stats:
-                # all_investigators スタットが出たら、そのスタットのみ全員に展開し、
-                # 他のキャラ固有判定は捨てる
-                for _jstat in all_inv_stats:
-                    for _cid, _cname in name_map.items():
-                        key = (_cid, _jstat)
-                        if key not in seen:
-                            seen.add(key)
-                            result.append(_make_entry(_cid, _cname, _jstat, damage_on))
-            else:
-                for _jcname, _jstat in pairs:
-                    _jcid = _rev_map.get(_jcname)
-                    if not _jcid:
-                        continue
-                    key = (_jcid, _jstat)
-                    if key not in seen:
-                        seen.add(key)
-                        result.append(_make_entry(_jcid, _jcname, _jstat, damage_on))
-            return result
-
-        def _expand_all_investigators(judgments: list[dict]) -> list[dict]:
-            """GMが1人しか書かなかった場合に全参加者へ補完"""
-            already: set[tuple[str, str]] = {(j["character_id"], j["stat"]) for j in judgments}
-            extra = []
-            for j in judgments:
-                if j["stat"] not in _scene_all_investigators:
-                    continue
-                for _cid, _cname in name_map.items():
-                    key = (_cid, j["stat"])
-                    if key not in already:
-                        already.add(key)
-                        extra.append(_make_entry(_cid, _cname, j["stat"], j.get("damage_on", "")))
-            return list(judgments) + extra
-
-        _judgment_mode = settings.get("keeper_judgment_mode", "inline")
-
-        # インライン検出（1パス）: 【判定】or【判定:失敗】etc.
-        _jmatch = re.search(r'[【\[]判定(?::([^】\]]+))?[】\]]\s*(.+)', text)
-        if _jmatch:
-            clean_text = text[:_jmatch.start()].strip()
-            _damage_qualifier = (_jmatch.group(1) or "").strip()
-            _damage_on = _DAMAGE_ON_MAP.get(_damage_qualifier, "")
-            _pairs = []
-            for _jpart in _jmatch.group(2).split('|'):
-                _jpart = _jpart.strip()
-                # 2個目の【判定】以降は別エントリ扱い、ここでは切り捨て
-                _jpart = re.split(r'[【\[]判定', _jpart)[0].strip()
-                if ':' in _jpart:
-                    _jcname, _jstat = _jpart.split(':', 1)
-                    # stat名が長すぎる・句読点含む場合は不正パース → スキップ
-                    _jstat = re.split(r'[。、．,\s]', _jstat.strip())[0]
-                    if _jcname.strip() and _jstat.strip() and len(_jstat.strip()) <= 20:
-                        _pairs.append((_jcname.strip(), _jstat.strip()))
-            judgments = _resolve_judgments_from_pairs(_pairs, _damage_on)
-
-        # 2パス検出（インラインで取れなかった場合 or 2パスモード）
-        if _judgment_mode == "twopass" and not judgments and char_game_sheets:
-            try:
-                _char_list = ", ".join(name_map.get(cid, cid) for cid in char_game_sheets)
-                _char_names_str = ", ".join(name_map.get(cid, cid) for cid in char_game_sheets)
-                _j2_sys = (
-                    "あなたはTRPGの判定抽出システムです。キーパーナレーションを読み、"
-                    "探索者がスキルを使った・使うべき場面があれば対象キャラ名とスキル名をJSONで返してください。"
-                    "「探索者たち」のようにまとめて書かれている場合は、場面に最も関わっているキャラを1〜2名選んでください。"
-                    f"\n探索者（このリストの名前のみ使用）：{_char_names_str}"
-                    "\n使用できるスキル名（これ以外は絶対禁止・機械工作などCoCの技能名も禁止）："
-                    "察知・調査・医学・博学・推理・解読・記憶・操縦・説得・欺瞞・威圧・魅了・意志力・共感・煽動・危機察知・"
-                    "回避・格闘・射撃・隠密・運動・耐久・治療・運転・社交・情報収集・調達・偽装・生存・追跡・潜入・製作、"
-                    "またはステータス名（思考・情動・身体・環境）"
-                    "\nスキル目安：人の言動・感情を読む→共感、物や場所を観察する→察知、危険や気配を感じる→危機察知、説得・交渉→説得、機器操作→操縦、修理・製作→製作、走る・跳ぶ→運動"
-                    "\nなければ {\"judgments\":[]} を返してください。"
-                    "\n必ずJSONのみ返してください（コードブロック不要）。"
-                    "\n形式：{\"judgments\":[{\"character\":\"キャラ名\",\"skill\":\"スキル名\"}]}"
-                ) if _is_ja else (
-                    "You are a TRPG judgment extractor. Read the keeper narration and return JSON listing "
-                    "any skill checks that occurred or should occur. "
-                    "If 'investigators' is used collectively, pick 1-2 most relevant characters."
-                    f"\nInvestigators (use only these names): {_char_names_str}"
-                    "\nOnly these exact skill names allowed (no inventing names like 機械工作 etc.): "
-                    "察知,調査,医学,博学,推理,解読,記憶,操縦,説得,欺瞞,威圧,魅了,意志力,共感,煽動,危機察知,"
-                    "回避,格闘,射撃,隠密,運動,耐久,治療,運転,社交,情報収集,調達,偽装,生存,追跡,潜入,製作,"
-                    "or stat names: 思考,情動,身体,環境"
-                    "\nSkill guide: reading emotions/people→共感, observing objects/places→察知, "
-                    "sensing danger/presence→危機察知, persuading→説得, operating machinery→操縦, crafting/repairing→製作, "
-                    "running/jumping→運動, avoiding danger→回避"
-                    "\nIf none needed, return {\"judgments\":[]}."
-                    "\nReturn JSON only, no code blocks."
-                    "\nFormat: {\"judgments\":[{\"character\":\"name\",\"skill\":\"skill\"}]}"
-                )
-                _j2_messages = [
-                    {"role": "system", "content": _j2_sys},
-                    {"role": "user", "content": clean_text},
-                ]
-                _j2_vl = get_vram_lock()
-                _j2_vl.acquire()
-                try:
-                    _j2_raw = chat_fn(_j2_messages, "", json_mode=True, options={"num_predict": 200})
-                finally:
-                    _j2_vl.release()
-                import json as _json, re as _re
-                # コードブロック除去してから parse
-                _j2_stripped = _re.sub(r'```[a-z]*\n?', '', _j2_raw or '').strip().strip('`').strip()
-                _j2_data = _json.loads(_j2_stripped or "{}")
-                _pairs2 = [
-                    (j.get("character", ""), j.get("skill", ""))
-                    for j in _j2_data.get("judgments", [])
-                    if j.get("character") and j.get("skill")
-                ]
-                judgments = _resolve_judgments_from_pairs(_pairs2)
-                import sys
-                print(f"[2pass] raw={_j2_stripped[:120]!r} pairs={_pairs2} resolved={len(judgments)}", file=sys.stderr)
-            except Exception as _j2e:
-                import sys
-                print(f"[2pass] error: {_j2e}", file=sys.stderr)
-
-        # スキル名バリデーション（inline / twopass 両パス共通）
-        # 補正マップで修正 → それでも無効ならドロップ
-        import sys as _sys
-        _validated: list[dict] = []
-        for _j in judgments:
-            _norm = _normalize_stat(_j["stat"], _j["character_id"])
-            if _norm is None:
-                print(f"[skill_drop] {_j['stat']!r} is not a valid DEF skill for {_j['character_id']!r}", file=_sys.stderr)
-                continue
-            if _norm != _j["stat"]:
-                print(f"[skill_normalize] {_j['stat']!r} → {_norm!r} for {_j['character_id']!r}", file=_sys.stderr)
-                _j = {**_j, "stat": _norm, "stat_value": _stat_val_for(_j["character_id"], _norm)}
-            _validated.append(_j)
-        judgments = _validated
-
-        # all_investigators 展開（GMが1人しか書かなかった場合に全員へ補完）
-        if _scene_all_investigators:
-            judgments = _expand_all_investigators(judgments)
 
         # 【シーン進行】シグナル検出
         _advance_scene = False

@@ -23,6 +23,21 @@ def _extract_from_reasoning(text: str) -> str:
 TEXTGEN_WEBUI_URL = os.environ.get("TEXTGEN_WEBUI_URL", "http://127.0.0.1:5000/v1")
 MODEL = ""
 
+# 汎用JSONオブジェクト制約のGBNF文法。TGWはOpenAIの`response_format`相当を持たず
+# `grammar_string`(GBNF)でトークン生成そのものを制約する設計
+# (`modules/api/typing.py`のGenerateBaseParams、公式ドキュメント`docs/12 - OpenAI API.md`
+# には明記が無く、typing.pyのフィールド定義から確認)。中身のスキーマまでは制約せず
+# 「有効なJSON文字列であること」だけを保証する最小文法。
+_JSON_OBJECT_GRAMMAR = r"""
+root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null")
+object ::= "{" ws (string ":" ws value ("," ws string ":" ws value)*)? ws "}"
+array  ::= "[" ws (value ("," ws value)*)? ws "]"
+string ::= "\"" ([^"\\] | "\\" .)* "\""
+number ::= "-"? [0-9]+ ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
+ws     ::= [ \t\n]*
+"""
+
 
 def _headers() -> dict:
     api_key = os.environ.get("TEXTGEN_WEBUI_API_KEY")
@@ -36,6 +51,8 @@ def chat(
     options: dict | None = None,
 ) -> str:
     body: dict = {"model": model or MODEL, "messages": messages}
+    if json_mode:
+        body["grammar_string"] = _JSON_OBJECT_GRAMMAR
     if options:
         if "num_predict" in options:
             body["max_tokens"] = options["num_predict"]
@@ -66,6 +83,43 @@ def chat(
     if _THINKING_PROCESS_RE.match(_content):
         _content = _extract_from_reasoning(_content)
     return _content
+
+
+def chat_with_tools(
+    messages: list[dict],
+    model: str,
+    tools: list[dict],
+    options: dict | None = None,
+) -> dict:
+    """OpenAI互換のtool-calling(`docs/12 - OpenAI API.md`のTool/Function callingサンプル
+    に準拠、DEF独自の実装)。モデルがツール呼び出しを選んだ場合は
+    `{"tool_calls": [...], "content": ""}`、選ばなかった場合(通常の文章応答)は
+    `{"tool_calls": None, "content": <文章>}`を返す。
+
+    tool-calling自体はQwen/Mistral/GPT-OSS系などモデル依存の機能なので、対応
+    モデルかどうかは呼び出し元が`models.registry.get_quirks()`の
+    `tool_calling_capable`で判断すること(本関数はTGW側の対応可否のみを扱う)。
+    """
+    body: dict = {"model": model or MODEL, "messages": messages, "tools": tools}
+    if options:
+        if "num_predict" in options:
+            body["max_tokens"] = options["num_predict"]
+        for _pkey in ("temperature", "top_p", "top_k", "repetition_penalty"):
+            if _pkey in options:
+                body[_pkey] = options[_pkey]
+
+    resp = requests.post(
+        f"{TEXTGEN_WEBUI_URL}/chat/completions",
+        headers=_headers(),
+        json=body,
+        timeout=600,
+    )
+    resp.raise_for_status()
+    _choice = resp.json()["choices"][0]
+    _msg = _choice.get("message", {})
+    if _choice.get("finish_reason") == "tool_calls" and _msg.get("tool_calls"):
+        return {"tool_calls": _msg["tool_calls"], "content": ""}
+    return {"tool_calls": None, "content": _msg.get("content") or ""}
 
 
 def load_model(name: str) -> str | None:

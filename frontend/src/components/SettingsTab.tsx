@@ -649,17 +649,6 @@ export default function SettingsTab({
           />
         </div>
         <div className="settings-row">
-          <label>{t('settings.label.keeperJudgmentMode')}</label>
-          <select
-            value={get('keeper_judgment_mode', 'inline')}
-            onChange={e => set('keeper_judgment_mode', e.target.value)}
-          >
-            {['inline', 'twopass'].map(v => (
-              <option key={v} value={v}>{t(`settings.keeperJudgmentMode.${v}`)}</option>
-            ))}
-          </select>
-        </div>
-        <div className="settings-row">
           <label>{t('settings.label.t2iPromptMode')}</label>
           <select
             value={get('t2i_prompt_mode', 'current')}

@@ -21,6 +21,11 @@ DEFAULT_QUIRKS = {
     "outputs_url_in_prompt": False,
     "emotion_in_text": False,
     "leaks_thinking": False,
+    # tool-calling(OpenAI互換のtools/tool_choice)に対応しているモデルか。
+    # 未知のモデルは非対応として扱う(安全側デフォルト)。対応可否はモデル
+    # 依存のため自動判定はせず、data/llm_profiles/配下で手動記録する運用
+    # （gm/judgment_planner.pyが判定決定の経路選択に使う）。
+    "tool_calling_capable": False,
 }
 
 _DEFAULT_PROFILE_TEMPLATE = {

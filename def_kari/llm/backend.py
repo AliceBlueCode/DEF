@@ -16,6 +16,7 @@ _LLM_SERVICES_PATH = Path(__file__).parent.parent.parent / "data" / "llm_service
 LLM_BACKENDS = {
     "textgen_webui": {
         "chat": tgw.chat,
+        "chat_with_tools": tgw.chat_with_tools,
         "list_models": tgw.list_models,
         "default_model": tgw.MODEL,
     },

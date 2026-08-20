@@ -51,7 +51,6 @@ PERSISTED_KEYS = [
     "episode_t2i_width",
     "episode_t2i_height",
     "vote_force_approve",
-    "keeper_judgment_mode",
     "tts_voicevox_cpu_mode",
     "jwt_secret",
     "disconnect_timeout_sec",
