@@ -86,6 +86,29 @@ export async function createOnlineSession(browser, { characterName = 'ChatGPT', 
   return { ctx, page, inviteCode }
 }
 
+// ホストとしてTRPGモードのオンラインセッションを作成し、ロビー画面(招待コード
+// 発行済み)まで進める。createOnlineSessionと違いホストはキャラを選ばない
+// (「オンラインセッション作成」ボタンはselectedChars件数では無効化されない、
+// startOnlineSession呼び出し元のJSX参照)——ホストはキーパー専任のまま、
+// 参加者のキャラだけがinitiativeに乗る決定的な状態を作るため。
+export async function createOnlineTrpgSession(browser, { viewport = { width: 1400, height: 900 } } = {}) {
+  const ctx = await browser.newContext({ viewport })
+  const page = await ctx.newPage()
+  await page.goto(BASE_URL)
+  await page.waitForTimeout(600)
+  await openSessionTab(page)
+  await page.getByRole('button', { name: /TRPGモード/ }).click()
+  await page.waitForTimeout(300)
+  await page.getByRole('button', { name: /オンラインセッション作成/ }).click()
+  await page.waitForTimeout(1200)
+
+  const bodyText = await page.locator('body').innerText()
+  const m = bodyText.match(/[A-Z0-9]{2,4}-[A-Z0-9]{3}-\d{3}/)
+  const inviteCode = m ? m[0] : null
+  assert(!!inviteCode, 'invite code issued (TRPG mode)')
+  return { ctx, page, inviteCode }
+}
+
 // 招待コードでプレイヤーとして参加する(キャラJSON持ち込み)。
 // ゲストは以後ターン待ちの間WS受信のみで能動的な認証済みリクエストを出さない
 // ことがあるため(trackAuthTokensでは拾えない場合がある)、join応答のplayer_token
