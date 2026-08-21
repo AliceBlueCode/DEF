@@ -20,7 +20,7 @@
 //
 // 実行: node frontend/e2e/trpg_keeper_online_join.js
 import { chromium } from 'playwright'
-import { assert, createOnlineTrpgSession, joinAsPlayer } from './helpers.js'
+import { assert, createOnlineTrpgSession, joinAsPlayer, startSession } from './helpers.js'
 
 ;(async () => {
   const browser = await chromium.launch()
@@ -28,8 +28,11 @@ import { assert, createOnlineTrpgSession, joinAsPlayer } from './helpers.js'
     const { page: host, inviteCode } = await createOnlineTrpgSession(browser)
     const { page: guest } = await joinAsPlayer(browser, inviteCode)
 
-    await host.getByRole('button', { name: 'セッション開始' }).click()
-    await host.waitForTimeout(1800)
+    // キーパー発火(fireKeeperTurn)はhumanIsLastOfRoundに加えてautoAdvanceRef.current
+    // も必須(SessionTab.tsx:1816)。startSession()が「自動」トグルを有効化する
+    // (helpers.jsのコメント参照、AI-firstターンの進行だけでなくこの条件にも必要
+    // と判明——2026-08-22、実CIでai_keeperが一度も呼ばれないことから発覚)。
+    await startSession(host)
 
     // ゲストが唯一のinitiativeメンバーなので、開始直後から自分のターンのはず。
     const sendBtn = guest.getByRole('button', { name: /発言完/ })
