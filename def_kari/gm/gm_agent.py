@@ -16,6 +16,7 @@ from def_kari.gm.context_builder import (
     load_trpg_scenario,
 )
 from def_kari.gm.judgment_planner import plan_judgments
+from def_kari.prompts import sp
 
 
 class GMAgent:
@@ -77,45 +78,18 @@ class GMAgent:
         # 人物設定は _keeper_char_id の有無で判定（char_name が空でも機能する）
         _has_keeper_persona = bool(_keeper_char_id and _keeper_persona_desc)
         system_parts = []
-        if _is_ja:
-            if _has_keeper_persona:
-                system_parts.append(
-                    f"あなたは「{_keeper_display_name}」という人物です。\n"
-                    f"{_keeper_persona_desc}\n\n"
-                    f"あなた（{_keeper_display_name}）が今、TRPGのゲームマスターとして参加者に場面を語りかけます。"
-                    "GMとしての役割（判定・シーン進行）は後述の形式で行いますが、"
-                    "ナレーション本文はあなた自身の口調・感情・個性でそのまま語ってください。"
-                    "必ず3〜5文で終わらせてください。それ以上書いてはいけません。"
-                    "「---」などの区切り線は使用禁止。同じ文章を繰り返してはいけません。"
-                    "必ず日本語のみで回答すること。英語は一切使用しない。"
-                )
-            else:
-                system_parts.append(
-                    "あなたはTRPGのゲームマスター（キーパー）です。"
-                    "語り手として物語を進行させてください。"
-                    "個性や感情表現は持たず、簡潔かつ情景豊かに語ります。"
-                    "必ず3〜5文で終わらせてください。それ以上書いてはいけません。"
-                    "「---」などの区切り線は使用禁止。同じ文章を繰り返してはいけません。"
-                    "必ず日本語のみで回答すること。英語は一切使用しない。"
-                )
+        if _has_keeper_persona:
+            system_parts.append(
+                (sp("gm_persona_intro", user_lang) or (
+                    "あなたは「{name}」という人物です。\n{persona_desc}\n\nあなた（{name}）が今、"
+                    "TRPGのゲームマスターとして参加者に場面を語りかけます。"
+                )).format(name=_keeper_display_name, persona_desc=_keeper_persona_desc)
+            )
         else:
-            if _has_keeper_persona:
-                system_parts.append(
-                    f"You are \"{_keeper_display_name}\" — a specific character with the profile below.\n"
-                    f"{_keeper_persona_desc}\n\n"
-                    f"You ({_keeper_display_name}) are narrating a TRPG session as the Game Master. "
-                    "GM mechanics (judgment signals, scene-advance) follow the rules below, "
-                    "but the narration text itself must come through in your own voice and personality. "
-                    "Always end after exactly 3-5 sentences. Do not write more. "
-                    "Never use separator lines like '---'. Never repeat phrases."
-                )
-            else:
-                system_parts.append(
-                    "You are the Game Master (Keeper) of this TRPG session. "
-                    "Narrate as a neutral storyteller. Be concise and vivid. "
-                    "Always end after exactly 3-5 sentences. Do not write more. "
-                    "Never use separator lines like '---'. Never repeat phrases."
-                )
+            system_parts.append(
+                sp("gm_neutral_intro", user_lang)
+                or ("あなたはTRPGのゲームマスター（キーパー）です。" if _is_ja else "You are the Game Master (Keeper) of this TRPG session.")
+            )
 
         trpg_ctx = build_for_gm(rulebook, scenario or None, session, user_lang)
         if trpg_ctx:
@@ -188,55 +162,24 @@ class GMAgent:
 
         # 名前制約ブロック（探索者リストの直後に独立して配置）
         if name_map:
-            _allowed_names_str = "・".join(name_map.values())
-            _npc_names_str = ""
+            _allowed_names_str = "・".join(name_map.values()) if _is_ja else ", ".join(name_map.values())
+            _npc_clause = ""
             if scenario:
                 _npc_names = [n.get("name", "") for n in scenario.get("npcs", []) if n.get("name")]
                 if _npc_names:
-                    _npc_names_str = "、".join(_npc_names)
-            if _is_ja:
-                _name_constraint = (
-                    f"【人物名の絶対制約】ナレーションに登場できる名前は「{_allowed_names_str}」"
-                )
-                if _npc_names_str:
-                    _name_constraint += f"およびシナリオNPC「{_npc_names_str}」"
-                _name_constraint += (
-                    "のみ。"
-                    "これ以外の人物名（Saburo・Celina 等、上記リストに存在しない名前）は絶対に出力禁止。"
-                    "不明な場合は名前を使わず「誰かが」「その人物が」と表現すること。"
-                )
-                system_parts.append(_name_constraint)
-            else:
-                _allowed_names_en = ", ".join(name_map.values())
-                _name_constraint_en = (
-                    f"[Absolute name rule] Only use these names: {_allowed_names_en}"
-                )
-                if _npc_names_str:
-                    _name_constraint_en += f" and scenario NPCs ({_npc_names_str})"
-                _name_constraint_en += (
-                    ". Never invent names not in this list. "
-                    "Use 'someone' or 'a figure' when uncertain."
-                )
-                system_parts.append(_name_constraint_en)
+                    _npc_names_str = "、".join(_npc_names) if _is_ja else ", ".join(_npc_names)
+                    _npc_clause = sp("gm_name_constraint_npc_clause", user_lang).format(npc_names=_npc_names_str)
+            _name_constraint_tmpl = sp("gm_name_constraint", user_lang) or (
+                "【人物名の絶対制約】ナレーションに登場できる名前は「{names}」{npc_clause}のみ。"
+                if _is_ja else
+                "[Absolute name rule] Only use these names: {names}{npc_clause}."
+            )
+            system_parts.append(_name_constraint_tmpl.format(names=_allowed_names_str, npc_clause=_npc_clause))
 
-        if _is_ja:
-            system_parts.append(
-                "【キーパーの役割】\n"
-                "・探索者の行動・発言を受けて場面の状況や変化を描写する\n"
-                "・NPCの言動・表情・反応を描写する\n"
-                "・次の展開への布石を置く\n"
-                "・探索者の台詞は書かない\n"
-                "・上記の探索者以外の人物（NPC除く）を絶対に登場させない。シナリオに何人と書かれていても、このセッションの人数が全て"
-            )
-        else:
-            system_parts.append(
-                "[Keeper duties]\n"
-                "- Narrate scene changes based on investigators' actions\n"
-                "- Portray NPC reactions\n"
-                "- Do not write investigators' dialogue\n"
-                "- Never introduce characters other than the listed investigators (and scenario NPCs). "
-                "The session participant count above is absolute — ignore any other number in the scenario text"
-            )
+        system_parts.append(
+            sp("gm_keeper_duties", user_lang)
+            or ("【キーパーの役割】探索者の行動・発言を受けて場面を描写する" if _is_ja else "[Keeper duties] Narrate scene changes based on investigators' actions")
+        )
 
         # ── 判定結果の伝達(2026-08-20設計) ─────────────────────────
         # 判定要否は上でplan_judgments()により既に確定済み。ナレーション側は
@@ -245,44 +188,23 @@ class GMAgent:
         # 専任・再判定禁止」の考え方）。
         if judgments:
             _judgment_desc = "・".join(f"{j['character_name']}:{j['stat']}" for j in judgments)
-            if _is_ja:
-                system_parts.append(
-                    f"【判定確定済み】今回のターンでは既に「{_judgment_desc}」の判定が必要と決定済みです。"
-                    "ナレーション本文でこの状況（誰が何のために判定を試みるか）を自然に描写してください。"
-                    "成功・失敗の結果は書かないこと（ロール後に決まる）。"
-                    "新たな【判定】マーカーを出力する必要はありません（システム側が別途処理します）。"
-                )
-            else:
-                system_parts.append(
-                    f"[Check already decided] This turn already determined a check is needed: {_judgment_desc}. "
-                    "Narrate this situation naturally (who is attempting what, and why). "
-                    "Do not write success or failure outcomes — determined after the roll. "
-                    "Do not output a 【判定】 marker yourself — the system handles this separately."
-                )
+            system_parts.append(
+                (sp("gm_judgment_decided", user_lang) or (
+                    "【判定確定済み】今回のターンでは既に「{judgment_desc}」の判定が必要と決定済みです。"
+                    if _is_ja else
+                    "[Check already decided] This turn already determined a check is needed: {judgment_desc}."
+                )).format(judgment_desc=_judgment_desc)
+            )
 
         # キーパーキャラクターの語り口リマインダー（duties より後に置いて優先度を上げる）
         if _keeper_char_id and _keeper_speech_style:
-            if _is_ja:
-                system_parts.append(
-                    f"【語り口の最終指示（必須）】あなたは「{_keeper_display_name}」本人として語ります。\n"
-                    f"{_keeper_speech_style}\n\n"
-                    "▼ ナレーション本文で必ず実行すること:\n"
-                    "・「探索者たちは…」「あなたたちは…」など無個性の三人称叙述は禁止。"
-                    "一人称「私」か、参加者への直接語りかけで書くこと\n"
-                    f"・{_keeper_display_name}の感情・口癖・独白が本文に1文以上あること\n"
-                    "・過去の会話履歴の文体を踏襲しないこと。毎回その瞬間の自分の言葉で新しく語ること\n"
-                    "・NG例:「探索者たちは慎重に歩を進めた。」\n"
-                    "・OK例:「……私には、いやな予感がします。あなたたち、一歩一歩確かめながら進んでください。」"
-                )
-            else:
-                system_parts.append(
-                    f"[Final style directive — REQUIRED] You are \"{_keeper_display_name}\", narrating in your own voice.\n"
-                    f"{_keeper_speech_style}\n\n"
-                    "▼ You MUST do all of the following in your narration:\n"
-                    "- No generic third-person like 'The investigators...' or 'You all...' — use first-person 'I' or direct address\n"
-                    f"- At least one sentence showing {_keeper_display_name}'s emotion, quirk, or inner voice\n"
-                    "- Do NOT copy the neutral tone of past history entries. Narrate fresh, in your own words each time"
-                )
+            system_parts.append(
+                (sp("gm_speech_style_reminder", user_lang) or (
+                    "【語り口の最終指示（必須）】あなたは「{name}」本人として語ります。\n{speech_style}"
+                    if _is_ja else
+                    "[Final style directive — REQUIRED] You are \"{name}\", narrating in your own voice.\n{speech_style}"
+                )).format(name=_keeper_display_name, speech_style=_keeper_speech_style)
+            )
 
         system_prompt = "\n\n".join(system_parts)
 
@@ -290,14 +212,10 @@ class GMAgent:
         # 直近履歴は判定決定フェーズで使ったものと同じスライス(_history_messages)
         # をそのまま再利用する。
         messages: list[dict] = [{"role": "system", "content": system_prompt}, *_history_messages]
-        final_prompt = (
+        final_prompt = sp("gm_final_prompt", user_lang) or (
             "キーパーとして、直近の状況を踏まえて場面を進めてください。"
-            "シーンの目的が達成され次の場面へ進む準備ができたと判断した場合は、ナレーション末尾に【シーン進行】の1行を出力すること。"
-            "セッション終了条件が達成されたと判断した場合は、ナレーション末尾に【セッション終了提案】の1行を出力すること（【シーン進行】の後）。"
             if _is_ja else
-            "As Keeper, advance the scene based on recent events. "
-            "If the scene objectives are met and it is time to move to the next scene, output 【シーン進行】 on the last line. "
-            "If the session end condition is met, output 【セッション終了提案】 on the last line (after 【シーン進行】 if present)."
+            "As Keeper, advance the scene based on recent events."
         )
         messages.append({"role": "user", "content": final_prompt})
 

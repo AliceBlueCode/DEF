@@ -2,13 +2,11 @@
 `session.py`分割の一部。
 """
 
-import json
 import logging
 import random
 import secrets
 import threading
 import uuid as _uuid_mod
-from pathlib import Path
 
 from fastapi import Header, HTTPException, Depends, Request
 from pydantic import BaseModel
@@ -54,26 +52,10 @@ from def_kari.api.routes.session_persistence import (
 
 _log = logging.getLogger("def.session")
 
-_BASE_DATA = Path(__file__).parent.parent.parent.parent / "data"
-_SESSION_PROMPTS_PATH = _BASE_DATA / "session_prompts.json"
-_session_prompts_cache: dict = {}
-
-
-def _load_session_prompts() -> dict:
-    global _session_prompts_cache
-    if _session_prompts_cache:
-        return _session_prompts_cache
-    try:
-        with open(_SESSION_PROMPTS_PATH, encoding="utf-8") as f:
-            _session_prompts_cache = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return _session_prompts_cache
-
-def _sp(key: str, lang: str) -> str:
-    """session_prompts.json から言語別テキストを取得。"""
-    entry = _load_session_prompts().get(key, {})
-    return entry.get(lang) or entry.get("ja") or ""
+# 実体はdef_kari/prompts.py(gm/パッケージからも使う中立な置き場、2026-08-21移設)。
+# session_voting.py・session.py(再export)が既存の名前で参照しているため
+# エイリアスとして残す。
+from def_kari.prompts import load_session_prompts as _load_session_prompts, sp as _sp
 
 
 def _build_initial_npc_state(scenario_id: str, public_only: bool = False) -> dict:
