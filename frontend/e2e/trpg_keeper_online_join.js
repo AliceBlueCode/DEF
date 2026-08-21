@@ -43,10 +43,12 @@ import { assert, createOnlineTrpgSession, joinAsPlayer, startSession } from './h
     // キーパーのナレーション(モックLLM経由でも非空文字列を返す、内容の質は
     // e2eの検証対象外)がゲスト自身の画面に現れるまで待つ。修正前はここで
     // 一切現れず、プレイヤーのターンだけが無限に待たされる状態になっていた。
+    // 表示ラベルはkeeper_char_name未設定時"🎩 Keeper"(英語、session_gameplay.py
+    // ai_keeper_narrateのcharacter_nameフォールバック)固定のため、絵文字で判定する。
     await guest.waitForTimeout(10000)
     const guestText = await guest.locator('body').innerText()
     assert(
-      guestText.includes('キーパー'),
+      guestText.includes('🎩'),
       'keeper narration appears on the JOINING guest tab (regression check for trpgModeRef hydration bug)',
     )
 

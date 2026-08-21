@@ -96,6 +96,19 @@ export async function createOnlineTrpgSession(browser, { viewport = { width: 140
   const page = await ctx.newPage()
   await page.goto(BASE_URL)
   await page.waitForTimeout(600)
+  // ai_keeper(gm_agent.py)へのPOSTはApp.tsxのselectedBackend state(このタブ
+  // 固有、localStorage起点)をそのまま使う。data/settings.jsonへ直接POSTしても
+  // このstateには反映されない(App.tsxは起動時にlocalStorage→/api/settings/backends
+  // のdefaultしか見ておらず、永続化済みuser設定を読み返す経路が無い)ため、実際に
+  // 設定タブのセレクトを操作してApp.tsx側のstateを更新する(2026-08-22、実CIで
+  // llm_backend=openaiのままAPIキー未設定エラーになったことから発覚)。
+  // textgen_webuiは既にモックが「起動中」と応答するため、launchBackend()が
+  // 実プロセス起動を試みることはない(already_running扱い)。
+  await openSettingsTab(page)
+  const llmBackendSelect = page.locator('select').filter({ has: page.locator('option[value="textgen_webui"]') })
+  await llmBackendSelect.waitFor({ state: 'visible', timeout: 10000 })
+  await llmBackendSelect.selectOption('textgen_webui')
+  await page.waitForTimeout(300)
   await openSessionTab(page)
   await page.getByRole('button', { name: /TRPGモード/ }).click()
   await page.waitForTimeout(300)
