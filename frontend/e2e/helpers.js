@@ -105,7 +105,12 @@ export async function createOnlineTrpgSession(browser, { viewport = { width: 140
   // textgen_webuiは既にモックが「起動中」と応答するため、launchBackend()が
   // 実プロセス起動を試みることはない(already_running扱い)。
   await openSettingsTab(page)
-  const llmBackendSelect = page.locator('select').filter({ has: page.locator('option[value="textgen_webui"]') })
+  // 非表示タブもdisplay:noneでDOMに残り続ける(App.tsxのタブ切替方式)ため、
+  // NovelTab.tsx側のバックエンドセレクト(novel-backend-sel)も同じ
+  // option[value="textgen_webui"]を持ち、素の絞り込みだと2件ヒットして
+  // strict modeエラーになる(2026-08-22、実CIで発覚)。:visibleで現在表示中の
+  // 設定タブのセレクトだけに絞る。
+  const llmBackendSelect = page.locator('select:visible').filter({ has: page.locator('option[value="textgen_webui"]') })
   await llmBackendSelect.waitFor({ state: 'visible', timeout: 10000 })
   await llmBackendSelect.selectOption('textgen_webui')
   await page.waitForTimeout(300)
