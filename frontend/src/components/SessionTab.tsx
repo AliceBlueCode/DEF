@@ -410,6 +410,14 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             initiativeRef.current = data.session.initiative
             setInitiative(data.session.initiative)
           }
+          // trpgModeRefは自分でセッション作成したタブ(_initSession)以外では
+          // 初期値falseのまま取り残されており、参加者/リロード後のタブでは
+          // キーパー発火(isLastOfRound判定)が永久に起きない不具合があった
+          // (2026-08-22発覚)。GET /{session_id}が返すtrpg_modeで復元する。
+          if (res.ok && !cancelled && typeof data.session?.trpg_mode === 'boolean') {
+            trpgModeRef.current = data.session.trpg_mode
+            setTrpgMode(data.session.trpg_mode)
+          }
           const nameMap: Record<string, string> = data.session?.name_map || {}
           if (res.ok && !cancelled && data.session?.name_map) {
             setSessionNameMap(nameMap)
