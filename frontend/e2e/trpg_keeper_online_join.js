@@ -20,7 +20,7 @@
 //
 // 実行: node frontend/e2e/trpg_keeper_online_join.js
 import { chromium } from 'playwright'
-import { assert, createOnlineTrpgSession, joinAsPlayer, startSession, selectTextgenWebuiBackend } from './helpers.js'
+import { assert, createOnlineTrpgSession, joinAsPlayer, startSession, selectTextgenWebuiBackend, openSessionTab } from './helpers.js'
 
 ;(async () => {
   const browser = await chromium.launch()
@@ -33,6 +33,10 @@ import { assert, createOnlineTrpgSession, joinAsPlayer, startSession, selectText
     // ゲストは別ブラウザコンテキスト(別state)のため引き継がれない
     // (2026-08-22、実CIでゲスト側だけopenaiのままエラーになったことから発覚)。
     await selectTextgenWebuiBackend(guest)
+    // selectTextgenWebuiBackendは設定タブに留まったままなので、セッション画面へ
+    // 戻さないと「発言完」ボタン等が見えないまま待ち続けてタイムアウトする
+    // (2026-08-22、実CIで発覚)。
+    await openSessionTab(guest)
 
     // キーパー発火(fireKeeperTurn)はhumanIsLastOfRoundに加えてautoAdvanceRef.current
     // も必須(SessionTab.tsx:1816)。startSession()が「自動」トグルを有効化する
