@@ -22,7 +22,7 @@ const R18_CHAR_JSON = path.join(__dirname, 'fixtures', 'test_r18_guest_char.json
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   // オンラインセッション作成時の自動発行コードはSFW固定(session.py 1736行目)。
   const { inviteCode } = await createOnlineSession(browser)
   assert(inviteCode.startsWith('SFW-'), `invite code is SFW-rated by default: ${inviteCode}`)
@@ -59,8 +59,11 @@ const R18_CHAR_JSON = path.join(__dirname, 'fixtures', 'test_r18_guest_char.json
   const bodyText = await r18Guest.locator('body').innerText()
   assert(/rating/i.test(bodyText), 'rejection reason is shown in the join dialog UI')
 
-  await browser.close()
   console.log('invite_rating.js: regression guard passed (over-rated character is rejected at join time)')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

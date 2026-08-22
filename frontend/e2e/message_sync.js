@@ -9,7 +9,7 @@ const MARKER_TEXT = `sync-check-${Date.now()}`
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   const { page: host, inviteCode } = await createOnlineSession(browser)
   const { page: guest } = await joinAsPlayer(browser, inviteCode)
 
@@ -35,8 +35,11 @@ const MARKER_TEXT = `sync-check-${Date.now()}`
   const hostText = await host.locator('body').innerText()
   assert(hostText.includes(MARKER_TEXT), 'host tab shows guest message text in real time (HUMAN_ACTION broadcast)')
 
-  await browser.close()
   console.log('message_sync.js: all assertions passed')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

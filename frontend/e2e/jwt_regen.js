@@ -7,6 +7,7 @@ import { assert, openSettingsTab, createOnlineSession, joinAsPlayer, startSessio
 
 ;(async () => {
   const browser = await chromium.launch()
+  try {
   let hostWsClosed = false
   let guestWsClosed = false
   let guestHttp401Seen = false
@@ -38,8 +39,11 @@ import { assert, openSettingsTab, createOnlineSession, joinAsPlayer, startSessio
   await guest.waitForTimeout(1500)
   assert(guestHttp401Seen, 'guest action with pre-regeneration token rejected with 401')
 
-  await browser.close()
   console.log('jwt_regen.js: all assertions passed')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

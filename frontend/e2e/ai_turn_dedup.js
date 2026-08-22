@@ -40,7 +40,7 @@ async function decodeJwtSessionId(page, token) {
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   const { page: host, inviteCode } = await createOnlineSession(browser)
   const { page: guest, playerToken: guestToken } = await joinAsPlayer(browser, inviteCode)
   assert(!!guestToken, 'player_token captured from join response')
@@ -107,8 +107,15 @@ async function decodeJwtSessionId(page, token) {
   // 壊れる」と記録していたのはこの限界の誤診断だった可能性が高い(実UIクリックでの
   // 単発送信は他のe2eテストで正常動作を別途確認済み)。よってここでは検証しない。
 
-  await browser.close()
   console.log('ai_turn_dedup.js: regression guard passed (duplicate /human_turn sends are correctly rejected)')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる。以前はbrowser.close()を
+    // 成功パスの最後にしか呼んでおらず、assert失敗時にPlaywrightのハンドルが
+    // 残ってNodeプロセスが終了せず、実CI実行でtimeout-minutesの上限まで無駄に
+    // 占有する事態が実際に起きた(2026-08-22、ai_turn_dedup.js自身の8並列送信
+    // タイミングflakeがこのハングを誘発しCI全体を8分ブロックした)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

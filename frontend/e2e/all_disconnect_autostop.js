@@ -24,7 +24,7 @@ const WAIT_MARGIN_SEC = 20
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   const { page: host, ctx: hostCtx, inviteCode } = await createOnlineSession(browser)
   const { page: guest, ctx: guestCtx } = await joinAsPlayer(browser, inviteCode)
 
@@ -55,8 +55,11 @@ const WAIT_MARGIN_SEC = 20
     `pre-disconnect message should be visible after (re)joining post idle_shutdown-wait (history replay) — not found`
   )
 
-  await browser.close()
   console.log('all_disconnect_autostop.js: regression guard passed (history replay survives all-disconnect + idle_shutdown wait)')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

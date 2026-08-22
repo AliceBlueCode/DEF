@@ -11,7 +11,7 @@ const WAIT_MARGIN_SEC = 10 // タイマー起動の遅延・イベント配信�
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   const { page: host, inviteCode } = await createOnlineSession(browser)
   await openSettingsTab(host)
   await setNumberSetting(host, '切断タイムアウト', DISCONNECT_TIMEOUT_SEC)
@@ -31,8 +31,11 @@ const WAIT_MARGIN_SEC = 10 // タイマー起動の遅延・イベント配信�
   const hostText = await host.locator('body').innerText()
   assert(hostText.includes('はスキップしました'), 'disconnected guest turn auto-skipped after timeout')
 
-  await browser.close()
   console.log('disconnect_timeout.js: all assertions passed')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

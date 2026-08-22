@@ -23,7 +23,7 @@ async function decodeJwtSessionId(page, token) {
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   const { page: host, inviteCode } = await createOnlineSession(browser)
   const tokens = trackAuthTokens(host)
   await startSession(host) // /start 等の認証済みリクエストを発生させてトークンを採取
@@ -55,8 +55,11 @@ async function decodeJwtSessionId(page, token) {
   st = await rawWsState(host, goneId)
   assert(st.closed && st.closeCode === 4004, `ended (nonexistent) session rejected with 4004 (got ${st.closeCode})`)
 
-  await browser.close()
   console.log('ws_auth.js: all assertions passed')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1

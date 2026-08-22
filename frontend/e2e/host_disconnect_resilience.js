@@ -10,7 +10,7 @@ const MARKER_TEXT = `host-dc-check-${Date.now()}`
 
 ;(async () => {
   const browser = await chromium.launch()
-
+  try {
   const { page: host, ctx: hostCtx, inviteCode } = await createOnlineSession(browser)
   const { page: guest } = await joinAsPlayer(browser, inviteCode)
 
@@ -38,8 +38,11 @@ const MARKER_TEXT = `host-dc-check-${Date.now()}`
   const guestText = await guest.locator('body').innerText()
   assert(guestText.includes(MARKER_TEXT), 'human turn text itself was recorded despite host disconnect')
 
-  await browser.close()
   console.log('host_disconnect_resilience.js: all assertions passed')
+  } finally {
+    // try本体のどこで例外が出てもbrowserを確実に閉じる(vote_expel.js等と同じ理由)。
+    await browser.close()
+  }
 })().catch(e => {
   console.error(e)
   process.exitCode = 1
