@@ -94,6 +94,7 @@ jobs:
           npm run e2e:invite-rating
           npm run e2e:full-integration
           npm run e2e:vote-expel
+          npm run e2e:vote-expel-defense-and-handover
 
       # 実時間で~2分・~6分かかる2本は既定で除外し、手動実行時の任意指定のみで走らせる。
       - name: Run slow e2e scenarios (optional)

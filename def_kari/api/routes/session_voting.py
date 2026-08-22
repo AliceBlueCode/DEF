@@ -20,6 +20,7 @@ from def_kari.llm.client import generate_structured_reply
 from def_kari.gm.context_builder import build_session_context as _build_session_context
 from def_kari.gm.events import game_event_bus as _game_event_bus
 from def_kari.safety.audit_log import record_generation_event
+from def_kari.safety.content_filter import contains_blocked_content
 from def_kari.settings import load_settings
 
 from def_kari.api.routes.session_state import router, _sessions, _ws_send_locks
@@ -29,6 +30,7 @@ from def_kari.api.routes.session_auth import (
     _check_circuit_breaker,
     _check_generation_rate,
     _check_daily_generation_limit,
+    _check_ws_rate,
     _record_violation_and_maybe_trip,
     _resolve_client_ip,
     _character_json_fingerprint,
@@ -81,6 +83,8 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+    if session.get("_pending_expel_followup"):
+        return {"error": "An expel decision is still awaiting the keeper's follow-up choice."}
 
     initiative = session["initiative"]
     name_map = session["name_map"]
@@ -110,6 +114,7 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
         "saved_round": session["round"],
         "saved_action_count": session.get("action_count", 0),
         "deliberation_texts": {},
+        "human_votes": {},
     }
 
     counters = session.setdefault("counters", {})
@@ -134,6 +139,14 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
         "text": vote_announce,
         "emotion": "neutral",
     })
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "action": "vote_deliberation",
+        "character_id": "_keeper",
+        "character_name": "キーパー",
+        "text": vote_announce,
+        "proposer_id": req.proposer_id,
+        "sender_role": _auth.get("role"),
+    })
 
     if req.proposer_id and req.proposer_text.strip():
         proposer_name = name_map.get(req.proposer_id, req.proposer_id)
@@ -147,14 +160,24 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
         # _start_background_ttsはturn_engine（session.py側）に依存するため、
         # 循環import回避のため遅延import。
         from def_kari.api.routes.session import _start_background_tts
+        _proposer_audio_id = _start_background_tts(session_id, req.proposer_text, req.proposer_id)
         deliberations.append({
             "character_id": req.proposer_id,
             "character_name": proposer_name,
             "text": req.proposer_text,
             "emotion": "neutral",
-            "audio_request_id": _start_background_tts(session_id, req.proposer_text, req.proposer_id),
+            "audio_request_id": _proposer_audio_id,
         })
         session["_pending_vote"]["deliberation_texts"][req.proposer_id] = req.proposer_text
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "action": "vote_deliberation",
+            "character_id": req.proposer_id,
+            "character_name": proposer_name,
+            "text": req.proposer_text,
+            "audio_request_id": _proposer_audio_id,
+            "proposer_id": req.proposer_id,
+            "sender_role": _auth.get("role"),
+        })
 
     _v_settings = load_settings()
     _v_lang = _v_settings.get("user_language", "ja") or "ja"
@@ -255,18 +278,100 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
             "emotion": emotion,
             "tags": tags,
         })
+        _ai_audio_id = _start_background_tts(session_id, dialogue, char_id) if had_dialogue else ""
         deliberations.append({
             "character_id": char_id,
             "character_name": char_name,
             "text": dialogue,
             "emotion": emotion,
             "tags": tags,
-            "audio_request_id": _start_background_tts(session_id, dialogue, char_id) if had_dialogue else "",
+            "audio_request_id": _ai_audio_id,
         })
         session["_pending_vote"]["deliberation_texts"][char_id] = dialogue
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "action": "vote_deliberation",
+            "character_id": char_id,
+            "character_name": char_name,
+            "text": dialogue,
+            "emotion": emotion,
+            "tags": tags,
+            "audio_request_id": _ai_audio_id,
+            "proposer_id": req.proposer_id,
+            "sender_role": _auth.get("role"),
+        })
 
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "action": "vote_deliberation_done",
+        "character_id": "_keeper",
+        "vote_type": req.vote_type,
+        "target_id": req.target_id,
+        "vote_label": vote_label,
+        "detail_text": detail_text,
+        "proposer_id": req.proposer_id,
+        "sender_role": _auth.get("role"),
+    })
     _autosave(session_id)
     return {"deliberations": deliberations, "counters": dict(counters)}
+
+
+class VoteCastRequest(BaseModel):
+    character_id: str
+    agree: bool
+    text: str = ""
+
+
+@router.post("/{session_id}/vote/cast")
+def vote_cast(session_id: str, req: VoteCastRequest, _auth: dict = Depends(require_player)):
+    """人間キャラ本人が、進行中の弁明ラウンドに対して自分の意見テキスト＋実際の賛否を
+    投じる。commit時にreq.keeper_voteへ一律置き換えられていた人間票の実態を、
+    本人の意思に置き換える（2026-08-22対策）。オーナーシップ検証はhuman_turn_actionの
+    interrupt/generate_image分岐（8.34対策）と同じ_check_actor_char_ownershipを流用。
+    """
+    if not _check_ws_rate(session_id, _auth.get("jti") or str(_auth)):
+        raise HTTPException(429, "Too many requests. Please wait a moment.")
+    if req.text and contains_blocked_content(req.text):
+        raise HTTPException(400, "This message cannot be sent.")
+
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    pending = session.get("_pending_vote")
+    if not pending:
+        return {"error": "No pending vote"}
+
+    # _check_actor_char_ownership/_start_background_ttsはturn_engine（session.py側）に
+    # 依存するため、循環import回避のため遅延import。
+    from def_kari.api.routes.session import _check_actor_char_ownership, _start_background_tts
+    _check_actor_char_ownership(session, _auth, req.character_id)
+    if req.character_id not in session["initiative"]:
+        raise HTTPException(409, "Character is not part of this vote")
+
+    name_map = session["name_map"]
+    char_name = name_map.get(req.character_id, req.character_id)
+    pending.setdefault("human_votes", {})[req.character_id] = {"agree": req.agree, "text": req.text}
+
+    audio_request_id = ""
+    if req.text.strip():
+        session["history"].append({
+            "role": "assistant",
+            "content": f"{char_name}: {req.text}",
+            "character_id": req.character_id,
+            "emotion": "neutral",
+            "tags": [],
+        })
+        pending["deliberation_texts"][req.character_id] = req.text
+        audio_request_id = _start_background_tts(session_id, req.text, req.character_id)
+
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "action": "vote_cast",
+        "character_id": req.character_id,
+        "character_name": char_name,
+        "text": req.text,
+        "agree": req.agree,
+        "audio_request_id": audio_request_id,
+    })
+    _autosave(session_id)
+    return {"status": "ok", "character_id": req.character_id, "agree": req.agree}
 
 
 async def _remove_expelled_participant(session_id: str, session: dict, target_id: str) -> str:
@@ -327,6 +432,27 @@ async def _apply_vote_expel(session_id: str, session: dict, initiative: list, ta
     return keeper_handed_off, expelled_participant_id
 
 
+async def _apply_vote_expel_handover(session_id: str, session: dict, target_id: str) -> tuple[bool, str]:
+    """投票expel可決時、キーパーが「AIに引き継ぐ」を選んだ場合の後始末。initiativeは
+    変更せず、ai_takeover（session_lobby.py）と全く同じ効果（human_char_idsから外す
+    のみ）で対象キャラをAI制御に切り替えたうえで、対象人間プレイヤー自身の接続
+    （players/ws_connections/token）は_apply_vote_expelと同じく完全に除去する
+    （expelされる「人間」はどちらの選択でも退室する——変わるのは、そのキャラが
+    AI操作でセッションに残るか、initiativeから完全に消えるかだけ）。
+    戻り値: (keeper_handed_off, expelled_participant_id)。
+    """
+    from def_kari.api.routes.session_lobby import _hand_char_to_ai_control
+    _hand_char_to_ai_control(session, target_id)
+
+    keeper_handed_off = target_id == session.get("keeper_char_id")
+    if keeper_handed_off:
+        session["keeper_char_id"] = ""
+        session["keeper_char_name"] = ""
+
+    expelled_participant_id = await _remove_expelled_participant(session_id, session, target_id)
+    return keeper_handed_off, expelled_participant_id
+
+
 def _resolve_vote_results(
     session: dict, req: VoteCommitRequest, initiative: list, name_map: dict,
     pending: dict, vram_lock, force_approve: bool, lang: str,
@@ -351,9 +477,16 @@ def _resolve_vote_results(
     for char_id in initiative:
         char = get_character(char_id, profiles)
 
-        # 人間プレイヤーは LLM 判定せず keeper_vote（ボタンクリック）を直接使う
+        # 人間プレイヤーは自分でvote/castを叩いていればその値を使う。未投票なら
+        # 従来通りkeeper_vote（ボタンクリック）へフォールバックする（2026-08-22、
+        # 「対象者本人にも意思表示させたい」というユーザー要望への対応。100%の
+        # 応答を強制せず、キーパーがcommitを進められる状態は維持する）。
         if _is_human_char(session, char_id, profiles):
-            results[char_id] = req.keeper_vote
+            human_votes = pending.get("human_votes", {})
+            if char_id in human_votes:
+                results[char_id] = human_votes[char_id]["agree"]
+            else:
+                results[char_id] = req.keeper_vote
             continue
 
         bid = char_backends.get(char_id) or default_backend
@@ -480,15 +613,18 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
     no_count = len(results) - yes_count
     passed = yes_count > no_count
 
-    _expelled_participant_id = ""
-    _keeper_handed_off = False
+    _expel_pending_followup = None
     if passed:
         if vote_type == "topic_change" and detail:
             session["topic"] = detail
         elif vote_type == "expel" and target_id:
-            _keeper_handed_off, _expelled_participant_id = await _apply_vote_expel(
-                session_id, session, initiative, target_id
-            )
+            # expelの実際の後始末（initiative除去 or AI引き継ぎ・接続切断）はここでは
+            # 行わず、キーパーの追加選択（vote/expel_resolve）まで遅延させる
+            # （2026-08-22、「このまま人数減で続行」/「AIに引き継ぐ」の2択を追加した
+            # ための再設計。副次効果として、対象者は自分の画面で投票結果を見届けて
+            # から切断されるようになる）。
+            session["_pending_expel_followup"] = {"target_id": target_id}
+            _expel_pending_followup = {"target_id": target_id, "target_name": name_map.get(target_id, target_id)}
 
     # イベントバス通知（vote結果をゲームロジックレイヤーへ伝播）
     if passed:
@@ -502,17 +638,6 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
     session["turn"] = pending["saved_turn"]
     session["round"] = pending["saved_round"]
     session["action_count"] = pending["saved_action_count"]
-
-    # expel 可決時: 退場者が saved_turn より前にいた場合は turn を -1 してからクランプ
-    if passed and vote_type == "expel" and target_id:
-        new_init = session["initiative"]
-        expelled_idx = initiative.index(target_id) if target_id in initiative else -1
-        if expelled_idx >= 0 and expelled_idx < session["turn"]:
-            session["turn"] -= 1
-        if len(new_init) > 0 and session["turn"] >= len(new_init):
-            session["turn"] = len(new_init) - 1
-        elif len(new_init) == 0:
-            session["turn"] = 0
 
     vote_for_label = _sp("vote_for", _v_lang) or "賛成"
     vote_against_label = _sp("vote_against", _v_lang) or "反対"
@@ -532,8 +657,8 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
         yes_count=yes_count, no_count=no_count,
         vote_detail_str=vote_detail_str, outcome=outcome,
     )
-    if _keeper_handed_off:
-        result_text += "\n" + _sp("keeper_handoff_notice", _v_lang)
+    if _expel_pending_followup:
+        result_text += "\n" + _sp("vote_expel_awaiting_choice", _v_lang)
     session["history"].append({
         "role": "user",
         "content": result_text,
@@ -548,16 +673,9 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
         "character_name": "🗳 Vote",
         "text": result_text,
         "action": "vote_result",
+        "sender_role": _auth.get("role"),
         "counters": dict(session.get("counters", {})),
     })
-
-    if _expelled_participant_id:
-        # 参加者パネル（PLAYER_LEFTで participant_id を照合して除去するUI）にも
-        # 反映されるよう、leave_session と同じイベントを発行する。
-        _game_event_bus.emit(session_id, "PLAYER_LEFT", {
-            "participant_id": _expelled_participant_id,
-            "character_id": target_id,
-        })
 
     ended = passed and vote_type == "end_session"
     if ended and not session.get("_ending"):
@@ -579,4 +697,92 @@ async def vote_commit(session_id: str, req: VoteCommitRequest, request: Request,
         "ended": ended,
         "initiative": session["initiative"],
         "topic": session.get("topic", ""),
+        "expel_pending_followup": _expel_pending_followup,
+    }
+
+
+class VoteExpelResolveRequest(BaseModel):
+    choice: str  # "continue" | "ai_handover"
+
+
+@router.post("/{session_id}/vote/expel_resolve")
+async def vote_expel_resolve(session_id: str, req: VoteExpelResolveRequest, _auth: dict = Depends(require_keeper)):
+    """expel可決後、キーパーが「このまま人数減で続行」/「AIに引き継ぐ」のどちらを
+    選んだかを反映する。vote_commit時点では対象の切断・initiative変更を一切
+    行わず、この関数の実行まで遅延させている（自治規約62行目の「退場後、人数減で
+    続けるか選択する」への対応＋対象者が自分の画面で結果を見届けられるようにする、
+    の両方が目的、2026-08-22）。
+    """
+    if req.choice not in ("continue", "ai_handover"):
+        raise HTTPException(400, "choice must be 'continue' or 'ai_handover'")
+
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    pending = session.get("_pending_expel_followup")
+    if not pending:
+        return {"error": "No pending expel decision"}
+    target_id = pending["target_id"]
+    name_map = session["name_map"]
+    target_name = name_map.get(target_id, target_id)
+
+    _v_lang = load_settings().get("user_language", "ja") or "ja"
+
+    if req.choice == "ai_handover":
+        outcome_note = (_sp("vote_expel_handover_notice", _v_lang) or "🎩 {name} の役をAIに引き継ぎます").format(name=target_name)
+    else:
+        outcome_note = (_sp("vote_expel_continue_notice", _v_lang) or "🎩 {name} を退場させ、人数を減らして続行します").format(name=target_name)
+    session["history"].append({"role": "user", "content": outcome_note, "character_id": "_keeper"})
+
+    # 対象がまだ接続中なら、このブロードキャストを受け取れるうちに結果を見せる。実際の
+    # 切断はこの後(300ms猶予を挟んで)行う——end_session_by_hostの「ブロードキャスト
+    # タスクがWS送信を完了してから接続を閉じる」と同じ既存パターン（session_lobby.py参照）。
+    _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+        "action": "vote_expel_resolved",
+        "character_id": "_keeper",
+        "character_name": "🗳 Vote",
+        "text": outcome_note,
+        "choice": req.choice,
+        "sender_role": _auth.get("role"),
+    })
+    await asyncio.sleep(0.3)
+
+    initiative = session["initiative"]
+    if req.choice == "ai_handover":
+        keeper_handed_off, expelled_participant_id = await _apply_vote_expel_handover(session_id, session, target_id)
+    else:
+        expelled_idx = initiative.index(target_id) if target_id in initiative else -1
+        keeper_handed_off, expelled_participant_id = await _apply_vote_expel(session_id, session, initiative, target_id)
+        new_init = session["initiative"]
+        if expelled_idx >= 0 and expelled_idx < session["turn"]:
+            session["turn"] -= 1
+        if len(new_init) > 0 and session["turn"] >= len(new_init):
+            session["turn"] = len(new_init) - 1
+        elif len(new_init) == 0:
+            session["turn"] = 0
+
+    if keeper_handed_off:
+        handoff_note = _sp("keeper_handoff_notice", _v_lang)
+        session["history"].append({"role": "user", "content": handoff_note, "character_id": "_keeper"})
+        _game_event_bus.emit(session_id, "HUMAN_ACTION", {
+            "action": "vote_result", "character_id": "_keeper", "character_name": "🗳 Vote",
+            "text": handoff_note, "sender_role": _auth.get("role"),
+        })
+
+    if expelled_participant_id:
+        _game_event_bus.emit(session_id, "PLAYER_LEFT", {
+            "participant_id": expelled_participant_id,
+            "character_id": target_id,
+        })
+
+    session.pop("_pending_expel_followup", None)
+    _autosave(session_id)
+    return {
+        "status": "ok",
+        "choice": req.choice,
+        "target_id": target_id,
+        "keeper_handed_off": keeper_handed_off,
+        "initiative": session["initiative"],
+        "human_char_ids": session.get("human_char_ids", []),
+        "result_text": outcome_note,
     }

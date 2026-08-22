@@ -653,6 +653,16 @@ class AiTakeoverRequest(BaseModel):
     character_id: str
 
 
+def _hand_char_to_ai_control(sess: dict, character_id: str) -> None:
+    """human_char_idsから外すだけの、AI引き継ぎの中核処理。ai_takeoverエンドポイント
+    本体と、投票expelの「AIに引き継ぐ」follow-up（session_voting.py
+    _apply_vote_expel_handover）の両方から呼ばれる共有実装（重複を避けるための
+    切り出し、2026-08-22）。"""
+    human_ids: list = sess.setdefault("human_char_ids", [])
+    if character_id in human_ids:
+        human_ids.remove(character_id)
+
+
 @router.post("/{session_id}/ai_takeover")
 def ai_takeover(session_id: str, req: AiTakeoverRequest, auth: dict = Depends(require_host)):
     """退室したプレイヤーのキャラ枠を AI に引き継ぐ（ホストのみ）。"""
@@ -661,11 +671,10 @@ def ai_takeover(session_id: str, req: AiTakeoverRequest, auth: dict = Depends(re
         raise HTTPException(404, "Session not found")
     if req.character_id not in sess.get("initiative", []):
         raise HTTPException(404, "Character not in session")
-    human_ids: list = sess.setdefault("human_char_ids", [])
-    if req.character_id not in human_ids:
+    if req.character_id not in sess.get("human_char_ids", []):
         raise HTTPException(409, "Character is already AI-controlled")
-    human_ids.remove(req.character_id)
-    return {"status": "ok", "character_id": req.character_id, "human_char_ids": human_ids}
+    _hand_char_to_ai_control(sess, req.character_id)
+    return {"status": "ok", "character_id": req.character_id, "human_char_ids": sess.get("human_char_ids", [])}
 
 
 @router.post("/{session_id}/end")

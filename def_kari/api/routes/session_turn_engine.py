@@ -1122,6 +1122,24 @@ class HumanTurnRequest(BaseModel):
         return v
 
 
+def _check_actor_char_ownership(session: dict, auth: dict, actor_id: str) -> None:
+    """`actor_id`を名乗る操作を行っているトークンが本当にその本人かを検証する
+    （8.34対策のオーナーシップ判定を、human_turn_actionのinterrupt/generate_image
+    分岐から、vote/castなど「ターン外で特定の人間キャラとして振る舞う」他の
+    エンドポイントからも再利用できるよう切り出したもの。判定内容は完全に同一）。
+    """
+    role = auth.get("role")
+    online = session.get("online_mode")
+    if actor_id not in session.get("human_char_ids", []):
+        raise HTTPException(409, "Not a human player's character")
+    if role == "player" and auth.get("char_id") != actor_id:
+        raise HTTPException(409, "You can only act as your own character")
+    if online and role == "host" and actor_id != session.get("host_char_id", ""):
+        raise HTTPException(409, "You can only act as your own character")
+    if online and role == "gm":
+        raise HTTPException(409, "You can only act as your own character")
+
+
 def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: dict, current_char_id: str) -> None:
     """human_turn_actionのアクション別認可チェック。違反時はHTTPExceptionを送出し、
     問題なければ何も返さない（`session.py`分割・第二段階、2026-08-15切り出し）。
@@ -1192,14 +1210,7 @@ def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: 
     # なりすまし発言・他人の発言力を勝手に消費できてしまっていた。
     if req.action in ("interrupt", "generate_image"):
         actor_id = req.character_id if req.character_id else current_char_id
-        if actor_id not in session.get("human_char_ids", []):
-            raise HTTPException(409, "Not a human player's character")
-        if role == "player" and auth.get("char_id") != actor_id:
-            raise HTTPException(409, "You can only act as your own character")
-        if online and role == "host" and actor_id != session.get("host_char_id", ""):
-            raise HTTPException(409, "You can only act as your own character")
-        if online and role == "gm":
-            raise HTTPException(409, "You can only act as your own character")
+        _check_actor_char_ownership(session, auth, actor_id)
 
 
 @router.post("/{session_id}/human_turn")

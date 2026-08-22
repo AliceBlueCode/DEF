@@ -190,6 +190,15 @@ const ja: Record<string, string> = {
   'session.vote.disagree': '❌ 反対',
   'session.vote.castHuman': '{name} の一票を投じてください。',
   'session.vote.castKeeper': 'キーパーの一票を投じてください。',
+  'session.vote.castNoText': '{name} が意見なしで投票しました。',
+  'session.vote.castTextPlaceholder': '意見を入力（任意）...',
+  'session.msg.removedFromSession': 'このセッションから切断されました（追放されたか、セッションが終了/期限切れの可能性があります）。',
+
+  // Session — expel follow-up (キーパーの追加選択)
+  'session.expelFollowup.header': '{name} の退場が可決されました',
+  'session.expelFollowup.desc': 'このキャラクターをどう扱いますか？',
+  'session.expelFollowup.continueBtn': 'このまま人数減で続行',
+  'session.expelFollowup.aiHandoverBtn': 'AIに引き継ぐ',
 
   // Session — controls (human player)
   'session.ctrl.autoAdvance.startTitle': '自動進行を開始',
@@ -856,6 +865,15 @@ const en: Record<string, string> = {
   'session.vote.disagree': '❌ Disagree',
   'session.vote.castHuman': 'Please cast {name}\'s vote.',
   'session.vote.castKeeper': "Please cast the keeper's vote.",
+  'session.vote.castNoText': '{name} voted without a statement.',
+  'session.vote.castTextPlaceholder': 'Enter your opinion (optional)...',
+  'session.msg.removedFromSession': 'You have been disconnected from this session (you may have been removed, or the session ended/expired).',
+
+  // Session — expel follow-up (keeper's follow-up choice)
+  'session.expelFollowup.header': "{name}'s expulsion has passed",
+  'session.expelFollowup.desc': 'How should this character be handled?',
+  'session.expelFollowup.continueBtn': 'Continue with reduced headcount',
+  'session.expelFollowup.aiHandoverBtn': 'Hand over to AI',
 
   // Session — controls (human player)
   'session.ctrl.autoAdvance.startTitle': 'Start auto-advance',

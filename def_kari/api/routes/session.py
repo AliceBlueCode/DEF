@@ -184,10 +184,14 @@ from def_kari.api.routes.session_gameplay import (
 )
 
 from def_kari.api.routes.session_voting import (
+    VoteCastRequest,
     VoteCommitRequest,
+    VoteExpelResolveRequest,
     VoteRequest,
+    vote_cast,
     vote_commit,
     vote_deliberate,
+    vote_expel_resolve,
 )
 
 from def_kari.api.routes.session_turn_engine import (
@@ -205,6 +209,7 @@ from def_kari.api.routes.session_turn_engine import (
     _VRAM_LOCK_TIMEOUT_SECONDS,
     _ai_action_select,
     _apply_skip,
+    _check_actor_char_ownership,
     _build_for_player,
     _build_session_context,
     _build_turn_instruction,

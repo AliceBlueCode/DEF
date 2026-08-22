@@ -166,6 +166,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     voteTarget, setVoteTarget,
     voteProposerText, setVoteProposerText,
     voteLoading, setVoteLoading,
+    castVoteText, setCastVoteText,
+    expelFollowupTarget, setExpelFollowupTarget,
   } = useVoteAndDesignate()
   const {
     charSheetData, setCharSheetData,
@@ -277,6 +279,16 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // 4004(セッション消滅)で閉じた場合は、無限に再接続を試み続けず諦めて通常の
   // 作成/参加画面に戻す(トークン失効・ホストのセッション終了後にリロードした場合等)。
   const isRestoringRef = useRef(false)
+  // このタブ自身がvote/deliberateを叩いた直後かどうか。trueの間はvote_deliberation/
+  // vote_deliberation_doneのブロードキャストをスキップする（ローカルで既に挿入済みの
+  // ため）。proposer_id/sender_roleでの自タブ判定は、AIキャラが発議者のケース
+  // （processAITurnDataのvote_proposal分岐、AI発議を代行送信したタブとAI自身のIDが
+  // 一致しない）で機能しないため、代わりに「直前に自分がこの呼び出しをしたか」を
+  // 直接フラグで持つ（2026-08-22）。
+  const skipMyDeliberationRef = useRef(false)
+  // 確立済みセッションが途中で強制切断された（追放・トークン失効等）ことをセッション
+  // 作成/参加画面で伝えるための通知（ws.onclose参照）。
+  const [removedNotice, setRemovedNotice] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -377,10 +389,16 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       ws.onclose = (event) => {
         wsRef.current = null
         if (!sessionIdRef.current) return
-        // sessionStorageからの復帰試行における最初の接続が認証切れ(4001)/
-        // セッション消滅(4004)で閉じた場合は、無限リトライせず諦めて通常の
-        // 作成/参加画面に戻す。
-        if (isRestoringRef.current && retries === 0 && (event.code === 4001 || event.code === 4004)) {
+        // 4001(認証切れ/失効トークン)・4004(セッション消滅)は、TCP/WSハンドシェイクが
+        // 完了しサーバーのauth処理コードに到達した場合にしか送出されない。ネットワーク
+        // 瞬断ではハンドシェイクごと失敗する(1006等)ため、この2つのコードが単なる瞬断で
+        // 出ることはない——JWTはネットワークが失効させるものではない。よって復帰試行中か
+        // 否か・何回目の試行かに関わらず、無条件に「再接続を諦める」トリガーとして扱ってよい
+        // (2026-08-22、投票expelで追放された後もこのタブが失効済みトークンで無限に
+        // 再接続を試み続け、追放された本人には何の通知も無いまま画面が固まって見える
+        // バグの修正)。
+        if (event.code === 4001 || event.code === 4004) {
+          const wasRestoring = isRestoringRef.current
           isRestoringRef.current = false
           clearSessionRestoreState()
           sessionIdRef.current = ''
@@ -389,6 +407,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           myCharIdRef.current = ''
           setHumanCharId('')
           setHumanCharName('')
+          // 復帰試行(ページ再読込直後、まだ何も表示していない)ではなく、既に確立していた
+          // セッションが途中で強制切断された場合のみ、ユーザーに気づける形で明示する。
+          if (!wasRestoring) {
+            setRemovedNotice(t('session.msg.removedFromSession'))
+          }
           return
         }
         const delay = Math.min(1000 * Math.pow(2, retries), 16000)
@@ -528,10 +551,15 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       const p = event.payload
       if (p.counters) setCounters(capCounters(p.counters))
       // 自分が送信したメッセージはローカルで既に追加済みなのでスキップ
-      // keeper メッセージ: sender_role が自分のロールと一致する場合のみスキップ
-      const isMine = (p.action === 'keeper' || p.action === 'keeper_skip')
+      // keeper メッセージ・投票結果系: sender_role が自分のロールと一致する場合のみスキップ
+      // （vote_result/vote_expel_resolvedは常に人間キーパー本人の能動的操作から発生するため、
+      // そのタブのroleと一致すれば自分の操作と判定してよい）
+      const isMine = (p.action === 'keeper' || p.action === 'keeper_skip' || p.action === 'vote_result' || p.action === 'vote_expel_resolved')
         ? (p.sender_role === myRoleRef.current)
-        : p.character_id === myCharIdRef.current
+        : (p.action === 'vote_deliberation' || p.action === 'vote_deliberation_done')
+          ? skipMyDeliberationRef.current
+          : p.character_id === myCharIdRef.current
+      if (p.action === 'vote_deliberation_done') skipMyDeliberationRef.current = false
       // カウンター更新のみで表示不要なアクション
       const _counterOnlyActions = new Set(['generate_image', 'counter_adjust'])
       if (p.character_id && !isMine && !_counterOnlyActions.has(p.action)) {
@@ -556,13 +584,58 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             text: t('session.msg.designate', { name: p.designated_name ?? p.designated_id ?? '' }),
             emotion: '', tags: [],
           }])
-        } else if (p.action === 'vote_result') {
-          setMessages(prev => [...prev, {
+        } else if (p.action === 'vote_result' || p.action === 'vote_expel_resolved') {
+          // vote_result着信時点でこの投票は終わっているため、他タブに残っている
+          // 「意見を投じる」プロンプト行（isKeeperVote）も一緒に片付ける
+          // （commitVote/castMyVoteの自タブローカル処理と同じ掃除をブロードキャスト側でも行う）。
+          setMessages(prev => [...prev.filter(m => !m.isKeeperVote), {
             character_id: '_keeper',
             character_name: '🗳 Vote',
             text: p.text ?? '',
             emotion: '', tags: [],
           }])
+        } else if (p.action === 'vote_deliberation') {
+          setMessages(prev => {
+            const idx = prev.length
+            if (p.audio_request_id) audioRequestIndexRef.current[p.audio_request_id] = idx
+            return [...prev, {
+              character_id: p.character_id,
+              character_name: p.character_name ?? p.character_id,
+              text: p.text ?? '',
+              emotion: p.emotion || '',
+              tags: p.tags || [],
+              imageColor: charMap[p.character_id]?.image_color,
+            }]
+          })
+        } else if (p.action === 'vote_deliberation_done') {
+          // handleSessionEventはWS接続確立時のクロージャに固定されるため、humanCharId/
+          // initiative/myRole等の生stateは古い値のまま参照されうる（2026-08-22、実機で
+          // 弁明ラウンドの投票UIがゲスト側に出ない不具合として発覚）。既存のisMine判定
+          // と同じく、常に最新値を持つref（myCharIdRef/initiativeRef/myRoleRef）を使う。
+          const myRoleNow = myRoleRef.current
+          const myCharIdNow = myCharIdRef.current
+          const canCastMyVote = myRoleNow !== 'host' && myRoleNow !== 'gm' && !!myCharIdNow && initiativeRef.current.includes(myCharIdNow)
+          setMessages(prev => [...prev, {
+            character_id: '_keeper',
+            character_name: t('trpg.keeper.label'),
+            text: canCastMyVote
+              ? t('session.vote.castHuman', { name: charMap[myCharIdNow]?.name ?? myCharIdNow })
+              : t('session.vote.castKeeper'),
+            emotion: '', tags: [],
+            isKeeperVote: true,
+          }])
+        } else if (p.action === 'vote_cast') {
+          setMessages(prev => {
+            const idx = prev.length
+            if (p.audio_request_id) audioRequestIndexRef.current[p.audio_request_id] = idx
+            return [...prev, {
+              character_id: p.character_id,
+              character_name: p.character_name ?? p.character_id,
+              text: p.text || t('session.vote.castNoText', { name: p.character_name ?? p.character_id }),
+              emotion: '', tags: [],
+              imageColor: charMap[p.character_id]?.image_color,
+            }]
+          })
         } else {
           setMessages(prev => [...prev, {
             character_id: p.character_id,
@@ -706,7 +779,24 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     if (event.type === 'PLAYER_LEFT') {
       // participant_id で判定（char_id="" の observer/keeper が複数いても巻き添えにしない）
       const pid = event.payload.participant_id ?? event.payload.character_id
-      setParticipants(prev => prev.filter(x => x.participant_id !== pid))
+      const leavingCharId = event.payload.character_id
+      // イニシアチブ表示のnameMapは participants[].display_name にも依存しているため
+      // （キャラ選択で持ち込んだキャラはcharacters propにもsession_name_mapにも
+      // 載らない）、投票expelの「AIに引き継ぐ」選択のようにキャラ自体はinitiativeに
+      // 残り続けるケースで名前だけ消えてしまう(2026-08-22発覚)。除去前にsessionNameMap
+      // へ退避しておけば、以後もそのキャラの名前表示は維持される（初期化タイミング等の
+      // 都合でこの時点のinitiativeがまだ更新済みか判定できないため、無条件で退避する
+      // ——名前の対応表に残るだけで、initiativeから実際に消えたキャラのエントリは
+      // 単に参照されなくなるだけなので副作用は無い）。
+      setParticipants(prev => {
+        if (leavingCharId) {
+          const leaving = prev.find(x => x.participant_id === pid)
+          if (leaving?.display_name) {
+            setSessionNameMap(m => ({ ...m, [leavingCharId]: leaving.display_name }))
+          }
+        }
+        return prev.filter(x => x.participant_id !== pid)
+      })
     }
     if (event.type === 'PLAYER_DISCONNECTED') {
       const pid = event.payload.participant_id ?? event.payload.character_id
@@ -767,6 +857,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       if (data.counters) setCounters(capCounters(data.counters))
       setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: t('session.msg.voteProposalSystem', { name: data.character_name }), emotion: '', tags: [] }])
       try {
+        skipMyDeliberationRef.current = true
         const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vote_type: data.vote_type || 'topic_change', detail: data.vote_detail || '', target_id: '', proposer_id: data.character_id, proposer_text: data.proposer_text || '' }),
@@ -996,6 +1087,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // ローカルで開始: キャラ選択必須、ロビーなし
   const startLocalSession = async () => {
     if (selectedChars.length < 1) return
+    setRemovedNotice(null)
     setSessionStarting(true)
     try {
       const res = await fetch('/api/session/start', {
@@ -1017,6 +1109,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
 
   // オンラインセッション作成: キャラ不要、ロビーで参加者を待つ
   const startOnlineSession = async () => {
+    setRemovedNotice(null)
     setSessionStarting(true)
     try {
       const res = await fetch('/api/session/start', {
@@ -1181,6 +1274,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         emotion: '', tags: [],
       }])
       try {
+        skipMyDeliberationRef.current = true
         const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1819,6 +1913,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     if (!sessionId) return
     setVoteLoading(true)
     setShowVoteDialog(false)
+    skipMyDeliberationRef.current = true
     try {
       const res = await authFetch(`/api/session/${sessionId}/vote/deliberate`, {
         method: 'POST',
@@ -1847,10 +1942,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           })
         }
       }
+      const canCastMyVote = !isKeeperUi && !!humanCharId && initiativeRef.current.includes(humanCharId)
       setMessages(prev => [...prev, {
         character_id: '_keeper',
         character_name: t('trpg.keeper.label'),
-        text: humanCharId
+        text: canCastMyVote
           ? t('session.vote.castHuman', { name: humanCharName })
           : t('session.vote.castKeeper'),
         emotion: '',
@@ -1884,9 +1980,58 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       ])
       if (data.initiative) { initiativeRef.current = data.initiative; setInitiative(data.initiative) }
       if (data.ended) endSession()
+      if (data.expel_pending_followup) setExpelFollowupTarget(data.expel_pending_followup)
       setVoteDetail('')
       setVoteTarget('')
       setVoteProposerText('')
+    } finally {
+      setVoteLoading(false)
+    }
+  }
+
+  const castMyVote = async (agree: boolean) => {
+    if (!sessionId || !humanCharId) return
+    setVoteLoading(true)
+    try {
+      const res = await authFetch(`/api/session/${sessionId}/vote/cast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: humanCharId, agree, text: castVoteText }),
+      })
+      const data = await parseJsonResponse(res)
+      if (data.error) return
+      setMessages(prev => [
+        ...prev.filter(m => !m.isKeeperVote),
+        {
+          character_id: humanCharId,
+          character_name: humanCharName,
+          text: castVoteText || t('session.vote.castNoText', { name: humanCharName }),
+          emotion: '', tags: [],
+          imageColor: charMap[humanCharId]?.image_color,
+        },
+      ])
+      setCastVoteText('')
+    } finally {
+      setVoteLoading(false)
+    }
+  }
+
+  const resolveExpelFollowup = async (choice: 'continue' | 'ai_handover') => {
+    if (!sessionId) return
+    setVoteLoading(true)
+    try {
+      const res = await authFetch(`/api/session/${sessionId}/vote/expel_resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice }),
+      })
+      const data = await parseJsonResponse(res)
+      if (data.error) return
+      setExpelFollowupTarget(null)
+      if (data.initiative) { initiativeRef.current = data.initiative; setInitiative(data.initiative) }
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: '🗳 Vote', text: data.result_text, emotion: '', tags: [],
+      }])
     } finally {
       setVoteLoading(false)
     }
@@ -2583,6 +2728,12 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             </div>
           )}
 
+          {removedNotice && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(224,80,80,0.12)', color: '#e05', fontSize: '0.9em', marginTop: 4 }}>
+              ⚠ {removedNotice}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
             <button
               className="start-btn"
@@ -2609,6 +2760,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           {showJoinDialog && (
             <JoinDialog
               onJoined={(sid, token, charId, role: 'player' | 'observer' | 'gm', isLobbyActive: boolean, displayName: string) => {
+                setRemovedNotice(null)
                 hostTokenRef.current = token
                 sessionIdRef.current = sid
                 setSessionId(sid)
@@ -2955,16 +3107,34 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           {messages.map((m, i) => {
             if (m.character_id === '_keeper') {
               if (m.isKeeperVote) {
+                const canCastMyVote = !isKeeperUi && !!humanCharId && initiative.includes(humanCharId)
                 return (
                   <div key={i} className="session-msg keeper-msg">
                     <div className="session-msg-body keeper-body">
                       <div className="session-msg-header">
                         <span className="session-msg-name keeper-name">🎩 Keeper</span>
                       </div>
-                      <div className="session-msg-text keeper-text" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div className="session-msg-text keeper-text" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <span>{m.text}</span>
-                        <button className="novel-hdr-btn apply-btn" onClick={() => commitVote(true)} disabled={voteLoading} style={{ padding: '4px 12px', height: 'auto' }}>{t('session.vote.agree')}</button>
-                        <button className="novel-hdr-btn" onClick={() => commitVote(false)} disabled={voteLoading} style={{ padding: '4px 12px', height: 'auto', background: '#c0392b' }}>{t('session.vote.disagree')}</button>
+                        {isKeeperUi && (
+                          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                            <button className="novel-hdr-btn apply-btn" onClick={() => commitVote(true)} disabled={voteLoading} style={{ padding: '4px 12px', height: 'auto' }}>{t('session.vote.agree')}</button>
+                            <button className="novel-hdr-btn" onClick={() => commitVote(false)} disabled={voteLoading} style={{ padding: '4px 12px', height: 'auto', background: '#c0392b' }}>{t('session.vote.disagree')}</button>
+                          </div>
+                        )}
+                        {canCastMyVote && (
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <input
+                              className="plot-dialog-textarea"
+                              style={{ flex: 1, minWidth: 160 }}
+                              value={castVoteText}
+                              onChange={e => setCastVoteText(e.target.value)}
+                              placeholder={t('session.vote.castTextPlaceholder')}
+                            />
+                            <button className="novel-hdr-btn apply-btn" onClick={() => castMyVote(true)} disabled={voteLoading} style={{ padding: '4px 12px', height: 'auto' }}>{t('session.vote.agree')}</button>
+                            <button className="novel-hdr-btn" onClick={() => castMyVote(false)} disabled={voteLoading} style={{ padding: '4px 12px', height: 'auto', background: '#c0392b' }}>{t('session.vote.disagree')}</button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3322,6 +3492,26 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             <div className="plot-dialog-footer">
               <button className="novel-hdr-btn apply-btn" onClick={startDeliberation} disabled={voteLoading || (voteType === 'expel' && !voteTarget)}>
                 {voteLoading ? t('session.voteDialog.startBtn.loading') : t('session.voteDialog.startBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {expelFollowupTarget && (
+        <div className="plot-dialog-overlay">
+          <div className="plot-dialog" style={{ maxWidth: 380 }}>
+            <div className="plot-dialog-header">
+              <span>{t('session.expelFollowup.header', { name: expelFollowupTarget.target_name })}</span>
+            </div>
+            <div className="plot-dialog-body" style={{ padding: '16px' }}>
+              <p style={{ fontSize: '0.9em', opacity: 0.85 }}>{t('session.expelFollowup.desc')}</p>
+            </div>
+            <div className="plot-dialog-footer" style={{ display: 'flex', gap: 8 }}>
+              <button className="novel-hdr-btn" onClick={() => resolveExpelFollowup('continue')} disabled={voteLoading}>
+                {t('session.expelFollowup.continueBtn')}
+              </button>
+              <button className="novel-hdr-btn apply-btn" onClick={() => resolveExpelFollowup('ai_handover')} disabled={voteLoading}>
+                {t('session.expelFollowup.aiHandoverBtn')}
               </button>
             </div>
           </div>

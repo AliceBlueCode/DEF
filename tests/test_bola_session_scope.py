@@ -304,6 +304,13 @@ def test_expelled_character_json_cannot_rejoin_with_same_identity(monkeypatch):
     }
     commit = client.post(f"/api/session/{sid}/vote/commit", json={"keeper_vote": True}, headers=_auth(host_token))
     assert commit.status_code == 200
+    # expelの実際の後始末（initiative除去・接続切断・フィンガープリント記録）はvote_commit
+    # 直後ではなく、キーパーがvote/expel_resolveで続行/AI引き継ぎを選ぶまで遅延する
+    # （2026-08-22、対象者が結果を見届けてから切断されるようにする再設計）。
+    resolve = client.post(
+        f"/api/session/{sid}/vote/expel_resolve", json={"choice": "continue"}, headers=_auth(host_token),
+    )
+    assert resolve.status_code == 200
     assert char_id not in _sessions[sid]["initiative"]
 
     # 同じcharacter_jsonでの再参加は拒否される

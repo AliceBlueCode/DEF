@@ -21,7 +21,8 @@
     "e2e:invite-rating": "node e2e/invite_rating.js",
     "e2e:full-integration": "node e2e/full_integration.js",
     "e2e:trpg-keeper-online-join": "node e2e/trpg_keeper_online_join.js",
-    "e2e:ai-takeover": "node e2e/ai_takeover.js"
+    "e2e:ai-takeover": "node e2e/ai_takeover.js",
+    "e2e:vote-expel-defense-and-handover": "node e2e/vote_expel_defense_and_handover.js"
   },
   "dependencies": {
     "react": "^19.2.8",

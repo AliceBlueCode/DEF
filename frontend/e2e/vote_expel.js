@@ -37,19 +37,36 @@ import { assert, setToggle, createOnlineSession, joinAsPlayer, startSession } fr
     await host.waitForTimeout(15000) // 弁明ラウンド(LLM呼び出しを含む)
 
     await host.getByRole('button', { name: /賛成/ }).click()
-    await host.waitForTimeout(2500)
+    await host.waitForTimeout(1500)
+
+    const hostTextAfterCommit = await host.locator('body').innerText()
+    assert(hostTextAfterCommit.includes('可決'), 'expel vote passed on host screen')
+    // vote_commit時点ではまだ実際の切断・initiative変更は行われない(2026-08-22、
+    // キーパーの追加選択(続行/AI引き継ぎ)まで遅延させる再設計)。
+    assert(hostTextAfterCommit.includes('🎭テストゲスト['), 'guest still present in initiative right after vote passes (removal is deferred to expel_resolve)')
+
+    // キーパーの追加選択: 「このまま人数減で続行」を選ぶ(=従来通りの即時除去と同じ最終状態になる)
+    await host.getByRole('button', { name: /このまま人数減で続行/ }).click()
+    await host.waitForTimeout(600)
 
     const hostText = await host.locator('body').innerText()
-    assert(hostText.includes('可決'), 'expel vote passed on host screen')
-    assert(!hostText.includes('🎭テストゲスト['), 'expelled guest removed from host initiative display')
+    assert(!hostText.includes('🎭テストゲスト['), 'expelled guest removed from host initiative display after continue choice')
 
-    // 追放後、旧トークンでの操作を試みる → バックエンドは401で拒否するはず
+    // 追放直後、旧トークンでの操作を試みる → バックエンドは401で拒否するはず。
+    // guest側のws.oncloseが自己リセットするまでには猶予がある(サーバー側の
+    // 300ms sleep + WS再接続の初回backoff 1000ms程度)ため、その前に素早く行う。
     await guest.getByRole('button', { name: /スキップ/ }).click().catch(() => {})
-    await guest.waitForTimeout(1500)
+    await guest.waitForTimeout(800)
     assert(guestHttp401Seen, 'expelled guest action rejected with 401')
 
     const guestText = await guest.locator('body').innerText()
     assert(!guestText.includes('はスキップしました'), 'no false-success message shown to expelled guest (SessionTab.tsx parseJsonResponse regression check)')
+
+    // ws.oncloseの修正(2026-08-22)により、旧トークンでの再接続が4001で失敗した時点で
+    // guest側は諦めてセッション作成/参加画面へ戻り、切断された旨の通知を表示するはず。
+    await guest.waitForTimeout(2500)
+    const guestTextAfterReset = await guest.locator('body').innerText()
+    assert(guestTextAfterReset.includes('切断されました'), 'expelled guest sees removedNotice and returns to the start screen (ws.onclose fix)')
 
     console.log('vote_expel.js: all assertions passed')
   } finally {

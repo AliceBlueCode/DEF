@@ -31,6 +31,18 @@
     "ja": "🎩 キーパーが退場したため、AIキーパー（無名）に交代しました",
     "en": "🎩 The Keeper has left; handing over to the anonymous AI Keeper"
   },
+  "vote_expel_awaiting_choice": {
+    "ja": "🎩 キーパーが対応（続行 / AI引き継ぎ）を選択中…",
+    "en": "🎩 The Keeper is deciding how to proceed (continue / hand to AI)…"
+  },
+  "vote_expel_continue_notice": {
+    "ja": "🎩 {name} を退場させ、人数を減らして続行します",
+    "en": "🎩 {name} has been removed; continuing with a reduced headcount"
+  },
+  "vote_expel_handover_notice": {
+    "ja": "🎩 {name} の役をAIに引き継ぎます",
+    "en": "🎩 {name}'s role is being handed over to AI control"
+  },
   "gm_persona_intro": {
     "ja": "あなたは「{name}」という人物です。\n{persona_desc}\n\nあなた（{name}）が今、TRPGのゲームマスターとして参加者に場面を語りかけます。GMとしての役割（判定・シーン進行）は後述の形式で行いますが、ナレーション本文はあなた自身の口調・感情・個性でそのまま語ってください。必ず3〜5文で終わらせてください。それ以上書いてはいけません。「---」などの区切り線は使用禁止。同じ文章を繰り返してはいけません。必ず日本語のみで回答すること。英語は一切使用しない。",
     "en": "You are \"{name}\" — a specific character with the profile below.\n{persona_desc}\n\nYou ({name}) are narrating a TRPG session as the Game Master. GM mechanics (judgment signals, scene-advance) follow the rules below, but the narration text itself must come through in your own voice and personality. Always end after exactly 3-5 sentences. Do not write more. Never use separator lines like '---'. Never repeat phrases."
