@@ -16,7 +16,11 @@
 // として集計に反映されること(単独キーパー票との1-1で否決になることで証明)・
 // ゲストが賛成すれば可決しキーパーが「AIに引き継ぐ」を選ぶとキャラがinitiativeに
 // 残り続けること・それでも人間プレイヤー自身の接続は切断される(ws.onclose修正で
-// 本人に通知される)こと、を一気通貫で確認する。
+// 本人に通知される)こと・AI引き継ぎ後に実際にAIがそのキャラのターンを生成して
+// セッションが進行すること(human_char_idsから外すだけでは誰も_run_ai_turnsを
+// 再起動せずセッションが止まったままになる不具合と、guest_chars所属を無条件に
+// 人間扱いしていたため引き継ぎ後もAI判定されなかった不具合の、2つの回帰防止)を
+// 一気通貫で確認する。
 //
 // 実行: node frontend/e2e/vote_expel_defense_and_handover.js
 import { chromium } from 'playwright'
@@ -25,7 +29,10 @@ import { assert, createOnlineSession, joinAsPlayer, startSession } from './helpe
 ;(async () => {
   const browser = await chromium.launch()
   try {
-    const { page: host, inviteCode } = await createOnlineSession(browser)
+    // selectMockBackend: AI引き継ぎ後、実際にAIターンが生成されて進行することまで
+    // 検証するため(2026-08-22、AI引き継ぎ後もセッションが進まなくなる不具合を
+    // 実機で発見・修正した回帰防止)。
+    const { page: host, inviteCode } = await createOnlineSession(browser, { selectMockBackend: true })
     const { page: guest } = await joinAsPlayer(browser, inviteCode)
     await startSession(host)
 
@@ -105,8 +112,22 @@ import { assert, createOnlineSession, joinAsPlayer, startSession } from './helpe
     // 引き継ぎ後はhuman_char_idsから外れ、参加者パネル上もPLAYER_LEFTでhumanP判定が
     // 外れるため🎭マーカーは消える(=もう人間操作ではないので正しい)が、キャラ名自体は
     // initiativeに残り続けるはず(「続行」を選んだ場合は名前ごと消える)。
+    const messageCountBeforeResume = await host.locator('.session-msg').count()
     const hostTextAfterHandover = await host.locator('body').innerText()
     assert(hostTextAfterHandover.includes('テストゲスト['), 'handed-over character stays in the host initiative display by name (unlike the "continue" choice, which removes it entirely)')
+
+    // AI引き継ぎ対象がちょうど現在のターン担当キャラ(WAITING_FOR_HUMAN中)だった場合、
+    // human_char_idsから外すだけではAIターン処理が誰にも再起動されず、セッションが
+    // 止まったまま進まなくなる不具合があった(2026-08-22、実機のexpelでAI引き継ぎ
+    // 直後にセッションが停止する現象として発見・修正)。新しいメッセージ(=AIが
+    // 実際にこのキャラのターンを生成した証拠)が届くことを確認する。
+    await host.waitForFunction(
+      (before) => document.querySelectorAll('.session-msg').length > before,
+      messageCountBeforeResume,
+      { timeout: 15000 },
+    )
+    const hostTextAfterResume = await host.locator('body').innerText()
+    assert(hostTextAfterResume.includes('テストゲスト'), 'a new AI-generated turn for the handed-over character actually appears (session did not get stuck)')
 
     // 人間プレイヤー自身の接続はAI引き継ぎでも切断される。ws.oncloseの修正
     // (2026-08-22)により、本人のタブは切断通知を表示してスタート画面へ戻るはず。

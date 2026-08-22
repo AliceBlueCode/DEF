@@ -33,10 +33,26 @@ def test_is_human_char_not_in_list():
     assert _is_human_char(sess, "char_ai_npc", profiles={}) is False
 
 
-def test_is_human_char_guest_chars():
-    """guest_chars に含まれていれば人間扱い。"""
+def test_is_human_char_guest_chars_alone_does_not_count():
+    """guest_charsへの登録だけでは人間扱いにならない——human_char_idsが唯一の判定基準
+    （2026-08-22修正）。join_session（session_lobby.py）はcharacter_json持ち込み時、
+    guest_charsとhuman_char_idsを必ず対で追加するため、実運用でこの2つが乖離することは
+    無い。以前はguest_chars単独でも人間扱いする無条件フォールバックがあったが、これが
+    human_char_idsからの明示的な除去（ai_takeover・投票expelの「AIに引き継ぐ」）を
+    無視してしまい、持ち込みキャラに対するAI引き継ぎ機能を事実上無効化していた
+    （実機でAI引き継ぎ後もセッションが進まなくなる不具合として発覚）。"""
     from def_kari.api.routes.session import _is_human_char
     sess = {"human_char_ids": [], "guest_chars": {"guest_abc12345": {"id": "guest_abc12345"}}}
+    assert _is_human_char(sess, "guest_abc12345") is False
+
+
+def test_is_human_char_guest_chars_with_human_char_ids():
+    """実運用通り、guest_charsとhuman_char_idsが対で揃っていれば人間扱い。"""
+    from def_kari.api.routes.session import _is_human_char
+    sess = {
+        "human_char_ids": ["guest_abc12345"],
+        "guest_chars": {"guest_abc12345": {"id": "guest_abc12345"}},
+    }
     assert _is_human_char(sess, "guest_abc12345") is True
 
 

@@ -64,11 +64,17 @@ export async function setToggle(page, labelText, checked) {
 }
 
 // ホストとしてオンラインセッションを作成し、ロビー画面(招待コード発行済み)まで進める。
-export async function createOnlineSession(browser, { characterName = 'ChatGPT', viewport = { width: 1400, height: 900 } } = {}) {
+// selectMockBackend: trueならセッション作成前にtextgen_webui(モックLLM)へ切り替える
+// (session["backend"]はstart時点のスナップショットのため、作成後の切り替えでは
+// 反映されない——AIターン生成が実際に走ることまで検証したいシナリオ向け)。
+export async function createOnlineSession(browser, { characterName = 'ChatGPT', viewport = { width: 1400, height: 900 }, selectMockBackend = false } = {}) {
   const ctx = await browser.newContext({ viewport })
   const page = await ctx.newPage()
   await page.goto(BASE_URL)
   await page.waitForTimeout(600)
+  if (selectMockBackend) {
+    await selectTextgenWebuiBackend(page)
+  }
   await openSessionTab(page)
   await page.getByPlaceholder('キャラクターを選択...').click()
   await page.waitForTimeout(300)

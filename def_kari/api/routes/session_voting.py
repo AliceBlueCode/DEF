@@ -442,7 +442,7 @@ async def _apply_vote_expel_handover(session_id: str, session: dict, target_id: 
     戻り値: (keeper_handed_off, expelled_participant_id)。
     """
     from def_kari.api.routes.session_lobby import _hand_char_to_ai_control
-    _hand_char_to_ai_control(session, target_id)
+    _hand_char_to_ai_control(session_id, session, target_id)
 
     keeper_handed_off = target_id == session.get("keeper_char_id")
     if keeper_handed_off:

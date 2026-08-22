@@ -11,8 +11,10 @@ token_to_participantの削除やJWT無効化（revoke_token）を行っておら
 AI引き継ぎの場合はinitiativeを変更しない選択肢を成立させるための再設計）。
 """
 
+import asyncio
+
 import pytest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 
 def _fake_request():
@@ -323,5 +325,52 @@ async def test_expel_vote_ai_handover_keeps_character_in_initiative_but_disconne
         assert token_b not in sess["token_to_participant"]
         assert jti_b in _revoked_jtis
         fake_ws.close.assert_awaited_once_with(code=1000)
+    finally:
+        _sessions.pop(sid, None)
+
+
+@pytest.mark.asyncio
+async def test_expel_vote_ai_handover_resumes_stuck_turn_when_target_is_current_speaker():
+    """AI引き継ぎ対象がちょうど現在のターン担当キャラ(WAITING_FOR_HUMAN中)だった場合、
+    human_char_idsから外すだけでは_run_ai_turnsが誰にも再起動されずセッションが
+    止まったままになる不具合の修正確認(2026-08-22、実機のexpelでAI引き継ぎ直後に
+    セッションが進まなくなる現象として発覚)。対象が現在のターンでなければ
+    (直前のtest_expel_vote_ai_handover_keeps_character_in_initiative_but_disconnects_playerの
+    ケース、target=char_b・turn=0でchar_aが現在の話者)この再起動は発生しないことも
+    間接的に確認済み。"""
+    from def_kari.api.routes.session import (
+        vote_commit, VoteCommitRequest, vote_expel_resolve, VoteExpelResolveRequest, _sessions,
+    )
+    sid = "_expel_test_ai_handover_resume"
+    fake_ws = AsyncMock()
+
+    _sessions[sid] = {
+        "initiative": ["char_b", "char_a"],  # turn=0 → char_bが現在の話者(=expel対象と一致)
+        "name_map": {"char_a": "Alice", "char_b": "Bob"},
+        "char_backends": {},
+        "backend": "tgw",
+        "human_char_ids": ["char_a", "char_b"],
+        "players": {"token_b": "char_b"},
+        "token_to_participant": {"token_b": "pid_b"},
+        "joined_participants": [{"participant_id": "pid_b", "character_id": "char_b"}],
+        "ws_connections": {"token_b": fake_ws},
+        "counters": {},
+        "history": [],
+        "turn": 0,
+        "round": 1,
+        "action_count": 0,
+        "_pending_vote": _make_pending_vote("char_b"),
+    }
+    try:
+        req = VoteCommitRequest(keeper_vote=True)
+        await vote_commit(sid, req, _fake_request(), _auth={})
+        with patch("def_kari.api.routes.session_turn_engine._run_ai_turns") as mock_run_ai_turns:
+            await vote_expel_resolve(sid, VoteExpelResolveRequest(choice="ai_handover"), _auth={"role": "host"})
+            await asyncio.sleep(0.05)  # loop.create_task経由でスケジュールされた再開タスクの実行を待つ
+            mock_run_ai_turns.assert_called_once_with(sid)
+
+        sess = _sessions[sid]
+        assert sess.get("ai_paused") is False
+        assert sess.get("ai_task") is not None
     finally:
         _sessions.pop(sid, None)

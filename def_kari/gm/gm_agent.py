@@ -331,10 +331,18 @@ class GMAgent:
                 if not any(_hcand in n or n in _hcand for n in _hall_allowed):
                     _replacement = "誰か" if _is_ja else "someone"
                     clean_text = clean_text.replace(_hm.group(0), _replacement, 1)
-                    print(
-                        f"[hallucination_fix] '{_hm.group(0)}' → '{_replacement}'",
-                        file=_sys_gm.stderr,
-                    )
+                    # 診断出力はベストエフォート。Windowsのコンソール/リダイレクト先が
+                    # cp932等の場合、生成テキストに含まれる文字（矢印記号等）で
+                    # UnicodeEncodeErrorが送出され、診断表示のはずが本処理（ナレーション
+                    # 生成そのもの）を丸ごと失敗させてしまう実害があった
+                    # （2026-08-22、tgw.pyの同種の不具合とあわせて発覚・修正）。
+                    try:
+                        print(
+                            f"[hallucination_fix] '{_hm.group(0)}' → '{_replacement}'",
+                            file=_sys_gm.stderr,
+                        )
+                    except UnicodeEncodeError:
+                        pass
 
         # ── 履歴注入 ──────────────────────────────────────────────
         if inject_history and clean_text:

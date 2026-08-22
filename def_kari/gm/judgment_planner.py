@@ -283,7 +283,14 @@ def _decide_check_pairs(
                 if c.get("character") and c.get("skill")
             ]
         except Exception as e:
-            print(f"[judgment_planner:tool_calling] error: {e}", file=_sys.stderr)
+            # 診断出力はベストエフォート。Windowsのコンソール/リダイレクト先がcp932等の
+            # 場合、エラーメッセージに含まれる文字でUnicodeEncodeErrorが送出され、
+            # except節内での新たな例外が本来のエラーを覆い隠してしまう（2026-08-22、
+            # tgw.pyの同種の不具合とあわせて発覚・修正）。
+            try:
+                print(f"[judgment_planner:tool_calling] error: {e}", file=_sys.stderr)
+            except UnicodeEncodeError:
+                pass
             return []
 
     try:
@@ -331,5 +338,8 @@ def _decide_check_pairs(
             if j.get("character") and j.get("skill")
         ]
     except Exception as e:
-        print(f"[judgment_planner:json_mode] error: {e} raw={locals().get('raw', '')!r:.200}", file=_sys.stderr)
+        try:
+            print(f"[judgment_planner:json_mode] error: {e} raw={locals().get('raw', '')!r:.200}", file=_sys.stderr)
+        except UnicodeEncodeError:
+            pass
         return []

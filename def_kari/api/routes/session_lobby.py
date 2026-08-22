@@ -2,6 +2,7 @@
 `session.py`分割の一部。
 """
 
+import asyncio
 import logging
 import random
 import secrets
@@ -653,14 +654,48 @@ class AiTakeoverRequest(BaseModel):
     character_id: str
 
 
-def _hand_char_to_ai_control(sess: dict, character_id: str) -> None:
-    """human_char_idsから外すだけの、AI引き継ぎの中核処理。ai_takeoverエンドポイント
-    本体と、投票expelの「AIに引き継ぐ」follow-up（session_voting.py
-    _apply_vote_expel_handover）の両方から呼ばれる共有実装（重複を避けるための
-    切り出し、2026-08-22）。"""
+async def _resume_ai_turns_for(session_id: str, sess: dict) -> None:
+    """ai_resumeエンドポイントと全く同じ手順でAIターン処理を再起動する。"""
+    from def_kari.api.routes.session_turn_engine import _run_ai_turns
+    sess["ai_paused"] = False
+    ai_task = sess.get("ai_task")
+    if not ai_task or ai_task.done():
+        sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+
+
+def _hand_char_to_ai_control(session_id: str, sess: dict, character_id: str) -> None:
+    """human_char_idsから外す、AI引き継ぎの中核処理。ai_takeoverエンドポイント本体と、
+    投票expelの「AIに引き継ぐ」follow-up（session_voting.py _apply_vote_expel_handover）
+    の両方から呼ばれる共有実装（重複を避けるための切り出し、2026-08-22）。
+
+    引き継ぎ対象が現在まさにWAITING_FOR_HUMAN中のターン担当キャラだった場合、
+    human_char_idsから外すだけではAIターン処理が自動的に再開されない——
+    _run_ai_turns（session_turn_engine.py）は人間ターンに当たると1回きりで
+    リターンする一方通行のコルーチンで、human_char_idsの変化を監視する仕組みが
+    どこにも無いため、誰かが明示的にai_resume相当の処理を呼ばない限りセッションが
+    止まったまま進まなくなる（2026-08-22、実機でexpelのAI引き継ぎ直後に
+    セッションが停止する不具合として発覚）。対象が現在のターンであればai_resumeと
+    同じ手順で再開する。ai_takeover（同期エンドポイント）とvote_expel_resolve
+    （非同期エンドポイント）の両方から呼ばれるため、_ws_broadcast_handler
+    （session_ws.py）と同じ「実行中ループの有無で経路を切り替える」パターンで
+    asyncio.create_taskを安全にスケジュールする。
+    """
     human_ids: list = sess.setdefault("human_char_ids", [])
     if character_id in human_ids:
         human_ids.remove(character_id)
+
+    if sess.get("lobby_active"):
+        return
+    from def_kari.api.routes.session_turn_engine import _get_current_speaker
+    if character_id != _get_current_speaker(sess):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_resume_ai_turns_for(session_id, sess))
+    except RuntimeError:
+        from def_kari.api.routes import session_state as _session_state
+        if _session_state._main_loop and _session_state._main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(_resume_ai_turns_for(session_id, sess), _session_state._main_loop)
 
 
 @router.post("/{session_id}/ai_takeover")
@@ -673,7 +708,7 @@ def ai_takeover(session_id: str, req: AiTakeoverRequest, auth: dict = Depends(re
         raise HTTPException(404, "Character not in session")
     if req.character_id not in sess.get("human_char_ids", []):
         raise HTTPException(409, "Character is already AI-controlled")
-    _hand_char_to_ai_control(sess, req.character_id)
+    _hand_char_to_ai_control(session_id, sess, req.character_id)
     return {"status": "ok", "character_id": req.character_id, "human_char_ids": sess.get("human_char_ids", [])}
 
 

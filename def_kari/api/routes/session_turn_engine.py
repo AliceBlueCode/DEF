@@ -108,11 +108,19 @@ def _is_human_char(session: dict, char_id: str, profiles: dict | None = None) ->
 
     human_char_ids（Phase 3以降）に含まれていれば人間。
     未設定の場合は profiles の player_type にフォールバック。
+
+    以前はguest_chars（持ち込みキャラ）を無条件に人間扱いするフォールバックが
+    別途あったが、join_session（session_lobby.py）はcharacter_json持ち込み時
+    必ずrole="player"を割り当て、その直後に同じ関数内でhuman_char_idsへも
+    追加している（human_char_idsとguest_charsは常に対で揃う）ため、実質的に
+    完全な重複だった。しかもこのフォールバックはhuman_char_idsからの明示的な
+    除去（ai_takeover・投票expelの「AIに引き継ぐ」）を無視して常にTrueを返し
+    続けてしまい、持ち込みキャラに対するAI引き継ぎ機能そのものを無効化する
+    実害があった（2026-08-22、投票expelでAI引き継ぎを選んでもセッションが
+    進まなくなる不具合として発覚——原因はAIターン再開そのものではなく、
+    ここで対象がずっと人間のまま判定され続けていたこと）。
     """
     if char_id in session.get("human_char_ids", []):
-        return True
-    # guest_chars（持ち込みキャラ）も人間扱い
-    if char_id in session.get("guest_chars", {}):
         return True
     if profiles is None:
         profiles = load_profiles()

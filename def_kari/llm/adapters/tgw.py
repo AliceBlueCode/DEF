@@ -2,8 +2,28 @@
 
 import os
 import re
+import sys
 
 import requests
+
+
+def _debug_print(text: str) -> None:
+    """診断用printのラッパー。Windowsのコンソール/リダイレクト先がcp932等の
+    非UTF-8エンコーディングの場合、LLM応答に含まれる一部文字（em dash等）で
+    UnicodeEncodeErrorが送出され、診断出力のはずがLLM呼び出し自体を失敗させて
+    しまっていた（2026-08-22、TRPGキーパーのナレーション生成がこれで丸ごと
+    失敗する不具合として発覚）。診断表示はベストエフォートとし、失敗しても
+    本処理には影響させない。
+    """
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        try:
+            enc = sys.stdout.encoding or "ascii"
+            print(text.encode(enc, errors="replace").decode(enc, errors="replace"))
+        except Exception:
+            pass
+
 
 _THINKING_PROCESS_RE = re.compile(r"^Here's a thinking process:.*", re.DOTALL)
 def _extract_from_reasoning(text: str) -> str:
@@ -61,7 +81,7 @@ def chat(
                 body[_pkey] = options[_pkey]
         if "instruction_template" in options:
             body["instruction_template"] = options["instruction_template"]
-    print(f"[TGW] request max_tokens={body.get('max_tokens', 'NOT SET')}")
+    _debug_print(f"[TGW] request max_tokens={body.get('max_tokens', 'NOT SET')}")
 
     resp = requests.post(
         f"{TEXTGEN_WEBUI_URL}/chat/completions",
@@ -73,11 +93,11 @@ def chat(
     _msg = resp.json()["choices"][0]["message"]
     _content = _msg.get("content") or ""
     _reasoning = _msg.get("reasoning_content") or ""
-    print(f"[TGW] content len={len(_content)}, reasoning len={len(_reasoning)}")
+    _debug_print(f"[TGW] content len={len(_content)}, reasoning len={len(_reasoning)}")
     if _content:
-        print(f"[TGW] content (first 200): {_content[:200]}")
+        _debug_print(f"[TGW] content (first 200): {_content[:200]}")
     if _reasoning and not _content:
-        print(f"[TGW] reasoning (last 300): ...{_reasoning[-300:]}")
+        _debug_print(f"[TGW] reasoning (last 300): ...{_reasoning[-300:]}")
     if not _content and _reasoning:
         _content = _extract_from_reasoning(_reasoning)
     if _THINKING_PROCESS_RE.match(_content):
