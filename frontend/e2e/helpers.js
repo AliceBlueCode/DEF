@@ -86,6 +86,29 @@ export async function createOnlineSession(browser, { characterName = 'ChatGPT', 
   return { ctx, page, inviteCode }
 }
 
+// このタブのApp.tsx側selectedBackend stateをtextgen_webui(モックLLM)へ
+// 明示的に切り替える。data/llm_services.jsonがgit管理下にopenaiエントリを
+// 持つため(APIキー未設定)、CIのDEFAULT_LLM_BACKENDは実は"openai"のまま
+// フォールバックが効いていない(2026-08-22、実CIでai_keeperのAPIキー
+// 未設定エラーから発覚——他のe2eシナリオはAI発言の中身を検証しないため
+// この問題が表面化していなかった)。data/settings.jsonへ直接POSTしても
+// このstateには反映されない(App.tsxは起動時にlocalStorage→
+// /api/settings/backendsのdefaultしか見ておらず、永続化済みuser設定を
+// 読み返す経路が無い)ため、実際に設定タブのセレクトを操作する。
+// textgen_webuiは既にモックが「起動中」と応答するため、launchBackend()が
+// 実プロセス起動を試みることはない(already_running扱い)。
+export async function selectTextgenWebuiBackend(page) {
+  await openSettingsTab(page)
+  // 非表示タブもdisplay:noneでDOMに残り続ける(App.tsxのタブ切替方式)ため、
+  // NovelTab.tsx側のバックエンドセレクト(novel-backend-sel)も同じ
+  // option[value="textgen_webui"]を持ち、素の絞り込みだと2件ヒットして
+  // strict modeエラーになる。:visibleで現在表示中のタブのセレクトだけに絞る。
+  const llmBackendSelect = page.locator('select:visible').filter({ has: page.locator('option[value="textgen_webui"]') })
+  await llmBackendSelect.waitFor({ state: 'visible', timeout: 10000 })
+  await llmBackendSelect.selectOption('textgen_webui')
+  await page.waitForTimeout(300)
+}
+
 // ホストとしてTRPGモードのオンラインセッションを作成し、ロビー画面(招待コード
 // 発行済み)まで進める。createOnlineSessionと違いホストはキャラを選ばない
 // (「オンラインセッション作成」ボタンはselectedChars件数では無効化されない、
@@ -96,24 +119,7 @@ export async function createOnlineTrpgSession(browser, { viewport = { width: 140
   const page = await ctx.newPage()
   await page.goto(BASE_URL)
   await page.waitForTimeout(600)
-  // ai_keeper(gm_agent.py)へのPOSTはApp.tsxのselectedBackend state(このタブ
-  // 固有、localStorage起点)をそのまま使う。data/settings.jsonへ直接POSTしても
-  // このstateには反映されない(App.tsxは起動時にlocalStorage→/api/settings/backends
-  // のdefaultしか見ておらず、永続化済みuser設定を読み返す経路が無い)ため、実際に
-  // 設定タブのセレクトを操作してApp.tsx側のstateを更新する(2026-08-22、実CIで
-  // llm_backend=openaiのままAPIキー未設定エラーになったことから発覚)。
-  // textgen_webuiは既にモックが「起動中」と応答するため、launchBackend()が
-  // 実プロセス起動を試みることはない(already_running扱い)。
-  await openSettingsTab(page)
-  // 非表示タブもdisplay:noneでDOMに残り続ける(App.tsxのタブ切替方式)ため、
-  // NovelTab.tsx側のバックエンドセレクト(novel-backend-sel)も同じ
-  // option[value="textgen_webui"]を持ち、素の絞り込みだと2件ヒットして
-  // strict modeエラーになる(2026-08-22、実CIで発覚)。:visibleで現在表示中の
-  // 設定タブのセレクトだけに絞る。
-  const llmBackendSelect = page.locator('select:visible').filter({ has: page.locator('option[value="textgen_webui"]') })
-  await llmBackendSelect.waitFor({ state: 'visible', timeout: 10000 })
-  await llmBackendSelect.selectOption('textgen_webui')
-  await page.waitForTimeout(300)
+  await selectTextgenWebuiBackend(page)
   await openSessionTab(page)
   await page.getByRole('button', { name: /TRPGモード/ }).click()
   await page.waitForTimeout(300)
