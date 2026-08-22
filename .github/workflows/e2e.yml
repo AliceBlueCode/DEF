@@ -85,6 +85,7 @@ jobs:
           npm run e2e:ws-auth
           npm run e2e:message-sync
           npm run e2e:trpg-keeper-online-join
+          npm run e2e:ai-takeover
           npm run e2e:ai-turn-dedup
           npm run e2e:jwt-regen
           npm run e2e:disconnect-timeout

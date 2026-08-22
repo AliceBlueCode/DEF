@@ -30,6 +30,7 @@ npm run e2e:all-disconnect-autostop  # 全員切断→300秒放置→再接続�
 npm run e2e:invite-rating            # 招待コードのレーティングとキャラクター側の照合（拒否されること）を確認
 npm run e2e:full-integration         # 招待→ゲスト2人参加→セッション開始→双方向リアルタイム同期→終了、を一気通貫で確認
 npm run e2e:trpg-keeper-online-join  # TRPGモードのオンラインセッションで、参加者(ホスト以外)のタブでも🎩キーパーのナレーションが発火することを確認
+npm run e2e:ai-takeover              # 参加者切断時、ホストのイニシアチブ表示に🤖AI引き継ぎボタンが現れクリックで引き継ぎ済みに切り替わることを確認
 ```
 
 各スクリプトはヘッドレスChromiumを2つのブラウザコンテキスト(ホスト/ゲスト)で操作し、`helpers.js`の`assert()`で結果を検証する。失敗すると該当のassertメッセージを`FAIL:`付きで出力し、非ゼロ終了コードで終わる。

@@ -13,6 +13,8 @@ export function useParticipants() {
   const [showParticipantPanel, setShowParticipantPanel] = useState(true)
   // 持ち込みキャラのアイコン/立ち絵がバックグラウンド生成完了した際、no-cacheな画像を再取得させるためのバージョン値
   const [iconVersion, setIconVersion] = useState<Record<string, number>>({})
+  // POST /{session_id}/ai_takeoverでAIに引き継ぎ済みのキャラID（ホストUIの表示切替用）
+  const [aiTakenOverChars, setAiTakenOverChars] = useState<Set<string>>(new Set())
 
   const iconUrl = (charId: string) => `/api/characters/${charId}/icon${iconVersion[charId] ? `?v=${iconVersion[charId]}` : ''}`
   const standingUrl = (charId: string) => `/api/characters/${charId}/standing${iconVersion[charId] ? `?v=${iconVersion[charId]}` : ''}`
@@ -26,5 +28,6 @@ export function useParticipants() {
     showParticipantPanel, setShowParticipantPanel,
     iconVersion, setIconVersion,
     iconUrl, standingUrl,
+    aiTakenOverChars, setAiTakenOverChars,
   }
 }

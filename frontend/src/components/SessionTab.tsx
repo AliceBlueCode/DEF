@@ -239,6 +239,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     showParticipantPanel, setShowParticipantPanel,
     setIconVersion,
     iconUrl, standingUrl,
+    aiTakenOverChars, setAiTakenOverChars,
   } = useParticipants()
 
   // ── セッション識別・接続まわりはメッセージ履歴と同様、ほぼ全域から参照されるため
@@ -1359,32 +1360,29 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
   }
 
-  // TODO: UIから呼ばれるボタンが無く未使用のためビルド上コメントアウト。今は
-  // rollAllPendingJudgments（一括ロール）のみUIに存在する。個別ロールのボタンを
-  // 足す機能完成時に復元（TODO.md参照）。
-  // const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
-  //   if (isCharDead(j.character_id)) {
-  //     setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
-  //     return
-  //   }
-  //   const roll = await rollJudgmentAuto(sessionId, j)
-  //   if (roll) {
-  //     const jv = roll.judgment?.judgment_value ?? j.stat_value
-  //     let outcome = ''
-  //     if (roll.judgment?.critical) outcome = 'クリティカル！'
-  //     else if (roll.judgment?.fumble) outcome = 'ファンブル…'
-  //     else if (roll.judgment?.success) outcome = '成功'
-  //     else if (roll.judgment) outcome = '失敗'
-  //     setMessages(prev => [...prev, {
-  //       character_id: j.character_id,
-  //       character_name: `🎲 ${j.character_name}`,
-  //       text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
-  //       emotion: '', tags: [],
-  //     }])
-  //     if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
-  //   }
-  //   setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
-  // }
+  const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
+    if (isCharDead(j.character_id)) {
+      setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
+      return
+    }
+    const roll = await rollJudgmentAuto(sessionId, j)
+    if (roll) {
+      const jv = roll.judgment?.judgment_value ?? j.stat_value
+      let outcome = ''
+      if (roll.judgment?.critical) outcome = t('trpg.outcome.critical')
+      else if (roll.judgment?.fumble) outcome = t('trpg.outcome.fumble')
+      else if (roll.judgment?.success) outcome = t('trpg.outcome.success')
+      else if (roll.judgment) outcome = t('trpg.outcome.failure')
+      setMessages(prev => [...prev, {
+        character_id: j.character_id,
+        character_name: `🎲 ${j.character_name}`,
+        text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+        emotion: '', tags: [],
+      }])
+      if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
+    }
+    setPendingJudgments(prev => prev.filter((_, i) => i !== idx))
+  }
 
   const rollDiceDialog = async (type: 'stat' | 'skill', key: string) => {
     if (!key) return
@@ -1601,19 +1599,17 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     // ai_resume はここでは呼ばない。オフライン同様、キーパーが自動/次の発言で開始する。
   }
 
-  // TODO: UIから呼ばれるボタンが無く未使用のためビルド上コメントアウト。機能完成時に
-  // 復元（TODO.md参照、バックエンド POST /{session_id}/ai_takeover は実装済みで無傷）。
-  // const aiTakeover = async (charId: string) => {
-  //   if (!sessionId) return
-  //   const res = await fetch(`/api/session/${sessionId}/ai_takeover`, {
-  //     method: 'POST',
-  //     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
-  //     body: JSON.stringify({ character_id: charId }),
-  //   })
-  //   if (res.ok) {
-  //     setAiTakenOverChars(prev => new Set([...prev, charId]))
-  //   }
-  // }
+  const aiTakeover = async (charId: string) => {
+    if (!sessionId) return
+    const res = await authFetch(`/api/session/${sessionId}/ai_takeover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character_id: charId }),
+    })
+    if (res.ok) {
+      setAiTakenOverChars(prev => new Set([...prev, charId]))
+    }
+  }
 
   const lobbyAddAi = async (charId: string, gameSheetId = '', backendId = '') => {
     if (!sessionId) return
@@ -2843,18 +2839,27 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
             const humanP = participants.find(p => p.char_id === id)
             const isHumanChar = !!humanP || id === myCharIdRef.current
             const disconnected = humanP ? !humanP.connected : false
-            const label = `${isHumanChar ? '🎭' : ''}${disconnected ? '⚡' : ''}${name}${cStr}`
+            const takenOver = aiTakenOverChars.has(id)
+            const label = `${isHumanChar ? '🎭' : ''}${takenOver ? '🤖' : disconnected ? '⚡' : ''}${name}${cStr}`
+            const canTakeOver = isKeeperUi && disconnected && !takenOver
             return (
               <span
                 key={id}
                 style={{
                   ...(atMax ? { color: '#e05' } : undefined),
-                  ...(disconnected ? { opacity: 0.45 } : undefined),
+                  ...(disconnected && !takenOver ? { opacity: 0.45 } : undefined),
                 }}
-                title={disconnected ? t('session.participants.disconnected') : undefined}
+                title={takenOver ? t('session.participants.aiTakeover.done') : disconnected ? t('session.participants.disconnected') : undefined}
               >
                 {idx > 0 && ' → '}
                 {isActive ? <strong>{label}</strong> : label}
+                {canTakeOver && (
+                  <button
+                    onClick={() => aiTakeover(id)}
+                    title={t('session.participants.aiTakeover.title')}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '0.9em' }}
+                  >🤖</button>
+                )}
               </span>
             )
           })}
@@ -3336,6 +3341,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                       ? t('trpg.judgment.item', { name: j.character_name, stat: j.stat, value: j.stat_value })
                       : t('trpg.judgment.itemNoValue', { name: j.character_name, stat: j.stat })}
                   </span>
+                  <button
+                    className="keeper-redo-btn"
+                    style={{ fontSize: '0.8em', padding: '2px 8px' }}
+                    onClick={() => rollPendingJudgment(j, idx)}
+                  >{t('trpg.judgment.roll')}</button>
                   <button
                     className="keeper-redo-btn"
                     style={{ fontSize: '0.8em', padding: '2px 8px' }}

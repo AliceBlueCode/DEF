@@ -125,6 +125,8 @@ const ja: Record<string, string> = {
   'session.participants.title': '参加者',
   'session.participants.disconnected': '切断中',
   'session.participants.disconnectedWithTimeout': '切断中（{sec}秒後に自動スキップ）',
+  'session.participants.aiTakeover.title': 'AIに引き継ぐ',
+  'session.participants.aiTakeover.done': 'AIに引き継ぎ済み',
 
   // Session — rule dialog
   'session.ruleDialog.header': 'セッションルール設定',
@@ -648,6 +650,7 @@ const ja: Record<string, string> = {
   'trpg.judgment.header': '🎲 判定',
   'trpg.judgment.item': '{name}：{stat}（判定値 {value}）',
   'trpg.judgment.itemNoValue': '{name}：{stat}',
+  'trpg.judgment.roll': '🎲ロール',
   'trpg.judgment.damage': '💥ダメージ',
   'trpg.judgment.skip': 'スキップ',
   'trpg.judgment.rollAll': 'まとめて振る',
@@ -788,6 +791,8 @@ const en: Record<string, string> = {
   'session.participants.title': 'Participants',
   'session.participants.disconnected': 'Disconnected',
   'session.participants.disconnectedWithTimeout': 'Disconnected (auto-skip in {sec}s)',
+  'session.participants.aiTakeover.title': 'Hand over to AI',
+  'session.participants.aiTakeover.done': 'AI-controlled',
 
   // Session — rule dialog
   'session.ruleDialog.header': 'Session Rule Settings',
@@ -1311,6 +1316,7 @@ const en: Record<string, string> = {
   'trpg.judgment.header': '🎲 Judgment',
   'trpg.judgment.item': '{name}: {stat} (target {value})',
   'trpg.judgment.itemNoValue': '{name}: {stat}',
+  'trpg.judgment.roll': '🎲 Roll',
   'trpg.judgment.damage': '💥 Damage',
   'trpg.judgment.skip': 'Skip',
   'trpg.judgment.rollAll': 'Roll All',
