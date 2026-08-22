@@ -71,13 +71,20 @@ jobs:
 
       # 投票の弁明ラウンド(vote_expel)を含む、実時間待ちの無いシナリオを毎回実行する。
       # vote_expelは「投票強制賛成」グローバル設定を書き換えるため他シナリオへの影響を
-      # 避けて最後に置く（frontend/e2e/README.md参照）。
+      # 避けて最後に置く（frontend/e2e/README.md参照）。各行はbash -eの下で実行される
+      # ため、いずれか1本が失敗すると後続は一切実行されない。ai-turn-dedupは8並列送信
+      # の「1件だけ成功するはず」判定が、モックLLMの応答が速すぎるためAIターンの
+      # ラウンド巻き戻りと人間側の残りリクエストが衝突し、稀に2件成功してしまう
+      # 既知のタイミングflakeを持つ(2026-08-22、trpg_keeper_online_join.js追加作業中の
+      # 実CIで連続再現・TODO.md参照)。新規シナリオがこれに巻き込まれて実行されない
+      # 事態を避けるため、ai-turn-dedupより前に配置する。
       - name: Run e2e scenarios
         working-directory: frontend
         timeout-minutes: 8
         run: |
           npm run e2e:ws-auth
           npm run e2e:message-sync
+          npm run e2e:trpg-keeper-online-join
           npm run e2e:ai-turn-dedup
           npm run e2e:jwt-regen
           npm run e2e:disconnect-timeout
@@ -85,7 +92,6 @@ jobs:
           npm run e2e:host-disconnect
           npm run e2e:invite-rating
           npm run e2e:full-integration
-          npm run e2e:trpg-keeper-online-join
           npm run e2e:vote-expel
 
       # 実時間で~2分・~6分かかる2本は既定で除外し、手動実行時の任意指定のみで走らせる。
