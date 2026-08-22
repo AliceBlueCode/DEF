@@ -16,6 +16,7 @@ damage_on)を返す——`session_gameplay.py`・フロントエンドの判定�
 
 import json as _json
 import re as _re
+import sys as _sys
 
 from def_kari.llm.backend import LLM_BACKENDS
 from def_kari.models.registry import get_quirks
@@ -281,7 +282,8 @@ def _decide_check_pairs(
                 for c in args.get("checks", [])
                 if c.get("character") and c.get("skill")
             ]
-        except Exception:
+        except Exception as e:
+            print(f"[judgment_planner:tool_calling] error: {e}", file=_sys.stderr)
             return []
 
     try:
@@ -328,5 +330,6 @@ def _decide_check_pairs(
             for j in data.get("judgments", [])
             if j.get("character") and j.get("skill")
         ]
-    except Exception:
+    except Exception as e:
+        print(f"[judgment_planner:json_mode] error: {e} raw={locals().get('raw', '')!r:.200}", file=_sys.stderr)
         return []

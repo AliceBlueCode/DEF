@@ -14,6 +14,13 @@ def make_chat_fn(base_url: str, api_key: str, default_model: str, extra_headers:
 
     def _chat(messages: list[dict], model: str, json_mode: bool = True, options: dict | None = None) -> str:
         body: dict = {"model": model or default_model, "messages": messages}
+        if json_mode:
+            # OpenAI標準のjson_mode相当。TGW(llama.cpp、grammar_stringでGBNF制約)とは
+            # 異なり、compatibleは任意のOpenAI互換エンドポイントを対象にするため
+            # response_formatが最も広くサポートされている汎用の制約手段
+            # (vLLM/llama.cpp server/LM Studio等が対応。従来json_modeが受け取られる
+            # だけで一切使われていなかったデッドパラメータだった、2026-08-22発覚)。
+            body["response_format"] = {"type": "json_object"}
         if options and "num_predict" in options:
             body["max_completion_tokens"] = options["num_predict"]
         resp = requests.post(
