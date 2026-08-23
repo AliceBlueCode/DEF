@@ -18,6 +18,7 @@ import json as _json
 import re as _re
 import sys as _sys
 
+from def_kari.characters import resolve_char_game_sheet
 from def_kari.llm.backend import LLM_BACKENDS
 from def_kari.models.registry import get_quirks
 
@@ -138,10 +139,9 @@ def plan_judgments(
 
     def _stat_val_for(cid: str, stat: str) -> int:
         sheet_id = char_game_sheets.get(cid, "")
-        if not sheet_id or not profiles:
+        if not sheet_id:
             return 0
-        raw = profiles.get(cid, {})
-        sheet = raw.get("game_rules_sheets", {}).get(sheet_id, {})
+        sheet = resolve_char_game_sheet(cid, sheet_id, profiles, session)
         skills = sheet.get("skills", {})
         stats = sheet.get("stats", {})
         if stat in skills:
@@ -152,10 +152,9 @@ def plan_judgments(
 
     def _valid_stats_for_char(cid: str) -> frozenset[str]:
         sheet_id = char_game_sheets.get(cid, "")
-        if not sheet_id or not profiles:
+        if not sheet_id:
             return _DEF_ALLOWED_SKILLS
-        raw = profiles.get(cid, {})
-        sheet = raw.get("game_rules_sheets", {}).get(sheet_id, {})
+        sheet = resolve_char_game_sheet(cid, sheet_id, profiles, session)
         char_skills = frozenset(sheet.get("skills", {}).keys())
         char_stats = frozenset(sheet.get("stats", {}).keys())
         return _DEF_ALLOWED_SKILLS | char_skills | char_stats

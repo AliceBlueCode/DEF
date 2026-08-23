@@ -1,0 +1,22 @@
+{
+  "name": "テストゲスト（シート持ち）",
+  "persona_description": "E2Eテスト用のダミーキャラクター。キャラクターシート付き。",
+  "rating_sexual": "none",
+  "rating_violence": "none",
+  "player_type": "human",
+  "game_rules_sheets": {
+    "def_original": {
+      "rulebook_id": "def_original",
+      "skill_point_pool": 500,
+      "skills": {
+        "察知": 60
+      },
+      "stats": {
+        "思考": { "current": 10, "max": 10 },
+        "情動": { "current": 10, "max": 10 },
+        "身体": { "current": 10, "max": 10 },
+        "環境": { "current": 10, "max": 10 }
+      }
+    }
+  }
+}

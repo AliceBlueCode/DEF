@@ -96,6 +96,49 @@ def _get_vr(profile: dict) -> dict:
     return _get_bp(profile).get("visual_references", {})
 
 
+def _extract_game_sheets_from_guest_json(character_json: dict) -> dict:
+    """flat形式・versioned形式（base_profile入れ子）の両方からgame_rules_sheetsを
+    抽出する。game_rules_sheetsはbase_profileの兄弟キーであり
+    （data/public/characters/*/profile.json参照）、session_auth.pyの
+    _extract_content_policy_from_jsonとは違いv["base_profile"]の中は見ない点に注意。
+    アップロードされた生のcharacter_jsonが対象（session["guest_chars"]格納値そのもの、
+    load_profiles()を経由していない持ち込みキャラ）。
+    """
+    if not isinstance(character_json, dict):
+        return {}
+    for v in character_json.values():
+        if isinstance(v, dict) and isinstance(v.get("base_profile"), dict):
+            return v.get("game_rules_sheets", {}) or {}
+    return character_json.get("game_rules_sheets", {}) or {}
+
+
+def resolve_char_game_sheets(cid: str, profiles: dict, session: dict | None = None) -> dict:
+    """キャラクターのgame_rules_sheets全体（{sheet_id: sheet_dict}）を解決する。
+
+    ホストのローカルキャラ库（profiles = load_profiles()の結果）優先、無ければ
+    session["guest_chars"][cid]（持ち込みキャラの生JSON）にフォールバックする。
+    guest_xxxxのようなセッション限定キャラはload_profiles()のスキャン対象
+    （data/public/characters等）に含まれないため、このフォールバックが無いと
+    常に空を返してしまう（2026-08-23発覚・修正、TRPGモードのゲスト参加時に
+    キャラクターシートを選べない問題の根本原因）。
+    """
+    raw = profiles.get(cid) if profiles else None
+    if raw:
+        return raw.get("game_rules_sheets", {}) or {}
+    if session:
+        guest_raw = session.get("guest_chars", {}).get(cid)
+        if guest_raw:
+            return _extract_game_sheets_from_guest_json(guest_raw)
+    return {}
+
+
+def resolve_char_game_sheet(cid: str, sheet_id: str, profiles: dict, session: dict | None = None) -> dict:
+    """1件分のシート（stats/skills/rulebook_id）を解決する。guest_charsフォールバック込み。"""
+    if not sheet_id:
+        return {}
+    return resolve_char_game_sheets(cid, profiles, session).get(sheet_id, {})
+
+
 def get_character(character_id: str | None, profiles: dict | None = None) -> dict:
     """正規化されたキャラクター辞書を返す。"""
     profiles = profiles or load_profiles()

@@ -113,6 +113,8 @@ const ja: Record<string, string> = {
   'session.join.playerSlot': '🎭 プレイヤーとして参加',
   'session.join.charJsonLabel': 'キャラクターJSON',
   'session.join.selectJsonBtn': 'JSONファイルを選択...',
+  'session.join.sheetLabel': 'キャラクターシート',
+  'session.join.noSheetMatch': 'このルールブックに一致するシートが見つかりませんでした（シート無しで参加できます）',
 
   // Session — invite (host issuing invite codes)
   'session.invite.issue': '発行',
@@ -788,6 +790,8 @@ const en: Record<string, string> = {
   'session.join.playerSlot': '🎭 Join as Player',
   'session.join.charJsonLabel': 'Character JSON',
   'session.join.selectJsonBtn': 'Select JSON file...',
+  'session.join.sheetLabel': 'Character Sheet',
+  'session.join.noSheetMatch': "No sheet matching this session's rulebook was found (you can still join without one)",
 
   // Session — invite
   'session.invite.issue': 'Issue',

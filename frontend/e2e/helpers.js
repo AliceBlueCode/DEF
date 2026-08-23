@@ -120,7 +120,10 @@ export async function selectTextgenWebuiBackend(page) {
 // (「オンラインセッション作成」ボタンはselectedChars件数では無効化されない、
 // startOnlineSession呼び出し元のJSX参照)——ホストはキーパー専任のまま、
 // 参加者のキャラだけがinitiativeに乗る決定的な状態を作るため。
-export async function createOnlineTrpgSession(browser, { viewport = { width: 1400, height: 900 } } = {}) {
+// rulebook: 指定すればTRPGモードON後にルールブック選択(<select>、value=ルールブックID)を
+// 明示的に選ぶ(2026-08-23、ゲストのキャラクターシート選択機能のe2e向けに追加。
+// 未指定時は挙動不変=デフォルト選択のまま)。
+export async function createOnlineTrpgSession(browser, { viewport = { width: 1400, height: 900 }, rulebook = '' } = {}) {
   const ctx = await browser.newContext({ viewport })
   const page = await ctx.newPage()
   await page.goto(BASE_URL)
@@ -129,6 +132,12 @@ export async function createOnlineTrpgSession(browser, { viewport = { width: 140
   await openSessionTab(page)
   await page.getByRole('button', { name: /TRPGモード/ }).click()
   await page.waitForTimeout(300)
+  if (rulebook) {
+    const rulebookSelect = page.locator('.session-field', { has: page.locator('label', { hasText: 'ルールブック' }) }).locator('select')
+    await rulebookSelect.waitFor({ state: 'visible', timeout: 5000 })
+    await rulebookSelect.selectOption(rulebook)
+    await page.waitForTimeout(200)
+  }
   await page.getByRole('button', { name: /オンラインセッション作成/ }).click()
   await page.waitForTimeout(1200)
 

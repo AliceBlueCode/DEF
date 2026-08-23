@@ -355,6 +355,7 @@ def get_available_slots(req: AvailableSlotsRequest, request: Request):
         "gm_taken": bool(sess.get("invited_gm_token")) or sess.get("host_keeper_mode", False),
         "waiting_for_gm": sess.get("waiting_for_gm", False),
         "trpg_mode": sess.get("trpg_mode", False),
+        "trpg_rulebook": sess.get("trpg_rulebook", ""),
     }
 
 
@@ -363,6 +364,7 @@ class JoinRequest(BaseModel):
     claim_char_id: str = ""   # 既存人間スロットを引き継ぐ
     character_json: dict = {} # オンラインセッション: キャラJSON持ち込み
     join_as_gm: bool = False  # オンラインセッション: GM/キーパーとして参加
+    game_sheet_id: str = ""   # TRPGモード: character_json内のgame_rules_sheetsから選んだシートID
 
 
 @router.post("/join")
@@ -487,6 +489,18 @@ def join_session(req: JoinRequest, request: Request):
         char_data["id"] = char_id
         char_data["player_type"] = "human"
         sess.setdefault("guest_chars", {})[char_id] = char_data
+        if req.game_sheet_id:
+            # ゲストが持ち込んだcharacter_json内のgame_rules_sheetsから選んだシートを
+            # 検証・登録する（2026-08-23、TRPGモードのゲスト参加時にキャラクターシートを
+            # 選べない問題への対応）。profiles={}で渡す——この時点でchar_idは定義上
+            # 必ずguest_chars側のキャラであり、ホストのローカルキャラ库を引く理由が無い。
+            from def_kari.characters import resolve_char_game_sheet
+            _chosen_sheet = resolve_char_game_sheet(char_id, req.game_sheet_id, {}, sess)
+            if not _chosen_sheet:
+                raise HTTPException(400, "Selected game sheet not found in character JSON")
+            if _chosen_sheet.get("rulebook_id", "") != sess.get("trpg_rulebook", ""):
+                raise HTTPException(400, "Selected game sheet's rulebook does not match this session")
+            sess.setdefault("char_game_sheets", {})[char_id] = req.game_sheet_id
         # このキャラが参加を許された時点のレーティング上限を記録しておく。同一セッションが
         # レーティングの異なる複数の招待コードを発行できる仕様のため、セッション全体で
         # 一つの上限に決め打ちできない（3.2節参照）。セッション内T2I生成時にこの上限を
@@ -542,6 +556,7 @@ def join_session(req: JoinRequest, request: Request):
         "display_name": display_name,
         "role": role,
         "claimed_char_id": char_id if req.claim_char_id else "",
+        "game_sheet_id": req.game_sheet_id if req.game_sheet_id else "",
     }
     sess.setdefault("joined_participants", []).append(pinfo)
     # token → participant_id の逆引き（サーバー内部限定。joined_participants はそのまま

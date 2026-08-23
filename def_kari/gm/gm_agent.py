@@ -6,7 +6,7 @@ Character を所有しない特殊な管理者Agent。
 
 import re
 
-from def_kari.characters import load_profiles, get_character
+from def_kari.characters import load_profiles, get_character, resolve_char_game_sheet
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.settings import load_settings
 from def_kari.gm.context_builder import (
@@ -103,8 +103,7 @@ class GMAgent:
         if char_game_sheets:
             _profiles = load_profiles()
             for _cid, _sid in char_game_sheets.items():
-                _raw = _profiles.get(_cid, {})
-                _sheet = _raw.get("game_rules_sheets", {}).get(_sid, {})
+                _sheet = resolve_char_game_sheet(_cid, _sid, _profiles, session)
                 _stats = _sheet.get("stats", {})
                 _cname = name_map.get(_cid, _cid)
                 if _stats:

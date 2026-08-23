@@ -718,6 +718,20 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         )
         initiativeRef.current = [...new Set([...initiativeRef.current, p.character_id])]
       }
+      // 参加者が選んだキャラクターシートを他タブ（ホスト・他ゲスト）にも反映する。
+      // 参加した本人のタブは既にonJoined側で即セット済みだが、ここでも再フェッチする
+      // （冪等・無害）。持ち込みキャラはload_profiles()の対象外のため、session_idを
+      // 付けてguest_charsフォールバックが効く経路で取得する（2026-08-23）。
+      if (p.role === 'player' && p.character_id && p.game_sheet_id) {
+        void (async () => {
+          try {
+            const r = await fetch(`/api/characters/${p.character_id}/game_sheets?session_id=${sessionIdRef.current}`)
+            const d = await r.json()
+            const sheet = d.game_sheets?.[p.game_sheet_id]
+            if (sheet) setCharSheetData(prev => ({ ...prev, [p.character_id]: normalizeSheetStats({ ...sheet, _sheet_id: p.game_sheet_id }) }))
+          } catch {}
+        })()
+      }
     }
     if (event.type === 'CHARACTER_AUDIT_SKIPPED') {
       // 持ち込みキャラのLLM審査を実行できず通過扱いになったケース（S-4）。
@@ -1054,7 +1068,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       await Promise.all(
         Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
           try {
-            const r = await fetch(`/api/characters/${charId}/game_sheets`)
+            const r = await fetch(`/api/characters/${charId}/game_sheets?session_id=${data.session_id}`)
             const d = await r.json()
             if (d.game_sheets?.[sheetId]) sheetData[charId] = normalizeSheetStats({ ...d.game_sheets[sheetId], _sheet_id: sheetId })
           } catch {}
@@ -1570,7 +1584,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
         await Promise.all(
           Object.entries(charGameSheets).map(async ([charId, sheetId]) => {
             try {
-              const r = await fetch(`/api/characters/${charId}/game_sheets`)
+              const r = await fetch(`/api/characters/${charId}/game_sheets?session_id=${data.session_id}`)
               const d = await r.json()
               if (d.game_sheets?.[sheetId]) {
                 const sheet = normalizeSheetStats({ ...d.game_sheets[sheetId], _sheet_id: sheetId })
@@ -2759,7 +2773,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           </div>
           {showJoinDialog && (
             <JoinDialog
-              onJoined={(sid, token, charId, role: 'player' | 'observer' | 'gm', isLobbyActive: boolean, displayName: string) => {
+              onJoined={(sid, token, charId, role: 'player' | 'observer' | 'gm', isLobbyActive: boolean, displayName: string, sheetId: string, sheetData: any) => {
                 setRemovedNotice(null)
                 hostTokenRef.current = token
                 sessionIdRef.current = sid
@@ -2774,6 +2788,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
                   myCharIdRef.current = charId
                   setHumanCharId(charId)
                   setHumanCharName(displayName || charId)
+                  // JoinDialogが持ち込みJSONから既に手元に持っているシートを自タブへ
+                  // 即反映する（ネットワーク往復不要、2026-08-23）。
+                  if (sheetId && sheetData) {
+                    setCharSheetData(prev => ({ ...prev, [charId]: normalizeSheetStats({ ...sheetData, _sheet_id: sheetId }) }))
+                  }
                 }
                 setShowJoinDialog(false)
                 // playerのみ自己追加（observer/gmはSESSION_STARTEDの参加者リストで届く）

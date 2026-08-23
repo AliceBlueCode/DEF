@@ -6,7 +6,7 @@ import shutil
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from def_kari.characters import load_profiles, get_character, list_character_choices, get_raw_profile, save_profile, build_lora_prompt
+from def_kari.characters import load_profiles, get_character, list_character_choices, get_raw_profile, save_profile, build_lora_prompt, resolve_char_game_sheets
 from def_kari.settings import load_settings
 from def_kari.api.routes.characters_common import (
     _BASE,
@@ -81,13 +81,20 @@ def get_character_standing(character_id: str):
 
 
 @router.get("/{character_id}/game_sheets")
-def get_character_game_sheets(character_id: str):
+def get_character_game_sheets(character_id: str, session_id: str = ""):
+    """指定キャラのgame_rules_sheets一覧を返す。session_idが指定されていれば、
+    ホストのキャラ库（load_profiles()）に見つからない場合そのセッションの
+    guest_chars（持ち込みキャラ）へフォールバックする（resolve_char_game_sheets参照、
+    TRPGモードのゲスト参加時にキャラクターシートを選べない問題への対応）。
+    """
     if not _SAFE_ID_RE.match(character_id):
         return {"error": "Invalid character ID"}
-    from def_kari.characters import load_profiles
     profiles = load_profiles()
-    raw = profiles.get(character_id, {})
-    sheets = raw.get("game_rules_sheets", {})
+    session = None
+    if session_id:
+        from def_kari.api.routes.session_state import _sessions
+        session = _sessions.get(session_id)
+    sheets = resolve_char_game_sheets(character_id, profiles, session)
     return {"game_sheets": sheets}
 
 

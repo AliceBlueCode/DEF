@@ -1260,6 +1260,146 @@ def test_join_character_json_without_image_color_omits_char_colors_entry():
     _sessions.pop(sid, None)
 
 
+def test_join_character_json_flat_with_matching_game_sheet_populates_char_game_sheets():
+    """TRPGモードで、持ち込みキャラJSON（フラット形式）に埋め込まれたgame_rules_sheets
+    のうちセッションのルールブックと一致するシートを選ぶと、char_game_sheetsに
+    ポインタ（sheet_idのみ）が登録されること（2026-08-23、TRPGモードのゲスト参加時に
+    キャラクターシートを選べない問題への対応）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={
+        "character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": "def_original",
+    })
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {
+        "name": "シート持ちゲスト", "player_type": "human",
+        "game_rules_sheets": {
+            "def_original": {"rulebook_id": "def_original", "skills": {"察知": 60}, "stats": {}},
+        },
+    }
+    resp = client.post("/api/session/join", json={
+        "invite_code": invite_code, "character_json": char_json, "game_sheet_id": "def_original",
+    })
+    assert resp.status_code == 200
+    char_id = resp.json()["character_id"]
+    assert _sessions[sid]["char_game_sheets"][char_id] == "def_original"
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_versioned_with_matching_game_sheet_populates_char_game_sheets():
+    """同様に、versioned形式（{version: {base_profile:..., game_rules_sheets:...}}、
+    game_rules_sheetsはbase_profileの兄弟キー）でも正しく解決されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={
+        "character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": "def_original",
+    })
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {
+        "v1": {
+            "base_profile": {"name": "シート持ちゲスト2", "player_type": "human"},
+            "game_rules_sheets": {
+                "def_original": {"rulebook_id": "def_original", "skills": {}, "stats": {}},
+            },
+        },
+    }
+    resp = client.post("/api/session/join", json={
+        "invite_code": invite_code, "character_json": char_json, "game_sheet_id": "def_original",
+    })
+    assert resp.status_code == 200
+    char_id = resp.json()["character_id"]
+    assert _sessions[sid]["char_game_sheets"][char_id] == "def_original"
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_game_sheet_rulebook_mismatch_rejected():
+    """選んだシートのrulebook_idがセッションのtrpg_rulebookと一致しない場合、
+    参加自体が400で拒否されること（クライアント側フィルタだけに頼らずサーバー側でも
+    検証する）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={
+        "character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": "def_original",
+    })
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {
+        "name": "別ルールブックゲスト", "player_type": "human",
+        "game_rules_sheets": {
+            "coc": {"rulebook_id": "coc", "skills": {}, "stats": {}},
+        },
+    }
+    resp = client.post("/api/session/join", json={
+        "invite_code": invite_code, "character_json": char_json, "game_sheet_id": "coc",
+    })
+    assert resp.status_code == 400
+    assert "def_original" not in _sessions[sid].get("char_game_sheets", {}).values()
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_unknown_game_sheet_id_rejected():
+    """アップロードされたJSONのgame_rules_sheetsに存在しないsheet_idを指定した場合、
+    400で拒否されること。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={
+        "character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": "def_original",
+    })
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {"name": "シート無しゲスト", "player_type": "human"}
+    resp = client.post("/api/session/join", json={
+        "invite_code": invite_code, "character_json": char_json, "game_sheet_id": "nonexistent",
+    })
+    assert resp.status_code == 400
+    _sessions.pop(sid, None)
+
+
+def test_join_character_json_without_game_sheet_id_unaffected():
+    """game_sheet_idを省略（デフォルト空文字）した場合、従来通り無改修で参加でき、
+    char_game_sheetsには何も追加されないこと（回帰防止）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={
+        "character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": "def_original",
+    })
+    d = start.json()
+    sid = d["session_id"]
+    invite_code = d.get("invite_code") or next(iter(_sessions[sid]["invite_codes"]))
+
+    char_json = {"name": "シート未選択ゲスト", "player_type": "human"}
+    resp = client.post("/api/session/join", json={"invite_code": invite_code, "character_json": char_json})
+    assert resp.status_code == 200
+    char_id = resp.json()["character_id"]
+    assert char_id not in _sessions[sid].get("char_game_sheets", {})
+    _sessions.pop(sid, None)
+
+
 def test_lobby_config_host_char_populates_char_colors():
     """lobby_configでホストキャラを確定させた際、そのimage_colorもchar_colorsに
     反映されること。"""
