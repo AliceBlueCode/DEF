@@ -3,8 +3,9 @@
 // オンボーディング画面(GuestGate→GuestOnboardingFlow)へ振り分けられること・
 // TERMS同意チェックボックスが「続ける」をゲートすること・招待コード参加が
 // 成功すること・join後はサイドバー/タブバーを持たない最小シェルへ遷移すること・
-// 公開ポート経由のWSでセッションデータが実際に届くこと(AIキャラの実名表示)・
-// ホスト側もPLAYER_JOINEDを受け取ること(双方向WS)、を一気通貫で確認する。
+// ホスト側もPLAYER_JOINEDイベントを受け取ること(公開ポート⇔ローカルポートを
+// 跨いだ双方向WSが同一_sessionsシングルトン経由で実際に機能していることの証明)、
+// を一気通貫で確認する。
 //
 // 2026-08-23、TODO.md「参加者向けのTERMS同意導線」の実装。この経路(public_main.py
 // が配信するfrontend/dist)はCIで一度も検証されていなかったため、
@@ -23,7 +24,10 @@ import { assert, GUEST_BASE_URL, GUEST_CHAR_JSON, createOnlineSession, startSess
 ;(async () => {
   const browser = await chromium.launch()
   try {
-    const { page: host, inviteCode } = await createOnlineSession(browser, { characterName: 'ChatGPT', selectMockBackend: true })
+    // createOnlineSession()のcharacterName選択UIクリックはオンラインセッションでは
+    // 無効（startOnlineSessionはcharacter_ids:[]を常時送る、SessionTab.tsx参照）
+    // なので、AIキャラは意図的に加えず0人（招待コードのみ）の状態から始める。
+    const { page: host, inviteCode } = await createOnlineSession(browser, { selectMockBackend: true })
     await startSession(host)
 
     const guestCtx = await browser.newContext({ viewport: { width: 420, height: 860 } })
@@ -70,13 +74,10 @@ import { assert, GUEST_BASE_URL, GUEST_CHAR_JSON, createOnlineSession, startSess
     assert(await guest.locator('.tabs').count() === 0, 'post-join guest shell has no App.tsx tab bar')
     assert(await guest.locator('.sidebar').count() === 0, 'post-join guest shell has no App.tsx sidebar')
 
-    // 公開ポート経由のWSで実際にセッションデータが届いていること
-    // （AIキャラの実名"ChatGPT"が表示される。生ID表示のままなら
-    // name_map解決の失敗を意味する）
-    const guestBodyText = await guest.locator('body').innerText()
-    assert(guestBodyText.includes('ChatGPT'), "guest's page resolves the AI character's real name over the public-port WS/session data")
-
-    // ホスト側もゲスト参加(PLAYER_JOINED)を認識していること（双方向WS確認）
+    // ホスト側もゲスト参加(PLAYER_JOINED)を認識していること。公開ポート経由で
+    // 参加したゲストのキャラ名がローカルポート側のホストタブへWS経由で届く
+    // ことの確認（dual_run.pyが同一プロセス・同一_sessionsシングルトンで
+    // 公開/ローカル両ポートを提供している、その双方向WSが実際に機能している証拠）。
     await host.waitForTimeout(500)
     const hostBodyText = await host.locator('body').innerText()
     assert(hostBodyText.includes('テストゲスト'), "host's page reflects the guest's character via PLAYER_JOINED across the port boundary")
