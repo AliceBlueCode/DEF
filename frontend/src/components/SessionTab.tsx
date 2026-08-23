@@ -646,6 +646,15 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           }])
         }
       }
+      // 自分の送信/skipではない場合（他タブの発言・切断タイムアウトによる自動skip等）
+      // にラウンドが完了していれば、このタブからもキーパーを発火する。自タブ発の
+      // send/skipはsubmitHumanTurnの同期レスポンス側で既に判定済みのため!isMineで除外
+      // （切断タイムアウト自動skipはどのタブのローカル操作でもないため、従来は
+      // どのタブも判定する機会が無くキーパー発言が丸ごと発生しなかった、2026-08-23）。
+      if (p.round_completed && trpgModeRef.current && !isMine &&
+          keeperFiredRoundRef.current !== p.round_seq) {
+        await fireKeeperTurn(sessionIdRef.current, p.round_seq)
+      }
     }
     if (event.type === 'SESSION_IMAGE') {
       const p = event.payload
@@ -896,9 +905,6 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       return
     }
 
-    const isLastOfRound = trpgModeRef.current && initiativeRef.current.length > 0 &&
-      initiativeRef.current[initiativeRef.current.length - 1] === data.character_id
-
     const char = charMap[data.character_id]
     setMessages(prev => [...prev, { character_id: data.character_id, character_name: data.character_name, text: data.text, emotion: data.emotion, tags: data.tags || [], imageColor: char?.image_color ?? undefined, turnRound: data.round, turnTurn: data.turn }])
     setRound(data.round)
@@ -920,8 +926,13 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     // 挿絵・TTSはサーバー側でバックグラウンド生成され、TURN_IMAGE_READY / TURN_AUDIO_READY で
     // 非同期に届く（WSハンドラ側でturnRound/turnTurnが一致するメッセージを探して更新する）。
 
-    if (isLastOfRound && keeperFiredRoundRef.current !== data.round) {
-      await fireKeeperTurn(sid, data.round)
+    // ラウンド完了判定はサーバー側（initiative全員の発言済み集合）が権威。
+    // 以前はフロント側で「initiative配列の末尾のキャラが喋ったか」を見ていたが、
+    // 指名(designate)がターンを配列順を無視してジャンプさせるため、末尾のキャラが
+    // 一度も発言しないまま次ラウンドへ巻き戻り、キーパー発言が握り潰されることが
+    // あった（2026-08-23）。
+    if (data.round_completed && trpgModeRef.current && keeperFiredRoundRef.current !== data.round_seq) {
+      await fireKeeperTurn(sid, data.round_seq)
     }
 
     // _run_ai_turns は1ターン1実行で停止する。自動モードなら次のターンを ai_resume で継続する。
@@ -1255,8 +1266,8 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     }
   }
 
-  const fireKeeperTurn = async (sid: string, round: number) => {
-    keeperFiredRoundRef.current = round
+  const fireKeeperTurn = async (sid: string, roundSeq: number) => {
+    keeperFiredRoundRef.current = roundSeq
     setActiveTurnCharId('')
     if (isHumanKeeperRef.current) {
       wasAutoAdvancingRef.current = autoAdvanceRef.current
@@ -1912,13 +1923,11 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
       setAutoAdvance(true)
       autoAdvanceRef.current = true
     }
-    // 人間がラウンド末尾だった場合、nextTurn を呼ぶ前にキーパーを発火
-    const humanIsLastOfRound = trpgModeRef.current &&
-      initiativeRef.current.length > 0 &&
-      initiativeRef.current[initiativeRef.current.length - 1] === humanCharId &&
-      keeperFiredRoundRef.current !== data.round
-    if (humanIsLastOfRound && autoAdvanceRef.current) {
-      await fireKeeperTurn(sessionId!, data.round)
+    // ラウンド完了時、nextTurn を呼ぶ前にキーパーを発火（判定根拠はAI側と同じくサーバー権威、
+    // processAITurnData内のコメント参照）
+    if (data.round_completed && trpgModeRef.current && autoAdvanceRef.current &&
+        keeperFiredRoundRef.current !== data.round_seq) {
+      await fireKeeperTurn(sessionId!, data.round_seq)
     }
     // TRPGラウンド末尾でない場合はサーバーが自律でai_taskを再起動（WS経由でAI_TURN_COMPLETEDが届く）
   }
@@ -2969,7 +2978,13 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // characters（App.tsxのprop、ローカル専用ポートの/api/characters/でしか取得できず
   // 公開ポート経由のゲストでは常に空）だけでは足りないため、公開ポートでも読める
   // sessionNameMap（GET /{session_id}のname_map）を正本として最後に重ねる。
+  // extraNameMap（LOBBY_UPDATE/SESSION_STARTEDイベントのname_map、ロビー中に追加された
+  // AIキャラ等）も合流させる必要がある。以前はロビー画面用nameMap（lobbyMode分岐、
+  // 上方）にしか混ぜていなかったため、ロビー中に追加されたAIキャラの名前がセッション
+  // 開始後は解決できず、ゲスト側で生ID（日付サフィックス付き）にフォールバックし
+  // 続けていた（2026-08-23、実機で発覚）。
   const nameMap: Record<string, string> = {
+    ...extraNameMap,
     ...Object.fromEntries(characters.map(c => [c.id, c.name])),
     ...Object.fromEntries(participants.filter(p => p.char_id && p.display_name).map(p => [p.char_id, p.display_name])),
     ...sessionNameMap,

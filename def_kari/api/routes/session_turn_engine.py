@@ -161,6 +161,34 @@ def _get_current_speaker(session: dict) -> str | None:
     return initiative[turn % len(initiative)]
 
 
+def _mark_spoken_and_check_round_complete(session: dict, char_id: str) -> bool:
+    """指定キャラがこのラウンドで発言/skip済みであることを記録し、initiativeの
+    全員が出そろったらTrueを返す（このラウンドの発言済み集合はTrue時にリセットする）。
+
+    以前はフロントエンド側で「initiative配列の末尾のキャラが喋ったか」という
+    ヒューリスティックのみでキーパーの発言タイミングを判定していたが、指名
+    （designate、`session["turn"] = initiative.index(designated)`で配列順を
+    無視して直接ジャンプする）が絡むと、配列末尾のキャラが一度もそのラウンド中に
+    発言しないまま次ラウンドへ巻き戻ることがあり、そのラウンドのキーパー発言が
+    何のエラーも無く握り潰されていた（2026-08-23、実機で発覚）。initiativeの
+    並び順・turnのモジュロ演算に依存しない、サーバー側の権威データとして
+    「誰が発言済みか」の集合を管理する。
+
+    戻り値がTrueの回にサーバーが払い出す`_round_seq`（呼び出し側で加算）を
+    フロントの重複発火ガードに使う想定（`session["round"]`自体はこの判定とは
+    独立して別経路で遅延更新されるため、ラウンド境界の識別子としては使えない）。
+    """
+    spoken: list = session.setdefault("_round_spoken", [])
+    if char_id not in spoken:
+        spoken.append(char_id)
+    initiative = session.get("initiative", [])
+    if initiative and set(initiative) <= set(spoken):
+        session["_round_spoken"] = []
+        session["_round_seq"] = session.get("_round_seq", 0) + 1
+        return True
+    return False
+
+
 def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     """指定キャラの現ターンをskip扱いで処理する（発言力+1・ターン進行・AIターン再開）。
 
@@ -173,6 +201,7 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     counters[char_id] = counters.get(char_id, 0) + 1
     session["turn"] = session.get("turn", 0) + 1
     session["action_count"] = 0
+    round_completed = _mark_spoken_and_check_round_complete(session, char_id)
     _autosave(session_id)
     _game_event_bus.emit(session_id, "HUMAN_ACTION", {
         "character_id": char_id,
@@ -180,6 +209,8 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
         "text": "",
         "action": "skip",
         "counters": dict(counters),
+        "round_completed": round_completed,
+        "round_seq": session.get("_round_seq", 0),
     })
     _ai_task = session.get("ai_task")
     if not _ai_task or _ai_task.done():
@@ -190,6 +221,8 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
         "character_name": char_name,
         "round": session["round"],
         "counters": dict(counters),
+        "round_completed": round_completed,
+        "round_seq": session.get("_round_seq", 0),
     }
 
 
@@ -881,6 +914,7 @@ def _finalize_ai_turn(
         "emotion": emotion,
         "tags": tags,
     })
+    round_completed = _mark_spoken_and_check_round_complete(session, current_char_id)
 
     # A6 リピートペナルティ
     from def_kari.settings import load_settings as _load_settings
@@ -935,6 +969,8 @@ def _finalize_ai_turn(
         "penalty_message": penalty_message,
         "ai_action": ai_action.get("action", "none"),
         "designated_name": designated_target_name or None,
+        "round_completed": round_completed,
+        "round_seq": session.get("_round_seq", 0),
     }
 
 
@@ -1347,6 +1383,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         # 人間プレイヤーは「積む→発言完」が1ターン完了とみなす（actions_per_turn に関わらず即時進行）
         session["turn"] = turn + 1
         session["action_count"] = 0
+        round_completed = _mark_spoken_and_check_round_complete(session, current_char_id)
         _autosave(session_id)
         _game_event_bus.emit(session_id, "HUMAN_ACTION", {
             "character_id": current_char_id,
@@ -1354,6 +1391,8 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "text": req.text,
             "action": "send",
             "counters": dict(counters),
+            "round_completed": round_completed,
+            "round_seq": session.get("_round_seq", 0),
         })
         # AIタスク起動（二重起動防止）
         _ai_task = session.get("ai_task")
@@ -1368,6 +1407,8 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "round": session["round"],
             "counters": dict(counters),
             "audio_request_id": audio_request_id,
+            "round_completed": round_completed,
+            "round_seq": session.get("_round_seq", 0),
         }
 
 
