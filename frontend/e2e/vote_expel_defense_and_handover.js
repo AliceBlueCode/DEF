@@ -121,10 +121,14 @@ import { assert, createOnlineSession, joinAsPlayer, startSession } from './helpe
     // 止まったまま進まなくなる不具合があった(2026-08-22、実機のexpelでAI引き継ぎ
     // 直後にセッションが停止する現象として発見・修正)。新しいメッセージ(=AIが
     // 実際にこのキャラのターンを生成した証拠)が届くことを確認する。
+    // CIランナーはこの時点までに複数回の弁明ラウンド・投票サイクルを経ており負荷が
+    // 蓄積しているため、ローカルでは余裕だった15秒がCIでは不足しタイムアウトする
+    // ことを実CIで確認（2026-08-23）。LLM呼び出しを含む他のシナリオの待ち時間に
+    // 合わせ30秒に拡張。
     await host.waitForFunction(
       (before) => document.querySelectorAll('.session-msg').length > before,
       messageCountBeforeResume,
-      { timeout: 15000 },
+      { timeout: 30000 },
     )
     const hostTextAfterResume = await host.locator('body').innerText()
     assert(hostTextAfterResume.includes('テストゲスト'), 'a new AI-generated turn for the handed-over character actually appears (session did not get stuck)')
