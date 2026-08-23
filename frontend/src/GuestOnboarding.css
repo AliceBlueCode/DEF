@@ -266,11 +266,22 @@
 
 /* ── join後の最小シェル（サイドバー・他タブ無し） ──────────────── */
 
+/* SessionTab.tsxのアクティブセッション画面はルート要素が.tab-content.session-tab
+   （App.css: flex:1; display:flex; flex-direction:column; overflow:hidden）で、
+   App.tsxの.app > .main-layout > .main-contentというflexコンテナの連鎖の中に
+   置かれる前提の内部CSSになっている。この最小シェルはサイドバー・タブバー無しで
+   SessionTabを直接マウントするため、その連鎖をここで肩代わりしないと
+   .tab-content側のflex:1が効かず、発言履歴エリア等が高さ0に潰れてレイアウトが
+   壊れる（2026-08-24、実機でユーザーが発見・報告）。 */
 .guest-session-shell {
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #0e1117;
   color: #e0e0e0;
+  font-family: 'Segoe UI', sans-serif;
 }
 
 .light-mode .guest-session-shell {
