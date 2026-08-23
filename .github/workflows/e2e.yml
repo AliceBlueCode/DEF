@@ -31,6 +31,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # guest_onboarding.jsは公開ポート(dual_run.pyのpublic_main.pyが配信する
+      # frontend/dist)経由の実ゲスト体験そのものを検証するため、ビルド成果物が
+      # 事前に必要（2026-08-23）。副産物として、このリポジトリのTSビルドが
+      # CIで初めて検証されるようになる。
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
       # DEBIAN_FRONTEND未設定だと--with-deps経由のapt-get installが対話プロンプト待ちで
       # ハングすることがある(実CI実行で2回連続、同一ステップで15分超ハング・再現)。
       # timeout-minutesはそれでも詰まった場合に長時間占有せず早期に失敗させるための保険。
@@ -46,12 +54,18 @@ jobs:
       # (llm/adapters/tgw.py)向けにOpenAI互換の固定レスポンスを返す。CIには
       # data/llm_services.json（gitignore対象）が存在しないため、LLM_BACKENDは
       # 未設定時textgen_webuiへ自動フォールバックする(llm/backend.py参照)。
+      # バックエンドはmain.py単体ではなくdual_run.py経由で起動する
+      # （同一appオブジェクトを使うため既存シナリオへの影響は無く、副産物として
+      # public_main.pyの公開ポート(8512)がguest_onboarding.js向けに同一プロセス
+      # ・同一_sessionsシングルトンで立ち上がる。--no-trust-cloudflare-tunnelは
+      # 実トンネルの無いCI環境でCF-Connecting-IPヘッダーを誤って信用しないため、
+      # --cloudflare-tunnelは実cloudflaredの起動が不要なため付けない、2026-08-23）。
       - name: Start mock LLM, backend, frontend
         env:
           TEXTGEN_WEBUI_URL: http://127.0.0.1:5000/v1
         run: |
           python scripts/e2e_mock_llm.py --port 5000 > mock_llm.log 2>&1 &
-          TEXTGEN_WEBUI_URL="$TEXTGEN_WEBUI_URL" python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 > backend.log 2>&1 &
+          TEXTGEN_WEBUI_URL="$TEXTGEN_WEBUI_URL" python -m def_kari.api.dual_run --local-port 8511 --public-port 8512 --no-trust-cloudflare-tunnel > backend.log 2>&1 &
           (cd frontend && npm run dev > ../frontend.log 2>&1 &)
 
       - name: Wait for services to be ready
@@ -62,6 +76,10 @@ jobs:
           done
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8511/api/health >/dev/null && break
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8512/api/health >/dev/null && break
             sleep 1
           done
           for i in $(seq 1 30); do
@@ -87,6 +105,7 @@ jobs:
           npm run e2e:trpg-keeper-online-join
           npm run e2e:ai-takeover
           npm run e2e:trpg-guest-sheet-join
+          npm run e2e:guest-onboarding
           npm run e2e:ai-turn-dedup
           npm run e2e:jwt-regen
           npm run e2e:disconnect-timeout

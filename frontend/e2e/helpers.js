@@ -10,6 +10,11 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const BASE_URL = 'http://localhost:3000'
+// dual_run.pyの公開ポート（`--no-trust-cloudflare-tunnel`でloopback直起動、CI/ローカル
+// e2e向け）。ホストのnpm run devプロキシ経由のBASE_URLとは別物で、frontend/dist（要
+// npm run build）をpublic_main.pyが直接配信する経路——実ゲストが辿るのと同じ経路を
+// 検証するために存在する（guest_onboarding.js参照、2026-08-23）。
+export const GUEST_BASE_URL = 'http://127.0.0.1:8512'
 export const GUEST_CHAR_JSON = path.join(__dirname, 'fixtures', 'test_guest_char.json')
 
 export function assert(cond, message) {

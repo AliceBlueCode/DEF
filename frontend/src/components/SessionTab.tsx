@@ -3,6 +3,7 @@ import { useT } from '../i18n'
 import InvitePanel from './InvitePanel'
 import InviteCodeDisplay from './InviteCodeDisplay'
 import JoinDialog from './JoinDialog'
+import { type JoinResult } from './useJoinFlow'
 import ParticipantList from './ParticipantList'
 import {
   type Character,
@@ -28,6 +29,10 @@ type Props = {
   backend: string
   ttsBackend: string
   t2iBackend: string
+  // ゲスト向けオンボーディング画面（GuestOnboardingFlow.tsx）がjoin成功直後に渡す。
+  // JoinDialog経由のonJoinedと同じ情報だが、propとして最初から持っているため
+  // JoinDialogの表示・モーダルクローズ操作は不要（2026-08-23）。
+  initialJoinResult?: JoinResult
 }
 
 // ── ダイスローラー（投票行の右に配置）────────────────────────
@@ -114,7 +119,7 @@ function CharMultiSelect({
 
 // ── メインコンポーネント ──────────────────────────────────────
 
-export default function SessionTab({ characters, backend, t2iBackend }: Props) {
+export default function SessionTab({ characters, backend, t2iBackend, initialJoinResult }: Props) {
   const t = useT()
 
   // ── 分割済みカスタムフック（TODO.md「SessionTab.tsxのコンポーネント分割」参照）──
@@ -347,6 +352,10 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
   // のみを担う(完全な状態スナップショット取得はしていない — 既知の制約)。
   useEffect(() => {
     if (sessionId) return
+    // initialJoinResult（GuestOnboardingFlow経由の初回join）がある場合は下の別effectが
+    // フル機能のapplyJoinResultを適用するため、この軽量復帰処理と競合させない
+    // （2026-08-23）。
+    if (initialJoinResult) return
     const restore = loadSessionRestoreState()
     if (!restore) return
     isRestoringRef.current = true
@@ -361,6 +370,15 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     }
     setLobbyActive(false)
     setSessionId(restore.sessionId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // GuestOnboardingFlow経由の初回join直後、フル機能のapplyJoinResult
+  // （自己のparticipants即時追加・持ち込みシートの即時反映込み）を1回だけ適用する
+  // （2026-08-23。上の軽量復帰effectでは これらの反映が欠けるため、propで受け取った
+  // 初回join結果はこちらで処理する）。
+  useEffect(() => {
+    if (initialJoinResult) applyJoinResult(initialJoinResult)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -2576,6 +2594,42 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
     )
   }
 
+  // JoinDialog（ホストがローカルポート経由で自セッションへ追加参加する場合）・
+  // GuestOnboardingFlow経由のinitialJoinResult（公開ポート経由の実ゲスト初回join）
+  // 両方から呼ぶ共有処理（2026-08-23、useJoinFlow.ts抽出にあわせて名前付き関数化）。
+  const applyJoinResult = (result: JoinResult) => {
+    const { sessionId: sid, playerToken: token, charId, role, lobbyActive: isLobbyActive, displayName, sheetId, sheetData } = result
+    setRemovedNotice(null)
+    hostTokenRef.current = token
+    sessionIdRef.current = sid
+    setSessionId(sid)
+    myRoleRef.current = role
+    setMyRole(role)
+    saveSessionRestoreState({ sessionId: sid, token, role, charId: charId || '', displayName: displayName || '' })
+    console.log('[SessionTab] applyJoinResult: isLobbyActive=', isLobbyActive, 'role=', role, 'charId=', charId)
+    setLobbyActive(isLobbyActive)
+    // プレイヤーとして参加した場合は自分のキャラIDをセット（コントロール表示を切り替える）
+    if (role === 'player' && charId) {
+      myCharIdRef.current = charId
+      setHumanCharId(charId)
+      setHumanCharName(displayName || charId)
+      // 持ち込みJSONから既に手元に持っているシートを自タブへ即反映する
+      // （ネットワーク往復不要、2026-08-23）。
+      if (sheetId && sheetData) {
+        setCharSheetData(prev => ({ ...prev, [charId]: normalizeSheetStats({ ...sheetData, _sheet_id: sheetId }) }))
+      }
+    }
+    setShowJoinDialog(false)
+    // playerのみ自己追加（observer/gmはSESSION_STARTEDの参加者リストで届く）
+    if (role === 'player' && charId) {
+      setParticipants(prev =>
+        prev.some(x => x.char_id === charId)
+          ? prev
+          : [...prev, { participant_id: charId, char_id: charId, display_name: t('session.join.you'), role, connected: true }]
+      )
+    }
+  }
+
   // ── セットアップ画面 ──────────────────────────────────────
   if (!sessionId) {
     return (
@@ -2782,37 +2836,7 @@ export default function SessionTab({ characters, backend, t2iBackend }: Props) {
           </div>
           {showJoinDialog && (
             <JoinDialog
-              onJoined={(sid, token, charId, role: 'player' | 'observer' | 'gm', isLobbyActive: boolean, displayName: string, sheetId: string, sheetData: any) => {
-                setRemovedNotice(null)
-                hostTokenRef.current = token
-                sessionIdRef.current = sid
-                setSessionId(sid)
-                myRoleRef.current = role
-                setMyRole(role)
-                saveSessionRestoreState({ sessionId: sid, token, role, charId: charId || '', displayName: displayName || '' })
-                console.log('[SessionTab] onJoined: isLobbyActive=', isLobbyActive, 'role=', role, 'charId=', charId)
-                setLobbyActive(isLobbyActive)
-                // プレイヤーとして参加した場合は自分のキャラIDをセット（コントロール表示を切り替える）
-                if (role === 'player' && charId) {
-                  myCharIdRef.current = charId
-                  setHumanCharId(charId)
-                  setHumanCharName(displayName || charId)
-                  // JoinDialogが持ち込みJSONから既に手元に持っているシートを自タブへ
-                  // 即反映する（ネットワーク往復不要、2026-08-23）。
-                  if (sheetId && sheetData) {
-                    setCharSheetData(prev => ({ ...prev, [charId]: normalizeSheetStats({ ...sheetData, _sheet_id: sheetId }) }))
-                  }
-                }
-                setShowJoinDialog(false)
-                // playerのみ自己追加（observer/gmはSESSION_STARTEDの参加者リストで届く）
-                if (role === 'player' && charId) {
-                  setParticipants(prev =>
-                    prev.some(x => x.char_id === charId)
-                      ? prev
-                      : [...prev, { participant_id: charId, char_id: charId, display_name: t('session.join.you'), role, connected: true }]
-                  )
-                }
-              }}
+              onJoined={applyJoinResult}
               onClose={() => setShowJoinDialog(false)}
             />
           )}

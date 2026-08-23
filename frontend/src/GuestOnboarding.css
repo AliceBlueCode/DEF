@@ -1,0 +1,289 @@
+/* ゲスト向けTERMS同意オンボーディング画面。App.cssとは独立したファイル
+   （サイドバー・7タブ構造を継承しないモバイルファースト専用画面のため）。
+   既存のテーマ規約（.light-modeクラスをdescendant selectorで重ねる）を踏襲し、
+   JoinDialog.tsxのvar(--x, fallback)パターン（変数が未定義で常にfallback側にしか
+   解決されていなかった）は踏襲しない。App.cssのダーク基調(#0e1117)・
+   ライト基調(#f0f2f6)と同じ配色を直接指定する。 */
+
+.guest-onboarding-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: #0e1117;
+  color: #e0e0e0;
+  font-family: 'Segoe UI', sans-serif;
+  box-sizing: border-box;
+  padding: 24px 16px 40px;
+}
+
+.light-mode.guest-onboarding-root {
+  background: #f0f2f6;
+  color: #262730;
+}
+
+.guest-onboarding {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.guest-onboarding-title {
+  margin: 8px 0 0;
+  font-size: 1.3em;
+  font-weight: 700;
+  text-align: center;
+  color: #a8d8f0;
+}
+
+.light-mode .guest-onboarding-title {
+  color: #3a9bd8;
+}
+
+.guest-onboarding-step {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.light-mode .guest-onboarding-step {
+  background: #ffffff;
+  border-color: #d0d0d0;
+}
+
+.guest-onboarding-step h2 {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.guest-onboarding-label {
+  font-size: 0.82em;
+  opacity: 0.6;
+}
+
+.guest-onboarding-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: inherit;
+  font-size: 1em;
+}
+
+.light-mode .guest-onboarding-input {
+  border-color: #ccc;
+  background: #f5f5f5;
+}
+
+.guest-onboarding-error {
+  color: #ff8a80;
+  font-size: 0.85em;
+}
+
+.light-mode .guest-onboarding-error {
+  color: #c62828;
+}
+
+.guest-onboarding-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.guest-onboarding-btn-primary,
+.guest-onboarding-btn-secondary {
+  flex: 1;
+  min-height: 46px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 0.98em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.guest-onboarding-btn-primary {
+  border: none;
+  background: #4a6cf7;
+  color: #fff;
+}
+
+.guest-onboarding-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.guest-onboarding-btn-secondary {
+  border: 1px solid #444;
+  background: transparent;
+  color: inherit;
+}
+
+.light-mode .guest-onboarding-btn-secondary {
+  border-color: #ccc;
+}
+
+/* 招待コードステップは「続ける」1つだけなのでflex:1にせず適度な幅にする */
+.guest-onboarding-step > .guest-onboarding-btn-primary {
+  align-self: stretch;
+}
+
+/* ── TERMS同意パネル ─────────────────────────────────────── */
+
+.guest-terms-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.guest-terms-scroll {
+  max-height: 46vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 0.86em;
+  line-height: 1.6;
+}
+
+.light-mode .guest-terms-scroll {
+  border-color: #d5d5d5;
+}
+
+.guest-terms-scroll h1 { font-size: 1.15em; margin: 0 0 10px; }
+.guest-terms-scroll h2 { font-size: 1.02em; margin: 18px 0 8px; color: #a8d8f0; }
+.guest-terms-scroll h3 { font-size: 0.95em; margin: 14px 0 6px; opacity: 0.9; }
+.light-mode .guest-terms-scroll h2 { color: #3a9bd8; }
+.guest-terms-scroll p { margin: 0 0 10px; }
+.guest-terms-scroll ul { margin: 0 0 10px; padding-left: 1.3em; }
+.guest-terms-scroll li { margin-bottom: 4px; }
+.guest-terms-scroll hr { border: none; border-top: 1px solid #3a3a3a; margin: 14px 0; }
+.light-mode .guest-terms-scroll hr { border-top-color: #ddd; }
+.guest-terms-scroll blockquote {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-left: 3px solid #4a6cf7;
+  opacity: 0.85;
+}
+.guest-terms-scroll a { color: #6ea8fe; }
+.light-mode .guest-terms-scroll a { color: #2a6a9a; }
+.guest-terms-scroll table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 10px;
+  font-size: 0.95em;
+}
+.guest-terms-scroll th,
+.guest-terms-scroll td {
+  border: 1px solid #3a3a3a;
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.light-mode .guest-terms-scroll th,
+.light-mode .guest-terms-scroll td {
+  border-color: #ddd;
+}
+.guest-terms-error {
+  color: #ff8a80;
+}
+.light-mode .guest-terms-error {
+  color: #c62828;
+}
+
+.guest-terms-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.guest-terms-consent input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  cursor: pointer;
+}
+
+/* ── キャラ選択ステップ ───────────────────────────────────── */
+
+.guest-onboarding-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guest-onboarding-slot-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  cursor: pointer;
+}
+
+.light-mode .guest-onboarding-slot-option {
+  border-color: #ddd;
+}
+
+.guest-onboarding-slot-option input[type='radio'] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.guest-onboarding-badge {
+  margin-left: auto;
+  font-size: 0.75em;
+  opacity: 0.6;
+}
+
+.guest-onboarding-charjson,
+.guest-onboarding-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── join後の最小シェル（サイドバー・他タブ無し） ──────────────── */
+
+.guest-session-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #0e1117;
+  color: #e0e0e0;
+}
+
+.light-mode .guest-session-shell {
+  background: #f0f2f6;
+  color: #262730;
+}
+
+@media (min-width: 640px) {
+  .guest-onboarding-root {
+    padding-top: 48px;
+  }
+
+  .guest-onboarding-step {
+    padding: 28px 32px;
+  }
+}

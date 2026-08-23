@@ -26,7 +26,7 @@ from def_kari.api.main import (
     SecurityHeadersMiddleware,
 )
 from def_kari import __version__
-from def_kari.api.routes import session
+from def_kari.api.routes import session, terms
 from def_kari.api.routes.characters_public import router as characters_public_router
 from def_kari.api.routes.t2i_public import router as t2i_public_router
 from def_kari.api.routes.tts_public import router as tts_public_router
@@ -81,6 +81,7 @@ public_app.include_router(session.router, prefix="/api/session", tags=["session"
 public_app.include_router(characters_public_router, prefix="/api/characters", tags=["characters-public"])
 public_app.include_router(t2i_public_router, prefix="/api/t2i", tags=["t2i-public"])
 public_app.include_router(tts_public_router, prefix="/api/tts", tags=["tts-public"])
+public_app.include_router(terms.router, prefix="/api/terms", tags=["terms"])
 
 
 @public_app.get("/api/health")

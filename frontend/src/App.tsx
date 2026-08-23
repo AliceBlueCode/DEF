@@ -7,6 +7,7 @@ import SettingsTab from './components/SettingsTab'
 import DebugTab from './components/DebugTab'
 import ThoughtTab from './components/ThoughtTab'
 import Sidebar from './components/Sidebar'
+import GuestGate from './components/GuestGate'
 import { LanguageProvider, useT, useLanguage } from './i18n'
 import './App.css'
 
@@ -227,7 +228,9 @@ function AppInner() {
 function App() {
   return (
     <LanguageProvider>
-      <AppInner />
+      <GuestGate>
+        <AppInner />
+      </GuestGate>
     </LanguageProvider>
   )
 }

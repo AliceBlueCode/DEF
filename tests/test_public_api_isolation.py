@@ -30,6 +30,7 @@ _ALLOWED_PREFIXES = (
     "/api/t2i",         # t2i_public のみ
     "/api/tts",         # tts_public のみ
     "/api/health",
+    "/api/terms",       # TERMS.md読み取り専用配信（ゲスト向けオンボーディング画面用）
     "/assets",          # frontend/dist/assets のビルド済みJS/CSS（下記参照）
 )
 
@@ -423,6 +424,14 @@ def test_session_join_flow_reachable():
 
 def test_health_reachable():
     assert client.get("/api/health").status_code == 200
+
+
+def test_terms_reachable():
+    """TERMS.mdはゲスト向けオンボーディング画面のTERMS同意ステップが公開ポート経由で
+    読む必要があるため、公開アプリでも到達可能でなければならない。"""
+    resp = client.get("/api/terms")
+    assert resp.status_code == 200
+    assert "利用規約" in resp.json()["content"]
 
 
 def test_docs_endpoints_not_reachable():

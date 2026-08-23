@@ -107,6 +107,20 @@ export function clearSessionRestoreState() {
   try { sessionStorage.removeItem(SESSION_RESTORE_KEY) } catch { /* ignore */ }
 }
 
+// ゲスト（招待コードでオンボーディング画面からjoinした参加者）判定専用のマーカー。
+// def_active_session（ホストがローカルポートで自セッションに追加参加する場合にも
+// セットされる）だけでは、host/guestを区別できないため別キーとして持つ
+// （2026-08-23、GuestGate.tsx参照）。GuestOnboardingFlow.tsxがjoin成功時のみセットする。
+const GUEST_MODE_KEY = 'def_guest_mode'
+
+export function markGuestMode() {
+  try { sessionStorage.setItem(GUEST_MODE_KEY, '1') } catch { /* ignore */ }
+}
+
+export function isGuestMode(): boolean {
+  try { return sessionStorage.getItem(GUEST_MODE_KEY) === '1' } catch { return false }
+}
+
 const SEXUAL_TAGS = ['sfw', 'nsfw', 'hentai']
 const VIOLENCE_TAGS = ['violence', 'gore', 'extreme']
 

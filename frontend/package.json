@@ -23,7 +23,8 @@
     "e2e:trpg-keeper-online-join": "node e2e/trpg_keeper_online_join.js",
     "e2e:ai-takeover": "node e2e/ai_takeover.js",
     "e2e:vote-expel-defense-and-handover": "node e2e/vote_expel_defense_and_handover.js",
-    "e2e:trpg-guest-sheet-join": "node e2e/trpg_guest_sheet_join.js"
+    "e2e:trpg-guest-sheet-join": "node e2e/trpg_guest_sheet_join.js",
+    "e2e:guest-onboarding": "node e2e/guest_onboarding.js"
   },
   "dependencies": {
     "react": "^19.2.8",

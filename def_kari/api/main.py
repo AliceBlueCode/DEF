@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought, trpg
+from def_kari.api.routes import chat, characters, settings, tts, novel, session, t2i, thought, trpg, terms
 from def_kari.api import tunnel_state
 
 from def_kari import __version__
@@ -249,6 +249,7 @@ app.include_router(session.router, prefix="/api/session", tags=["session"])
 app.include_router(t2i.router, prefix="/api/t2i", tags=["t2i"])
 app.include_router(thought.router, prefix="/api/thought", tags=["thought"])
 app.include_router(trpg.router, prefix="/api/trpg", tags=["trpg"])
+app.include_router(terms.router, prefix="/api/terms", tags=["terms"])
 
 
 @app.get("/api/health")

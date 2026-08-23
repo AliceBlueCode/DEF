@@ -116,6 +116,18 @@ const ja: Record<string, string> = {
   'session.join.sheetLabel': 'キャラクターシート',
   'session.join.noSheetMatch': 'このルールブックに一致するシートが見つかりませんでした（シート無しで参加できます）',
 
+  // Guest onboarding（招待コード参加者向け専用画面）
+  'guestOnboarding.title': 'DEF(kari) セッションに参加',
+  'guestOnboarding.loading': '読み込み中…',
+  'guestOnboarding.stepInviteTitle': 'ステップ 1 / 3 : 招待コード',
+  'guestOnboarding.stepTermsTitle': 'ステップ 2 / 3 : 利用規約への同意',
+  'guestOnboarding.stepCharTitle': 'ステップ 3 / 3 : 参加方法を選択',
+  'guestOnboarding.continueBtn': '続ける',
+  'guestOnboarding.backBtn': '戻る',
+  'guestOnboarding.consentCheckbox': '利用規約を読み、内容に同意します（18歳未満は利用できません）',
+  'guestOnboarding.consentRequired': '参加するには利用規約への同意が必要です',
+  'guestOnboarding.termsLoadFailed': '利用規約の読み込みに失敗しました。再読み込みしてください。',
+
   // Session — invite (host issuing invite codes)
   'session.invite.issue': '発行',
   'session.invite.copy': 'コピー',
@@ -792,6 +804,18 @@ const en: Record<string, string> = {
   'session.join.selectJsonBtn': 'Select JSON file...',
   'session.join.sheetLabel': 'Character Sheet',
   'session.join.noSheetMatch': "No sheet matching this session's rulebook was found (you can still join without one)",
+
+  // Guest onboarding (dedicated screen for invite-code participants)
+  'guestOnboarding.title': 'Join DEF(kari) Session',
+  'guestOnboarding.loading': 'Loading…',
+  'guestOnboarding.stepInviteTitle': 'Step 1 / 3: Invite Code',
+  'guestOnboarding.stepTermsTitle': 'Step 2 / 3: Terms of Use',
+  'guestOnboarding.stepCharTitle': 'Step 3 / 3: How you\'ll join',
+  'guestOnboarding.continueBtn': 'Continue',
+  'guestOnboarding.backBtn': 'Back',
+  'guestOnboarding.consentCheckbox': 'I have read and agree to the Terms of Use (must be 18 or older)',
+  'guestOnboarding.consentRequired': 'You must agree to the Terms of Use to join',
+  'guestOnboarding.termsLoadFailed': 'Failed to load the Terms of Use. Please reload.',
 
   // Session — invite
   'session.invite.issue': 'Issue',

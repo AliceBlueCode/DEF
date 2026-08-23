@@ -11,8 +11,17 @@
    cd frontend && npm run dev
    ```
 
-2. 設定タブでLLMバックエンド(APIキー等)を疎通可能な状態にしておく。`vote_expel.js`は投票の弁明ラウンドで実際にLLM呼び出しが発生する。
-3. Playwrightのブラウザバイナリが未取得なら `npx playwright install chromium` を一度実行する。
+2. `guest_onboarding.js`だけは上記に加えて`npm run build`（`frontend/dist`生成）と、
+   `main.py`単体ではなく`dual_run.py`経由の起動が必要（公開ポート＝ゲスト向け
+   オンボーディング画面が実際にマウントされる経路そのものを検証するため）。
+
+   ```bash
+   cd frontend && npm run build
+   python -m def_kari.api.dual_run --local-port 8511 --public-port 8512 --no-trust-cloudflare-tunnel
+   ```
+
+3. 設定タブでLLMバックエンド(APIキー等)を疎通可能な状態にしておく。`vote_expel.js`は投票の弁明ラウンドで実際にLLM呼び出しが発生する。
+4. Playwrightのブラウザバイナリが未取得なら `npx playwright install chromium` を一度実行する。
 
 ## 実行
 
@@ -33,6 +42,7 @@ npm run e2e:trpg-keeper-online-join  # TRPGモードのオンラインセッシ�
 npm run e2e:ai-takeover              # 参加者切断時、ホストのイニシアチブ表示に🤖AI引き継ぎボタンが現れクリックで引き継ぎ済みに切り替わることを確認
 npm run e2e:vote-expel-defense-and-handover  # expelの弁明ラウンドが対象者タブにもリアルタイムで届き、対象者自身が意見と反対票を投じられ、キーパーの「AIに引き継ぐ」選択でキャラがinitiativeに残ることを確認
 npm run e2e:trpg-guest-sheet-join    # TRPGモードのオンラインセッションで、招待コード参加時に持ち込みキャラJSONのキャラクターシートを選べ、ゲスト自身・ホスト双方のタブに反映されることを確認
+npm run e2e:guest-onboarding         # 公開ポート(dual_run.pyのpublic-port)経由のゲストがTERMS同意オンボーディング画面へ振り分けられ、招待コード→TERMS同意→キャラ選択の3ステップを経て最小シェルへ参加できることを確認（他シナリオと違いBASE_URLではなくGUEST_BASE_URL=127.0.0.1:8512を使う。要npm run build + dual_run.py起動）
 ```
 
 各スクリプトはヘッドレスChromiumを2つのブラウザコンテキスト(ホスト/ゲスト)で操作し、`helpers.js`の`assert()`で結果を検証する。失敗すると該当のassertメッセージを`FAIL:`付きで出力し、非ゼロ終了コードで終わる。
