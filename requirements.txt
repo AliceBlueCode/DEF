@@ -21,7 +21,7 @@ python-jose>=3.5.0
 requests>=2.34.2
 
 # Process monitoring (VOICEVOX memory watchdog, see backends.py)
-psutil>=6.0.0
+psutil>=7.2.2
 
 # Image processing
 Pillow>=12.3.0
