@@ -112,13 +112,23 @@ def inject_keeper_message(session_id: str, req: KeeperMessageRequest, _auth: dic
 
 
 class AIKeeperRequest(BaseModel):
-    backend: str = DEFAULT_LLM_BACKEND
     inject_history: bool = True
 
 
 @router.post("/{session_id}/ai_keeper")
 def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depends(require_player)):
-    """AIキーパー（無個性モード）: シナリオ・ルールブック・履歴からGM発言を生成する。"""
+    """AIキーパー（無個性モード）: シナリオ・ルールブック・履歴からGM発言を生成する。
+
+    キーパーの発火はクライアント駆動（各タブがラウンド完了を検知して自律的に
+    このエンドポイントを叩く）のため、同じラウンドで複数タブがほぼ同時に呼びうる。
+    session["_round_seq"]（session_turn_engine.pyのラウンド完了判定と共通）単位で
+    生成結果をキャッシュし、二重LLM生成・タブ間で異なるナレーションが生成される
+    事態を避ける。加えて生成結果をKEEPER_NARRATEDイベントで全タブへ配信する
+    （以前は呼び出したタブへの同期レスポンスのみで、他タブには一切届いていなかった
+    ——判定結果(JUDGMENT_RESOLVED)も同様に配信自体はあったがフロント側に受信
+    ハンドラが無く、実質どちらも「発火した本人のタブにしか見えない」状態だった。
+    2026-09-06、実機でユーザーが発見）。
+    """
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -127,19 +137,35 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
     if session.get("human_keeper"):
         return {"error": "Human keeper mode: use POST /keeper endpoint instead"}
 
+    _round_seq = session.get("_round_seq", 0)
+    _cache = session.get("_keeper_narrated_cache")
+    if session.get("_keeper_narrated_seq") == _round_seq and _cache:
+        return _cache
+
+    # 以前はreq.backend（呼び出したタブが個別に持つSettings上の選択、公開ポート
+    # 経由のゲストは常に空）→ハードコードされたグローバルデフォルト
+    # （DEFAULT_LLM_BACKEND、環境変数LLM_BACKEND未設定時は"openai"）の順で解決して
+    # おり、session.get("backend")（セッション作成時に選んだ実際のバックエンド）を
+    # 一切見ていなかった。session_turn_engine.pyの通常AIターン解決
+    # （char_backends.get(...) or req.backend or session.get("backend", ...)）とも
+    # 非対称で、キーパー発火がどのタブで勝つか次第でセッションの意図と無関係な
+    # バックエンド（実機ではOpenAI、レート制限に直撃）が使われてしまっていた
+    # （2026-09-06、実機でユーザーが発見）。タブごとに変動するreq.backendには
+    # 依存せず、サーバー側の権威データだけで決定的に解決するよう修正。
     _keeper_char_id = session.get("keeper_char_id", "")
     _char_backends_map = session.get("char_backends", {})
-    _effective_backend = (
-        _char_backends_map.get(_keeper_char_id) or req.backend or DEFAULT_LLM_BACKEND
-        if _keeper_char_id
-        else req.backend or DEFAULT_LLM_BACKEND
-    )
+    _effective_backend = _char_backends_map.get(_keeper_char_id) or session.get("backend", DEFAULT_LLM_BACKEND)
 
     from def_kari.resources.vram_lock import get_vram_lock as _get_vram_lock
     _keeper_lock = _get_vram_lock()
     if not _keeper_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
         return {"error": f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s"}
     try:
+        # ロック待機中に他タブが同じround_seq分の生成を完了させている場合がある
+        # （二重チェックロッキング、TOCTOU回避）。
+        _cache = session.get("_keeper_narrated_cache")
+        if session.get("_keeper_narrated_seq") == _round_seq and _cache:
+            return _cache
         result = _gm_agent.narrate(
             session=session,
             backend_id=_effective_backend,
@@ -196,6 +222,10 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
         resp["new_chapter_title"] = _scene_advanced_info.get("chapter_title")
     if result.get("propose_end"):
         resp["propose_end"] = True
+    resp["round_seq"] = _round_seq
+    session["_keeper_narrated_seq"] = _round_seq
+    session["_keeper_narrated_cache"] = resp
+    _game_event_bus.emit(session_id, "KEEPER_NARRATED", resp)
     return resp
 
 

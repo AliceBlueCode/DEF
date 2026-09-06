@@ -292,6 +292,16 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   // 一致しない）で機能しないため、代わりに「直前に自分がこの呼び出しをしたか」を
   // 直接フラグで持つ（2026-08-22）。
   const skipMyDeliberationRef = useRef(false)
+  // applyKeeperResultの重複適用防止（自タブの同期レスポンスとKEEPER_NARRATED
+  // ブロードキャストの両方から同じroundSeqの結果が来うるため、2026-09-06）。
+  const keeperAppliedSeqRef = useRef(0)
+  // 自分がPOST /diceで振った結果を、JUDGMENT_RESOLVEDブロードキャスト受信時に
+  // 二重表示しないための直近ロール記録（character_id|stat_name|total|judgment_value
+  // をキーに、ローカル表示を追加した直後に登録し、対応するブロードキャストが来たら
+  // 消費して無視する。他タブが振った分はこのセットに無いのでそのまま表示する）。
+  const myDiceRollKeysRef = useRef<Set<string>>(new Set())
+  const diceRollKey = (characterId: string, statName: string, total: number, judgmentValue: number | undefined) =>
+    `${characterId}|${statName}|${total}|${judgmentValue}`
   // 確立済みセッションが途中で強制切断された（追放・トークン失効等）ことをセッション
   // 作成/参加画面で伝えるための通知（ws.onclose参照）。
   const [removedNotice, setRemovedNotice] = useState<string | null>(null)
@@ -538,6 +548,35 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     }
     if (event.type === 'AI_TURN_COMPLETED') {
       await processAITurnData(event.payload, sessionIdRef.current)
+    }
+    if (event.type === 'KEEPER_NARRATED') {
+      // 複数タブが同じラウンド完了検知で独立に/ai_keeperを叩きうるため、生成した
+      // 本人のタブは既に自分の同期レスポンスで処理済み——applyKeeperResult内の
+      // keeperAppliedSeqRefガードにより二重適用は自然に防止される（2026-09-06）。
+      await applyKeeperResult(sessionIdRef.current, event.payload, event.payload?.round_seq)
+    }
+    if (event.type === 'JUDGMENT_RESOLVED') {
+      const p = event.payload
+      const key = diceRollKey(p.character_id, p.stat_name, p.roll, p.judgment_value)
+      if (myDiceRollKeysRef.current.has(key)) {
+        // 自分がPOST /diceで振った結果のブロードキャストが戻ってきただけ。
+        // ローカルで既に表示済みのため、消費して無視する。
+        myDiceRollKeysRef.current.delete(key)
+      } else {
+        // 他タブ（キーパー役等）が振った判定結果。自タブには届いていなかったため
+        // ここで初めて表示する（2026-09-06、以前はハンドラ自体が存在しなかった）。
+        let outcome = ''
+        if (p.critical) outcome = t('trpg.outcome.critical')
+        else if (p.fumble) outcome = t('trpg.outcome.fumble')
+        else if (p.success) outcome = t('trpg.outcome.success')
+        else outcome = t('trpg.outcome.failure')
+        setMessages(prev => [...prev, {
+          character_id: p.character_id,
+          character_name: `🎲 ${charMap[p.character_id]?.name ?? nameMap[p.character_id] ?? p.character_id}`,
+          text: `【${p.stat_name}】${p.roll} / ${p.judgment_value}${outcome ? ` → ${outcome}` : ''}`,
+          emotion: '', tags: [],
+        }])
+      }
     }
     if (event.type === 'WAITING_FOR_HUMAN') {
       const p = event.payload
@@ -1266,10 +1305,13 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
 
   const fetchAIKeeperResult = async (sid: string): Promise<KeeperResult | null> => {
     try {
+      // backendは送らない（呼び出しタブごとのSettings選択、公開ポート経由のゲストは
+      // 常に空文字になる不安定な値だった）。session_gameplay.py側がセッション自体の
+      // backend設定を権威データとして解決する（2026-09-06）。
       const res = await authFetch(`/api/session/${sid}/ai_keeper`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend }),
+        body: JSON.stringify({}),
       })
       const d = await parseJsonResponse(res)
       if (d.error) { console.error(d.error); return null }
@@ -1300,6 +1342,18 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       return
     }
     const keeperResult = await fetchAIKeeperResult(sid)
+    await applyKeeperResult(sid, keeperResult, roundSeq)
+  }
+
+  // 同一ラウンドの結果を自タブの同期レスポンス経由・KEEPER_NARRATEDブロードキャスト
+  // 経由の両方から受け取りうる（複数タブが同じラウンド完了検知で独立に/ai_keeperを
+  // 叩くため、サーバー側はround_seq単位でキャッシュ・配信する設計、session_gameplay.py
+  // 参照）。roundSeq単位で1回しかメッセージ追加・自動判定等を実行しないようここで
+  // 重複除去する（2026-09-06、以前はKEEPER_NARRATED自体が存在せず、発火した本人の
+  // タブにしかキーパー発言・判定結果が表示されない不具合があった）。
+  const applyKeeperResult = async (sid: string, keeperResult: KeeperResult | null, roundSeq: number) => {
+    if (keeperAppliedSeqRef.current === roundSeq) return
+    keeperAppliedSeqRef.current = roundSeq
     if (keeperResult?.text) {
       setMessages(prev => [...prev, {
         character_id: '_keeper', character_name: keeperResult.character_name || '🎩 Keeper', text: keeperResult.text, emotion: '', tags: [],
@@ -1406,6 +1460,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       })
       const d = await parseJsonResponse(res)
       if (d.error) { console.error(d.error); return null }
+      // 自分がこの結果を振ったことを記録し、対応するJUDGMENT_RESOLVEDブロードキャストが
+      // 自タブに戻ってきた際の二重表示を防ぐ（呼び出し元3箇所共通、2026-09-06）。
+      if (d.judgment) {
+        myDiceRollKeysRef.current.add(diceRollKey(j.character_id, j.stat, d.total, d.judgment?.judgment_value))
+      }
       return d
     } catch (e) {
       console.error(e)
