@@ -955,8 +955,14 @@ def lobby_add_ai(session_id: str, req: LobbyAIRequest, request: Request, auth: d
         sess.setdefault("char_colors", {})[char_id] = char["image_color"]
     if req.game_sheet_id:
         sess.setdefault("char_game_sheets", {})[char_id] = req.game_sheet_id
+    # lobby_set_keeper_charと同じ理由（空選択＝デフォルトに従う、を確実に反映する）で
+    # 明示的にクリアする（2026-09-06）。lobby_add_ai自体は既にinitiativeに居るキャラを
+    # 拒否するため今は再現しないが、remove_ai→再add等の経路で将来的に同じ症状が
+    # 出うるため揃えておく。
     if req.backend_id:
         sess.setdefault("char_backends", {})[char_id] = req.backend_id
+    else:
+        sess.get("char_backends", {}).pop(char_id, None)
     _autosave(session_id)
     _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
         "initiative": sess["initiative"],
@@ -1001,8 +1007,16 @@ def lobby_set_keeper_char(session_id: str, req: LobbyKeeperCharRequest, auth: di
         raise HTTPException(400, "Cannot assign human character as AI keeper")
     sess["keeper_char_id"] = char_id
     sess["keeper_char_name"] = char.get("name", char_id)
+    # backend_idが空（UIの「デフォルトに従う」選択）の場合は既存の個別設定を明示的に
+    # 消す。以前はif req.backend_id:の分岐のみで、空選択時は何もせず素通りしていた
+    # ため、一度個別バックエンドを設定したキャラを後から「デフォルトに従う」へ
+    # 戻しても古い設定が残り続け、ai_keeper_narrateがセッション全体の設定ではなく
+    # 古い個別設定（例: 枯渇したopenai）を使い続けてしまうバグがあった
+    # （2026-09-06、実機でユーザーが発見）。
     if req.backend_id:
         sess.setdefault("char_backends", {})[char_id] = req.backend_id
+    else:
+        sess.get("char_backends", {}).pop(char_id, None)
     _autosave(session_id)
     _game_event_bus.emit(session_id, "LOBBY_UPDATE", {
         "keeper_char_id": char_id,

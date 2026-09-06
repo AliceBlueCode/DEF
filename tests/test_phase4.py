@@ -1534,6 +1534,71 @@ def test_lobby_set_keeper_char_with_backend():
     _sessions.pop(sid, None)
 
 
+def test_lobby_set_keeper_char_empty_backend_clears_previous_override():
+    """一度backend_idを設定したキャラを、再度backend_id=""（UIの「デフォルトに従う」）
+    で割り付け直すと、古い個別設定が実際に消えること。以前はif req.backend_id:の
+    分岐のみで空選択時は何もせず、古い設定（例: レート制限に達したopenai）が残り
+    続けてai_keeper_narrateがセッション全体の設定を無視し続けるバグがあった
+    （2026-09-06、実機でユーザーが発見）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": "character_hanfei_001", "backend_id": "openai"},
+        headers=headers,
+    )
+    assert _sessions[sid]["char_backends"]["character_hanfei_001"] == "openai"
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/set_keeper_char",
+        json={"character_id": "character_hanfei_001", "backend_id": ""},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert "character_hanfei_001" not in _sessions[sid]["char_backends"]
+    _sessions.pop(sid, None)
+
+
+def test_lobby_add_ai_empty_backend_clears_previous_override():
+    """lobby_add_aiも同じ理由で揃える。remove_ai→再addの経路で同じ症状が
+    再現しうるため（2026-09-06）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session import _sessions
+    client = TestClient(app)
+
+    start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    d = start.json()
+    sid, host_token = d["session_id"], d["host_token"]
+    headers = {"Authorization": f"Bearer {host_token}"}
+
+    client.post(
+        f"/api/session/{sid}/lobby/add_ai",
+        json={"character_id": "character_hanfei_001", "backend_id": "openai"},
+        headers=headers,
+    )
+    assert _sessions[sid]["char_backends"]["character_hanfei_001"] == "openai"
+    _sessions[sid].setdefault("char_backends", {})  # 明示: 次のremoveでは触らない
+    client.post(f"/api/session/{sid}/lobby/remove_ai", json={"character_id": "character_hanfei_001"}, headers=headers)
+
+    resp = client.post(
+        f"/api/session/{sid}/lobby/add_ai",
+        json={"character_id": "character_hanfei_001", "backend_id": ""},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert "character_hanfei_001" not in _sessions[sid]["char_backends"]
+    _sessions.pop(sid, None)
+
+
 def test_lobby_set_keeper_char_rejects_already_in_initiative():
     """既にプレイヤー/AIスロット(initiative)にいるキャラはキーパーに割り付けられないこと。"""
     from fastapi.testclient import TestClient
