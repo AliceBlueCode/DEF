@@ -71,7 +71,7 @@ def _session_for_json(session: dict) -> dict:
 # skill_pool・skill_values・guest_chars等）は一切含めない。
 _PUBLIC_SESSION_KEYS = frozenset({
     "id", "history", "name_map", "initiative", "char_colors",
-    "round", "turn", "action_count", "actions_per_turn",
+    "round", "_round_seq", "turn", "action_count", "actions_per_turn",
     "topic", "trpg_mode", "online_mode", "lobby_active", "host_keeper_mode",
     "human_keeper", "waiting_for_gm", "auto_advance", "human_char_ids",
     "keeper_char_id", "keeper_char_name", "max_players",

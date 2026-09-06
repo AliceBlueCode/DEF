@@ -104,7 +104,7 @@ def test_human_turn_send_reports_round_completed_only_after_all_spoken():
         sess = _sessions[sid]
         r1 = client.post(
             f"/api/session/{sid}/human_turn",
-            json={"action": "send", "text": "hi", "character_id": "char_a", "expected_round": sess["round"]},
+            json={"action": "send", "text": "hi", "character_id": "char_a", "expected_round_seq": sess.get("_round_seq", 0)},
             headers=_auth(tokens["char_a"]),
         )
         assert r1.json()["round_completed"] is False
@@ -117,7 +117,7 @@ def test_human_turn_send_reports_round_completed_only_after_all_spoken():
         sess["ai_task"] = None
         r2 = client.post(
             f"/api/session/{sid}/human_turn",
-            json={"action": "send", "text": "hi", "character_id": "char_c", "expected_round": sess["round"]},
+            json={"action": "send", "text": "hi", "character_id": "char_c", "expected_round_seq": sess.get("_round_seq", 0)},
             headers=_auth(tokens["char_c"]),
         )
         # 配列末尾(char_c)が喋っても、char_bが未発言なのでまだ完了しない
@@ -127,7 +127,7 @@ def test_human_turn_send_reports_round_completed_only_after_all_spoken():
         sess["ai_task"] = None
         r3 = client.post(
             f"/api/session/{sid}/human_turn",
-            json={"action": "send", "text": "hi", "character_id": "char_b", "expected_round": sess["round"]},
+            json={"action": "send", "text": "hi", "character_id": "char_b", "expected_round_seq": sess.get("_round_seq", 0)},
             headers=_auth(tokens["char_b"]),
         )
         assert r3.json()["round_completed"] is True
@@ -143,13 +143,13 @@ def test_human_turn_skip_reports_round_completed():
         for cid in ("char_a", "char_b"):
             client.post(
                 f"/api/session/{sid}/human_turn",
-                json={"action": "send", "text": "hi", "character_id": cid, "expected_round": sess["round"]},
+                json={"action": "send", "text": "hi", "character_id": cid, "expected_round_seq": sess.get("_round_seq", 0)},
                 headers=_auth(tokens[cid]),
             )
             sess["ai_task"] = None
         r = client.post(
             f"/api/session/{sid}/human_turn",
-            json={"action": "skip", "character_id": "char_c", "expected_round": sess["round"]},
+            json={"action": "skip", "character_id": "char_c", "expected_round_seq": sess.get("_round_seq", 0)},
             headers=_auth(tokens["char_c"]),
         )
         assert r.json()["round_completed"] is True

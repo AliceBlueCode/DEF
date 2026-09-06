@@ -302,6 +302,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   const myDiceRollKeysRef = useRef<Set<string>>(new Set())
   const diceRollKey = (characterId: string, statName: string, total: number, judgmentValue: number | undefined) =>
     `${characterId}|${statName}|${total}|${judgmentValue}`
+  // /human_turn の多重送信ガードに送り返すround_seq。session["round"]は
+  // バックグラウンドタスク側で非同期・遅延更新されるため多重送信ガードには使えず
+  // （2026-09-06、CIのai_turn_dedup.jsで間欠的に発覚）、WAITING_FOR_HUMANが運ぶ
+  // round_seq（同期的に確定するサーバー側カウンタ）を直接保持する。
+  const waitingRoundSeqRef = useRef(0)
   // 確立済みセッションが途中で強制切断された（追放・トークン失効等）ことをセッション
   // 作成/参加画面で伝えるための通知（ws.onclose参照）。
   const [removedNotice, setRemovedNotice] = useState<string | null>(null)
@@ -581,6 +586,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     if (event.type === 'WAITING_FOR_HUMAN') {
       const p = event.payload
       if (typeof p.round === 'number') setRound(p.round)
+      if (typeof p.round_seq === 'number') waitingRoundSeqRef.current = p.round_seq
       setActiveTurnCharId(p.character_id ?? '')
       if (p.counters) setCounters(capCounters(p.counters))
       setLoading(false)
@@ -1956,9 +1962,10 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     const res = await fetch(`/api/session/${sessionId}/human_turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
-      // expected_round: 直近のWAITING_FOR_HUMANで受け取ったroundをそのまま送り返す
-      // (send/skipの多重送信対策。session.pyのhuman_turn_action参照)。
-      body: JSON.stringify({ action, text, character_id: humanCharId, expected_round: round }),
+      // expected_round_seq: 直近のWAITING_FOR_HUMANで受け取ったround_seqをそのまま
+      // 送り返す(send/skipの多重送信対策。session_turn_engine.pyのhuman_turn_action参照。
+      // session["round"]自体は非同期・遅延更新のためガードに使えない、2026-09-06)。
+      body: JSON.stringify({ action, text, character_id: humanCharId, expected_round_seq: waitingRoundSeqRef.current }),
     })
     const data = await parseJsonResponse(res)
     if (data.error) {

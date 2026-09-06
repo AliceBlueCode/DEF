@@ -217,6 +217,7 @@ def start_session(req: SessionStartRequest, request: Request):
         "reinforced_rules": rule_reinforced_rules,
         "scene": scene,
         "round": 1,
+        "_round_seq": 0,
         "turn": 0,
         "action_count": 0,
         "actions_per_turn": apt,

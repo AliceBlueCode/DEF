@@ -56,7 +56,7 @@ async function decodeJwtSessionId(page, token) {
     ({ sid, token }) => fetch(`/api/session/${sid}/human_turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ action: 'skip', expected_round: 1 }),
+      body: JSON.stringify({ action: 'skip', expected_round_seq: 0 }),
     }).then(r => r.status),
     { sid: sessionId, token: playerToken },
   )

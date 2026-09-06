@@ -22,6 +22,17 @@
 // このテストはガードが効いていること(8並列送信のうち1件だけが処理される)を
 // 確認する回帰防止テスト。
 //
+// 2026-09-06追記: 上記2点の修正後もCIで間欠的に(3〜4件成功)失敗し続けた。
+// 真因は比較対象の session["round"] 自体にあった。session["round"] は
+// _run_ai_turns（バックグラウンドタスク、非同期スケジュール）側でしか更新
+// されず、human_turn_action の send/skip 分岐内では同期更新されない。よって
+// そのタスクが実際に処理を終える前に後続の並列send/skipが立て続けに来ると、
+// 全員が同じ（まだ更新されていない）session["round"]を見てガードを通過して
+// しまう。session["_round_seq"]（_mark_spoken_and_check_round_completが
+// human_turn_action自身の中で同期的に加算する、ソロ人間セッションでは毎回の
+// send/skipで即座に加算される）に乗り換えて修正した
+// （session_turn_engine.pyのHumanTurnRequest.expected_round_seq参照）。
+//
 // 実行: node frontend/e2e/ai_turn_dedup.js
 import { chromium } from 'playwright'
 import { assert, createOnlineSession, joinAsPlayer, startSession } from './helpers.js'
@@ -55,9 +66,9 @@ async function decodeJwtSessionId(page, token) {
   assert(!!sessionId, `session_id decoded from guest JWT: ${sessionId}`)
 
   // 正規クライアント(SessionTab.tsx)が実際に送るのと同じ値を再現するため、
-  // GET /{session_id}で現在のroundを取得してから8並列送信に載せる
+  // GET /{session_id}で現在の_round_seqを取得してから8並列送信に載せる
   // (「本物のUIから見えている値を、うっかり/意図的に多重送信した」状況の再現。
-  // expected_roundを省略/でたらめにするのは「対応していない旧クライアント」の
+  // expected_round_seqを省略/でたらめにするのは「対応していない旧クライアント」の
   // シナリオであり別物 — それは常に拒否されるだけなので検証価値が薄い)。
   // GET /{session_id}は参加者認証必須(require_participant、2026-08-11)のため
   // ゲスト自身のトークンを付ける。
@@ -66,22 +77,22 @@ async function decodeJwtSessionId(page, token) {
       (await fetch(`/api/session/${sid}`, { headers: { 'Authorization': `Bearer ${token}` } })).json(),
     { sid: sessionId, token: guestToken },
   )
-  const expectedRound = before.session?.round
-  assert(typeof expectedRound === 'number', `current round fetched before send: ${expectedRound}`)
+  const expectedRoundSeq = before.session?._round_seq
+  assert(typeof expectedRoundSeq === 'number', `current _round_seq fetched before send: ${expectedRoundSeq}`)
 
-  // UIのボタン連打ではなく、同一トークン・同一expected_roundでの生fetchをN回
+  // UIのボタン連打ではなく、同一トークン・同一expected_round_seqでの生fetchをN回
   // 同時発火させる(ブラウザのクリックデバウンス等の影響を受けない、サーバー側
   // ガードそのものの検証)。
-  const results = await guest.evaluate(async ({ token, text, n, sessionId, expectedRound }) => {
+  const results = await guest.evaluate(async ({ token, text, n, sessionId, expectedRoundSeq }) => {
     const calls = Array.from({ length: n }, () =>
       fetch(`/api/session/${sessionId}/human_turn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ action: 'send', text, expected_round: expectedRound }),
+        body: JSON.stringify({ action: 'send', text, expected_round_seq: expectedRoundSeq }),
       }).then(r => r.status).catch(() => -1)
     )
     return Promise.all(calls)
-  }, { token: guestToken, text: MARKER_TEXT, n: N_PARALLEL, sessionId, expectedRound })
+  }, { token: guestToken, text: MARKER_TEXT, n: N_PARALLEL, sessionId, expectedRoundSeq })
 
   const successCount = results.filter(s => s === 200).length
   const conflictCount = results.filter(s => s === 409).length

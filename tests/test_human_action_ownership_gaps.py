@@ -199,7 +199,7 @@ def test_online_host_send_action_own_character_allowed():
     try:
         resp = client.post(
             f"/api/session/{sid}/human_turn",
-            json={"action": "skip", "expected_round": _sessions[sid]["round"]},
+            json={"action": "skip", "expected_round_seq": _sessions[sid].get("_round_seq", 0)},
             headers=_auth(host_token),
         )
         assert resp.status_code == 200
@@ -213,7 +213,7 @@ def test_online_host_send_action_other_character_rejected():
         # turn=0なのでcurrent_char_id="char_a"だがhost_char_id="char_b"なので拒否
         resp = client.post(
             f"/api/session/{sid}/human_turn",
-            json={"action": "skip", "expected_round": _sessions[sid]["round"]},
+            json={"action": "skip", "expected_round_seq": _sessions[sid].get("_round_seq", 0)},
             headers=_auth(host_token),
         )
         assert resp.status_code == 409

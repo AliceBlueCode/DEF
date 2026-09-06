@@ -189,6 +189,30 @@ def _mark_spoken_and_check_round_complete(session: dict, char_id: str) -> bool:
     return False
 
 
+def _advance_turn(session: dict, new_turn: int) -> None:
+    """human_turn_action(send)・_apply_skip(skip)からターン確定時に呼ぶ、turn/roundの
+    同期的な巻き戻り正規化(2026-09-06)。
+
+    以前はここでsession["turn"]に生の値(len(initiative)以上もあり得る)をそのまま
+    代入し、巻き戻り正規化（turn %= len(initiative)・round += 1）は
+    _emit_waiting_for_human（_run_ai_turns内、asyncio.create_taskで非同期スケジュール
+    される）任せだった。ソロ人間セッションで並列にsend/skipが来ると、1件目の処理
+    直後はまだ正規化前（turn == len(initiative)）のため、その正規化が実際に走るまでの
+    間に届いた後続リクエストは`_check_human_turn_authorization`のround_seqガード
+    （expected_round_seq不一致で409）にすら到達せず、その手前の
+    `if turn >= len(initiative): return {"error": "invalid turn"}`
+    に先に捕まってHTTP 200（bodyはerror）を返してしまい、多重送信ガードの
+    回帰テスト(frontend/e2e/ai_turn_dedup.js、200件数で判定)が間欠的に失敗して
+    いた。turn/roundをこの場で即座に正規化することで、次のリクエストが読む時点では
+    常に正規化済みの状態になり、必ずround_seqガードで一意に判定される。
+    """
+    initiative = session.get("initiative", [])
+    if initiative and new_turn >= len(initiative):
+        session["round"] = session.get("round", 1) + 1
+        new_turn = new_turn % len(initiative)
+    session["turn"] = new_turn
+
+
 def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     """指定キャラの現ターンをskip扱いで処理する（発言力+1・ターン進行・AIターン再開）。
 
@@ -199,7 +223,7 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     char_name = name_map.get(char_id, char_id)
     counters = session.setdefault("counters", {})
     counters[char_id] = counters.get(char_id, 0) + 1
-    session["turn"] = session.get("turn", 0) + 1
+    _advance_turn(session, session.get("turn", 0) + 1)
     session["action_count"] = 0
     round_completed = _mark_spoken_and_check_round_complete(session, char_id)
     _autosave(session_id)
@@ -262,6 +286,7 @@ def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
         "character_id": current,
         "character_name": session.get("name_map", {}).get(current, current),
         "round": session.get("round", 1),
+        "round_seq": session.get("_round_seq", 0),
         "counters": dict(session.get("counters", {})),
     })
     _maybe_schedule_disconnect_skip(session_id, session, current)
@@ -309,6 +334,7 @@ async def _run_ai_turns(session_id: str) -> None:
                 "character_id": result.get("character_id", ""),
                 "character_name": result.get("character_name", ""),
                 "round": result.get("round", 1),
+                "round_seq": session.get("_round_seq", 0),
                 "counters": dict(result.get("counters", session.get("counters", {}))),
             })
             if result.get("character_id"):
@@ -1149,11 +1175,12 @@ class HumanTurnRequest(BaseModel):
     action: str  # "send" | "extend" | "skip" | "interrupt" | "generate_image"
     text: str = ""
     character_id: str = ""  # interrupt 時に発言者IDを指定
-    # send/skip の多重送信対策(2026-08-08)。クライアントは直近に受け取った
-    # WAITING_FOR_HUMAN イベントの round をそのまま送り返す。デフォルト値(-1)は
-    # 実在のroundと一致しないため、対応していない/未取得のクライアントは
-    # send/skipで常に拒否される(下のhuman_turn_action参照)。
-    expected_round: int = -1
+    # send/skip の多重送信対策(2026-08-08、2026-09-06にround→_round_seq比較へ修正)。
+    # クライアントは直近に受け取った WAITING_FOR_HUMAN イベントの round_seq を
+    # そのまま送り返す。デフォルト値(-1)は実在の_round_seqと一致しないため、
+    # 対応していない/未取得のクライアントはsend/skipで常に拒否される
+    # (下のhuman_turn_action参照)。
+    expected_round_seq: int = -1
 
     from pydantic import validator as _pv
 
@@ -1202,6 +1229,21 @@ def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: 
     イベントループ上でアトミックに完走する。実体はレースではなく、この認可漏れ
     そのものだった(重複送信は真の並行処理ではなく、逐次的に全件処理されていた)。
 
+    ── round比較からround_seq比較への修正(2026-09-06) ──────────────────
+    上記の認可漏れ修正後もCIのe2e(ai_turn_dedup.js)が「8並列送信中3〜4件成功」と
+    間欠的に失敗し続けた。原因は比較対象のsession["round"]自体にあった:
+    session["round"]は_run_ai_turns（asyncio.create_taskで非同期にスケジュールされる
+    バックグラウンドタスク）側の巻き戻り処理でしか更新されず、human_turn_actionの
+    send/skip分岐内では同期更新されない（_mark_spoken_and_check_round_completの
+    docstring参照）。そのため_run_ai_turnsが実際にそのtickを処理し終える前に
+    後続の並列send/skipが立て続けに来ると、それら全員が同じ（まだ更新されていない）
+    session["round"]を見てチェックを通過してしまう。
+    session["_round_seq"]はhuman_turn_action自身の中で_mark_spoken_and_check_round_
+    completを呼んだ時点で同期的に加算される（ソロ人間セッションでは初期ラウンド分の
+    initiativeが1人だけなので毎回のsend/skipで即座に加算される、まさにこの分岐が
+    保護したいケースそのもの）。これに乗り換えることで、非同期な巻き戻りの完了を
+    待たずに「直前のsend/skipが確定したか」を判定できる。
+
     ── host/gmのオーナーシップ(2026-08-20対応、指摘5/TODO.md該当項目) ─────────
     host/gmはトークン発行時にchar_idを持たない(issue_player_jwt呼び出し側を参照)。
     オフライン(ホットシート含む)はhost_token=唯一のローカル操作者であり、そのセッション
@@ -1233,17 +1275,18 @@ def _check_human_turn_authorization(session: dict, req: HumanTurnRequest, auth: 
         # 依然として同じ本人のキャラのままなので、オーナーシップは何度でも一致して
         # しまう(frontend/e2e/ai_turn_dedup.js で実証)。
         #
-        # そこでWAITING_FOR_HUMANイベントで配布したroundをクライアントに送り返させ、
-        # サーバー側の現在roundと一致する場合のみ「確定」操作を許可する。1件目の
-        # send/skipが処理された時点でroundは進む(または次のWAITING_FOR_HUMANで
-        # 新しいroundが配布されるまでは)ため、同じexpected_roundを使った残りの
-        # 重複リクエストは以後すべて不一致で拒否される。extendはターンを進めない
-        # 「積む」操作で、1ターン中に複数回呼ばれるのが正規の使い方のためチェック対象外。
+        # そこでWAITING_FOR_HUMANイベントで配布したround_seqをクライアントに送り返させ、
+        # サーバー側の現在の_round_seqと一致する場合のみ「確定」操作を許可する。1件目の
+        # send/skipが処理された時点で_round_seqは同期的に進む（上のdocstring参照）ため、
+        # 同じexpected_round_seqを使った残りの重複リクエストは以後すべて不一致で拒否
+        # される。extendはターンを進めない「積む」操作で、1ターン中に複数回呼ばれるのが
+        # 正規の使い方のためチェック対象外。
         #
-        # 既知の残課題: designated_next(GM指名による割り込み)で同一roundのまま
-        # current_char_idが同じ人間キャラに再度回ってくる稀なケースはこのroundだけの
-        # 比較では区別できない。実害は小さいためTODO.mdへ別途記録する。
-        if req.action in ("send", "skip") and req.expected_round != session["round"]:
+        # 既知の残課題: designated_next(GM指名による割り込み)で同一ラウンドのまま
+        # current_char_idが同じ人間キャラに再度回ってくる稀なケースはこの比較だけでは
+        # 区別できない（そのラウンドがまだ完了していない＝_round_seqが進んでいない
+        # ため）。実害は小さいためTODO.mdへ別途記録する。
+        if req.action in ("send", "skip") and req.expected_round_seq != session.get("_round_seq", 0):
             raise HTTPException(409, "This turn has already been completed (stale request)")
 
     # 8.34対策: interrupt/generate_imageはsend/extend/skipと違い「今のターンの本人」
@@ -1381,7 +1424,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         }
     else:  # "send"
         # 人間プレイヤーは「積む→発言完」が1ターン完了とみなす（actions_per_turn に関わらず即時進行）
-        session["turn"] = turn + 1
+        _advance_turn(session, turn + 1)
         session["action_count"] = 0
         round_completed = _mark_spoken_and_check_round_complete(session, current_char_id)
         _autosave(session_id)
@@ -1504,6 +1547,7 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
                         "character_id": _current,
                         "character_name": sess.get("name_map", {}).get(_current, _current),
                         "round": sess.get("round", 1),
+                        "round_seq": sess.get("_round_seq", 0),
                         "counters": dict(sess.get("counters", {})),
                     },
                 })
