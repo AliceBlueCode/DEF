@@ -8,6 +8,7 @@ import DebugTab from './components/DebugTab'
 import ThoughtTab from './components/ThoughtTab'
 import Sidebar from './components/Sidebar'
 import GuestGate from './components/GuestGate'
+import { readTheme } from './components/sessionUtils'
 import { LanguageProvider, useT, useLanguage } from './i18n'
 import './App.css'
 
@@ -81,9 +82,7 @@ function AppInner() {
   const handleT2iBackendChange = (v: string) => { t2iUserChangedRef.current = true; setSelectedT2iBackend(v) }
   const handleTtsBackendChange = (v: string) => { ttsUserChangedRef.current = true; setSelectedTtsBackend(v) }
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0)
-  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'light'
-  )
+  const [theme, setTheme] = useState<'dark' | 'light'>(readTheme)
 
   const toggleTheme = () => {
     setTheme(prev => {

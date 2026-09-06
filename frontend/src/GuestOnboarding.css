@@ -204,6 +204,9 @@
 .light-mode .guest-terms-error {
   color: #c62828;
 }
+.guest-terms-loading {
+  opacity: 0.6;
+}
 
 .guest-terms-consent {
   display: flex;

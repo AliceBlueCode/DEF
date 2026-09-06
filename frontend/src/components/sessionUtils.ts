@@ -121,6 +121,26 @@ export function isGuestMode(): boolean {
   try { return sessionStorage.getItem(GUEST_MODE_KEY) === '1' } catch { return false }
 }
 
+// 退室・追放・セッション終了時にclearSessionRestoreStateと必ず対で呼ぶこと。
+// これを怠ると、次回リロード時にGuestGate.tsxがdef_guest_mode単体を見て
+// 「ゲストのまま」と判定し続けてしまい、def_active_session側は既に消えているため
+// SessionTabがsessionId無しの「セットアップ画面」（本来ホスト専用、TERMS未対応の
+// 素のJoinDialogを開けてしまう）に落ちる——「招待コードごとに毎回同意」という
+// 設計意図が同一タブの2回目以降で崩れる不具合になっていた（2026-09-06、
+// リリース前レビューで発覚）。
+export function clearGuestMode() {
+  try { sessionStorage.removeItem(GUEST_MODE_KEY) } catch { /* ignore */ }
+}
+
+// App.tsx・GuestOnboardingFlow.tsx・GuestSessionShell.tsxで個別に同じキー・同じ
+// フォールバック('light')のテーマ読み取りロジックが重複していたのを統一
+// （2026-09-06、リリース前レビューで発覚）。App.tsxのuseState初期化子もこれを使う。
+const LS_KEY_THEME = 'def_theme'
+
+export function readTheme(): 'dark' | 'light' {
+  try { return (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'light' } catch { return 'light' }
+}
+
 const SEXUAL_TAGS = ['sfw', 'nsfw', 'hentai']
 const VIOLENCE_TAGS = ['violence', 'gore', 'extreme']
 

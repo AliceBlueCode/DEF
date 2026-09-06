@@ -1,11 +1,7 @@
 import type { JoinResult } from './useJoinFlow'
+import { readTheme } from './sessionUtils'
 import SessionTab from './SessionTab'
 import '../GuestOnboarding.css'
-
-const LS_KEY_THEME = 'def_theme'
-function readTheme(): 'dark' | 'light' {
-  try { return (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'light' } catch { return 'light' }
-}
 
 type Props = { initialJoinResult?: JoinResult }
 

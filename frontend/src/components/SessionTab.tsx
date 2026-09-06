@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useT } from '../i18n'
 import InvitePanel from './InvitePanel'
 import InviteCodeDisplay from './InviteCodeDisplay'
@@ -12,6 +12,7 @@ import {
   saveSessionRestoreState,
   loadSessionRestoreState,
   clearSessionRestoreState,
+  clearGuestMode,
   isContentBlocked,
 } from './sessionUtils'
 import { useSafetyFilter } from './useSafetyFilter'
@@ -376,8 +377,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   // GuestOnboardingFlow経由の初回join直後、フル機能のapplyJoinResult
   // （自己のparticipants即時追加・持ち込みシートの即時反映込み）を1回だけ適用する
   // （2026-08-23。上の軽量復帰effectでは これらの反映が欠けるため、propで受け取った
-  // 初回join結果はこちらで処理する）。
-  useEffect(() => {
+  // 初回join結果はこちらで処理する）。useEffectだとブラウザのペイント後に発火する
+  // ため、sessionId===''の初期レンダー（!sessionId分岐＝本来ホスト専用のセットアップ
+  // 画面）が一瞬でも画面に出ることがあった。useLayoutEffectにしてペイント前に
+  // 適用を完了させる（2026-09-06、リリース前レビューで発覚）。
+  useLayoutEffect(() => {
     if (initialJoinResult) applyJoinResult(initialJoinResult)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -419,6 +423,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           const wasRestoring = isRestoringRef.current
           isRestoringRef.current = false
           clearSessionRestoreState()
+          clearGuestMode()
           sessionIdRef.current = ''
           setSessionId('')
           setMyRole('host')
@@ -1649,6 +1654,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     if (endingRef.current) return
     endingRef.current = true
     clearSessionRestoreState()
+    clearGuestMode()
     if (sessionId && messages.length > 0) {
       await saveCurrentSession()
     }

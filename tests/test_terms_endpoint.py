@@ -6,11 +6,13 @@
 """
 
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from def_kari.api.main import app
 from def_kari.api.public_main import public_app
+from def_kari.api.routes import terms as terms_route
 
 client = TestClient(app)
 public_client = TestClient(public_app)
@@ -36,3 +38,15 @@ def test_terms_contains_explicit_consent_wording():
     あわせて第1条を修正）。"""
     content = client.get("/api/terms").json()["content"]
     assert "同意チェックボックスにチェックを入れ" in content
+
+
+def test_terms_read_failure_returns_clear_500_not_unhandled_exception():
+    """TERMS.mdの読み込み失敗（ファイル欠落・権限エラー等）が、ゲスト参加フロー
+    全体を無防備な例外のまま止めるのではなく、診断可能な500として返ること
+    （2026-09-06、リリース前レビューで発覚）。"""
+    broken_path = mock.Mock()
+    broken_path.read_text.side_effect = OSError("disk error")
+    with mock.patch.object(terms_route, "_TERMS_PATH", broken_path):
+        resp = client.get("/api/terms")
+    assert resp.status_code == 500
+    assert "TERMS.md" in resp.json()["detail"]

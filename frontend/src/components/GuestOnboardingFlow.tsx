@@ -1,20 +1,12 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useT } from '../i18n'
 import { useJoinFlow, type JoinResult, type Slot } from './useJoinFlow'
-import { markGuestMode } from './sessionUtils'
+import { markGuestMode, readTheme } from './sessionUtils'
 import TermsPanel from './TermsPanel'
 import GuestSessionShell from './GuestSessionShell'
 import '../GuestOnboarding.css'
 
 type Step = 'invite' | 'terms' | 'char'
-
-// App.tsxと同じキー・同じデフォルト（'light'）で読む。ゲスト専用画面には
-// テーマ切り替えUIは無く、既存のブラウザ内保存値があればそれを尊重するだけ
-// （オリジンが異なるゲストの初回訪問では常にデフォルトのlightになる）。
-const LS_KEY_THEME = 'def_theme'
-function readTheme(): 'dark' | 'light' {
-  try { return (localStorage.getItem(LS_KEY_THEME) as 'dark' | 'light') || 'light' } catch { return 'light' }
-}
 
 // 招待コードで参加するゲスト専用のオンボーディング画面。招待コード→TERMS同意→
 // キャラ選択/持ち込みの3ステップを経て、join成功後はサイドバー・他タブを持たない
@@ -31,6 +23,15 @@ export default function GuestOnboardingFlow() {
   const [inviteError, setInviteError] = useState('')
   const themeClass = readTheme() === 'light' ? ' light-mode' : ''
 
+  // ステップを移動するたびに前のステップで出たエラー（例: char画面での
+  // 「JSON未選択」エラー）を持ち越さない。join()自体は新規呼び出し時にしか
+  // f.errorをクリアしないため、「戻る→また進む」だけでは消えず、何もしていない
+  // のに古いエラーが再表示されていた（2026-09-06、リリース前レビューで発覚）。
+  useEffect(() => {
+    f.setError('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step])
+
   if (joinResult) {
     return <GuestSessionShell initialJoinResult={joinResult} />
   }
@@ -39,7 +40,14 @@ export default function GuestOnboardingFlow() {
     if (!f.inviteCode.trim() || f.loading) return
     setInviteError('')
     const data = await f.fetchSlots(f.inviteCode)
-    if (!data) { setInviteError(t('session.join.errorFailed')); return }
+    // fetchSlotsは「同一コードを直前と重複取得しない」ための重複防止ガードとして
+    // 意図的にnullを返すことがある（例: 「戻る」で招待コード画面に戻り、コードを
+    // 変えずにもう一度「続ける」を押した場合）。この場合f.slotsLoadedは前回取得済み
+    // のtrueのままなので、実際の失敗（無効なコード・通信エラー、いずれもnull返却と
+    // 同時にslotsLoadedをfalseに落とす）と区別できる。区別せずnull即エラー扱いに
+    // していると、正常な「戻る→再度続ける」操作がデッドエンドになっていた
+    // （2026-09-06、リリース前レビューで発覚）。
+    if (!data && !f.slotsLoaded) { setInviteError(t('session.join.errorFailed')); return }
     setStep('terms')
   }
 
