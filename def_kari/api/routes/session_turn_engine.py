@@ -1129,26 +1129,34 @@ async def ai_pause(session_id: str, _auth: dict = Depends(require_keeper)):
 
 @router.post("/{session_id}/skip")
 async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
+    """GM/ホストによる強制スキップ（プレイヤー自身の任意skip=_apply_skipとは別経路）。
+
+    以前はturn/roundの巻き戻り正規化を自前で2箇所に重複実装し、
+    _mark_spoken_and_check_round_completeを一切呼んでいなかった。そのため
+    このエンドポイントでスキップされたキャラは_round_spokenに永久に欠落し、
+    以後そのラウンドが「全員発言済み」判定に到達できず_round_seqが二度と
+    進まなくなる（→キーパー発言が以後発火しなくなる、human_turn_actionの
+    多重送信ガード=expected_round_seqが以後ずっと同じ古い値としか比較され
+    なくなり8並列多重送信を防げなくなる、2026-09-08コードレビューで発覚）。
+    _advance_turn/_mark_spoken_and_check_round_completeを使う他の全経路
+    （human_turn_action send・_apply_skip）と揃える。
+    """
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
     initiative = session["initiative"]
-    turn = session["turn"]
-    if turn >= len(initiative):
-        session["round"] += 1
-        session["turn"] = 0
-        turn = 0
-    char_id = initiative[turn]
+    char_id = _get_current_speaker(session)
+    if not char_id:
+        return {"error": "invalid turn"}
+    turn = session.get("turn", 0) % len(initiative)
     char_name = session["name_map"].get(char_id, char_id)
     counters = session.setdefault("counters", {})
     counters[char_id] = counters.get(char_id, 0) + 1
     # _skip_gen を先にインクリメント → next_turn の turn 書き戻しを防止
     session["_skip_gen"] = session.get("_skip_gen", 0) + 1
-    session["turn"] = turn + 1
+    _advance_turn(session, turn + 1)
     session["action_count"] = 0
-    if session["turn"] >= len(initiative):
-        session["round"] += 1
-        session["turn"] = 0
+    round_completed = _mark_spoken_and_check_round_complete(session, char_id)
     _autosave(session_id)
     _game_event_bus.emit(session_id, "HUMAN_ACTION", {
         "character_id": char_id,
@@ -1157,6 +1165,8 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
         "action": "keeper_skip",
         "sender_role": _auth.get("role", "host"),
         "counters": dict(counters),
+        "round_completed": round_completed,
+        "round_seq": session.get("_round_seq", 0),
     })
     # 実行中の ai_task をキャンセルしてスキップ位置から再起動
     _ai_task = session.get("ai_task")

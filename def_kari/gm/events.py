@@ -39,6 +39,16 @@ class GameEventBus:
         """event_type のハンドラを登録する。handler(session_id, event_dict) で呼ばれる。"""
         self._handlers.setdefault(event_type, []).append(handler)
 
+    def unsubscribe(self, event_type: str, handler: Callable[[str, dict], None]) -> None:
+        """subscribe()で登録したハンドラを解除する（未登録/既に解除済みなら何もしない）。
+
+        主にテストの後片付け用（プロセス全体で共有されるシングルトンのため、
+        購読しっぱなしだと以後の全テストのemit()で無関係なハンドラが呼ばれ続ける）。
+        """
+        handlers = self._handlers.get(event_type)
+        if handlers and handler in handlers:
+            handlers.remove(handler)
+
     def emit(self, session_id: str, event_type: str, payload: dict) -> None:
         """イベントを発行し、登録済みハンドラを同期実行する。"""
         event = {

@@ -68,7 +68,8 @@ def test_new_round_after_round_seq_bump_regenerates():
 def test_ai_keeper_broadcasts_keeper_narrated_to_all_tabs():
     sid, token = _start_trpg_session()
     received = []
-    game_event_bus.subscribe("KEEPER_NARRATED", lambda s, ev: received.append(ev))
+    handler = lambda s, ev: received.append(ev)  # noqa: E731
+    game_event_bus.subscribe("KEEPER_NARRATED", handler)
     try:
         with patch.object(session_gameplay._gm_agent, "narrate", side_effect=_fake_narrate):
             resp = client.post(f"/api/session/{sid}/ai_keeper", json={}, headers={"Authorization": f"Bearer {token}"})
@@ -77,4 +78,8 @@ def test_ai_keeper_broadcasts_keeper_narrated_to_all_tabs():
         assert matching[0]["payload"]["text"] == resp.json()["text"]
         assert matching[0]["payload"]["round_seq"] == resp.json()["round_seq"]
     finally:
+        # プロセス全体で共有されるgame_event_busシングルトンなので、後片付けし
+        # ないと以後の全テストのKEEPER_NARRATED emitでこのハンドラが呼ばれ続ける
+        # （2026-09-08コードレビューで発覚）。
+        game_event_bus.unsubscribe("KEEPER_NARRATED", handler)
         _sessions.pop(sid, None)

@@ -154,7 +154,12 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
     # 依存せず、サーバー側の権威データだけで決定的に解決するよう修正。
     _keeper_char_id = session.get("keeper_char_id", "")
     _char_backends_map = session.get("char_backends", {})
-    _effective_backend = _char_backends_map.get(_keeper_char_id) or session.get("backend", DEFAULT_LLM_BACKEND)
+    # session.get("backend", DEFAULT)はキーが無い場合しかデフォルトを補わず、
+    # session["backend"]が空文字列（例: POST /startにbackend:""を渡した場合）だと
+    # そのまま空文字列が解決結果になってしまう。旧コードの`... or DEFAULT_LLM_BACKEND`
+    # 連鎖は空文字列も救っていたため、それと同じ意味になるよう明示的にorで繋ぐ
+    # （2026-09-08コードレビューで発覚）。
+    _effective_backend = _char_backends_map.get(_keeper_char_id) or session.get("backend") or DEFAULT_LLM_BACKEND
 
     from def_kari.resources.vram_lock import get_vram_lock as _get_vram_lock
     _keeper_lock = _get_vram_lock()
@@ -162,7 +167,11 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
         return {"error": f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s"}
     try:
         # ロック待機中に他タブが同じround_seq分の生成を完了させている場合がある
-        # （二重チェックロッキング、TOCTOU回避）。
+        # （二重チェックロッキング、TOCTOU回避）。キャッシュへの書き込みまでロック
+        # 保持下で行う必要がある——以前はロック解放後（_autosave/シーン進行判定を
+        # 挟んだ後）に書き込んでいたため、その間に後続タブがロックを取得して
+        # まだ空のキャッシュを見てしまい、二重チェックロッキングが実質機能して
+        # いなかった（2026-09-08コードレビューで発覚）。
         _cache = session.get("_keeper_narrated_cache")
         if session.get("_keeper_narrated_seq") == _round_seq and _cache:
             return _cache
@@ -172,59 +181,59 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
             inject_history=req.inject_history,
             session_id=session_id,
         )
+        if result.get("error"):
+            _log.error("[keeper] error: %s", result["error"])
+            return {"error": result["error"]}
+        _judgments = result.get("judgments", [])
+        _log.info("[keeper] Round %d | %d chars | %d judgments | text: %.60s",
+                  session.get("round", 0), len(result["text"]), len(_judgments),
+                  result["text"].replace("\n", " "))
+        if _judgments:
+            for _j in _judgments:
+                _log.info("[keeper]   judgment: %s → %s", _j.get("character_name", "?"), _j.get("stat", "?"))
+        if req.inject_history and result["text"]:
+            _autosave(session_id)
+
+        # シーン自動進行判定
+        _scene_advanced_info = None
+        _should_advance = result.get("advance_scene", False)
+        if not _should_advance:
+            # フォールバック: scene_round >= recommended_rounds * 1.5
+            _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
+            _scenes = _scenario.get("scenes", [])
+            _cur_idx = session.get("current_scene_index", 0)
+            if _cur_idx < len(_scenes) - 1:
+                _rec = (_scenes[_cur_idx] if _cur_idx < len(_scenes) else {}).get("recommended_rounds")
+                if _rec:
+                    _scene_rounds = session.get("round", 0) - session.get("scene_round_start", 0)
+                    if _scene_rounds >= _rec * 1.5:
+                        _should_advance = True
+        if _should_advance:
+            _scene_advanced_info = advance_scene(session_id)
+            if _scene_advanced_info.get("error"):
+                _scene_advanced_info = None
+
+        _keeper_display = session.get("keeper_char_name", "")
+        resp: dict = {
+            "text": result["text"],
+            "character_id": "_keeper",
+            "character_name": f"🎩 {_keeper_display}" if _keeper_display else "🎩 Keeper",
+            "judgments": result["judgments"],
+        }
+        if _scene_advanced_info:
+            resp["scene_advanced"] = True
+            resp["new_scene_index"] = _scene_advanced_info.get("current_scene_index")
+            resp["new_scene_id"] = _scene_advanced_info.get("scene_id", "")
+            resp["new_scene_title"] = _scene_advanced_info.get("scene_title", "")
+            resp["new_chapter_id"] = _scene_advanced_info.get("chapter_id")
+            resp["new_chapter_title"] = _scene_advanced_info.get("chapter_title")
+        if result.get("propose_end"):
+            resp["propose_end"] = True
+        resp["round_seq"] = _round_seq
+        session["_keeper_narrated_seq"] = _round_seq
+        session["_keeper_narrated_cache"] = resp
     finally:
         _keeper_lock.release()
-    if result.get("error"):
-        _log.error("[keeper] error: %s", result["error"])
-        return {"error": result["error"]}
-    _judgments = result.get("judgments", [])
-    _log.info("[keeper] Round %d | %d chars | %d judgments | text: %.60s",
-              session.get("round", 0), len(result["text"]), len(_judgments),
-              result["text"].replace("\n", " "))
-    if _judgments:
-        for _j in _judgments:
-            _log.info("[keeper]   judgment: %s → %s", _j.get("character_name", "?"), _j.get("stat", "?"))
-    if req.inject_history and result["text"]:
-        _autosave(session_id)
-
-    # シーン自動進行判定
-    _scene_advanced_info = None
-    _should_advance = result.get("advance_scene", False)
-    if not _should_advance:
-        # フォールバック: scene_round >= recommended_rounds * 1.5
-        _scenario = _load_trpg_scenario(session.get("trpg_scenario", ""))
-        _scenes = _scenario.get("scenes", [])
-        _cur_idx = session.get("current_scene_index", 0)
-        if _cur_idx < len(_scenes) - 1:
-            _rec = (_scenes[_cur_idx] if _cur_idx < len(_scenes) else {}).get("recommended_rounds")
-            if _rec:
-                _scene_rounds = session.get("round", 0) - session.get("scene_round_start", 0)
-                if _scene_rounds >= _rec * 1.5:
-                    _should_advance = True
-    if _should_advance:
-        _scene_advanced_info = advance_scene(session_id)
-        if _scene_advanced_info.get("error"):
-            _scene_advanced_info = None
-
-    _keeper_display = session.get("keeper_char_name", "")
-    resp: dict = {
-        "text": result["text"],
-        "character_id": "_keeper",
-        "character_name": f"🎩 {_keeper_display}" if _keeper_display else "🎩 Keeper",
-        "judgments": result["judgments"],
-    }
-    if _scene_advanced_info:
-        resp["scene_advanced"] = True
-        resp["new_scene_index"] = _scene_advanced_info.get("current_scene_index")
-        resp["new_scene_id"] = _scene_advanced_info.get("scene_id", "")
-        resp["new_scene_title"] = _scene_advanced_info.get("scene_title", "")
-        resp["new_chapter_id"] = _scene_advanced_info.get("chapter_id")
-        resp["new_chapter_title"] = _scene_advanced_info.get("chapter_title")
-    if result.get("propose_end"):
-        resp["propose_end"] = True
-    resp["round_seq"] = _round_seq
-    session["_keeper_narrated_seq"] = _round_seq
-    session["_keeper_narrated_cache"] = resp
     _game_event_bus.emit(session_id, "KEEPER_NARRATED", resp)
     return resp
 
@@ -237,6 +246,15 @@ class SessionDiceRollRequest(BaseModel):
     stat_name: str = ""
     is_skill: bool = False
     is_stat: bool = False
+    # 発火元タブがJUDGMENT_RESOLVEDブロードキャストを「自分のロール」として識別する
+    # ためのクライアント生成ID（2026-09-08）。以前はcharacter_id|stat_name|total|
+    # judgment_valueの組み合わせキーで判定していたが、rollDiceDialog（プレイヤー
+    # 自身のダイアログ経由のロール）はcharacter_id/stat_nameを一切送っておらず
+    # 常に空文字列になっていたため、ブロードキャストされた自分のロールが「他タブの
+    # ロール」として誤認され、キャラ名も空のまま二重表示されていた
+    # （コードレビューで発覚）。レスポンス到着を待たず送信直後に登録できるため、
+    # 「サーバーがHTTPレスポンスより先にWS配信する」タイミングのレースも解消する。
+    request_id: str = ""
 
 
 @router.post("/{session_id}/dice")
@@ -297,6 +315,7 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
             "success": judgment.get("success"),
             "critical": judgment.get("critical"),
             "fumble": judgment.get("fumble"),
+            "request_id": req.request_id,
         })
 
     return {

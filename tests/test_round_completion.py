@@ -155,3 +155,25 @@ def test_human_turn_skip_reports_round_completed():
         assert r.json()["round_completed"] is True
     finally:
         _sessions.pop(sid, None)
+
+
+def test_keeper_force_skip_advances_round_seq():
+    """POST /{session_id}/skip（GMの強制スキップ、human_turn skipとは別経路）が
+    _round_seqを進めること。以前はここだけ_mark_spoken_and_check_round_completeを
+    呼んでおらず、強制スキップされたキャラが_round_spokenへ永久に欠落し、
+    以後そのセッションで_round_seqが二度と進まなくなっていた
+    （多重送信ガード=expected_round_seqが常に同じ古い値と比較され続け機能しなくなる、
+    キーパー発言も以後発火しなくなる、2026-09-08コードレビューで発覚）。
+    """
+    sid, host_token, tokens = _start_session_with_three_humans()
+    try:
+        sess = _sessions[sid]
+        assert sess.get("_round_seq", 0) == 0
+        for _ in range(3):
+            resp = client.post(f"/api/session/{sid}/skip", headers=_auth(host_token))
+            assert resp.status_code == 200
+            sess["ai_task"] = None
+        assert sess.get("_round_seq", 0) == 1
+        assert sess.get("_round_spoken", ["stale"]) == []
+    finally:
+        _sessions.pop(sid, None)

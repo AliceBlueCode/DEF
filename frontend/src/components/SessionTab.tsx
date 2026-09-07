@@ -296,12 +296,16 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   // ブロードキャストの両方から同じroundSeqの結果が来うるため、2026-09-06）。
   const keeperAppliedSeqRef = useRef(0)
   // 自分がPOST /diceで振った結果を、JUDGMENT_RESOLVEDブロードキャスト受信時に
-  // 二重表示しないための直近ロール記録（character_id|stat_name|total|judgment_value
-  // をキーに、ローカル表示を追加した直後に登録し、対応するブロードキャストが来たら
-  // 消費して無視する。他タブが振った分はこのセットに無いのでそのまま表示する）。
+  // 二重表示しないためのrequest_id記録。送信直前（レスポンス到着前）に登録する
+  // ——レスポンスの中身（total/judgment_value）をキーにしていた旧実装は、
+  // rollDiceDialogがcharacter_id/stat_nameを送っておらず常に空文字列キーになる
+  // バグと、サーバーがHTTPレスポンスより先にJUDGMENT_RESOLVEDを配信するため
+  // レスポンス到着後の登録では稀に間に合わないバグの両方を抱えていた
+  // （2026-09-08コードレビューで発覚）。対応するブロードキャストが来たら消費して
+  // 無視する。他タブが振った分はこのセットに無いのでそのまま表示する。
   const myDiceRollKeysRef = useRef<Set<string>>(new Set())
-  const diceRollKey = (characterId: string, statName: string, total: number, judgmentValue: number | undefined) =>
-    `${characterId}|${statName}|${total}|${judgmentValue}`
+  const newDiceRequestId = () =>
+    (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`)
   // /human_turn の多重送信ガードに送り返すround_seq。session["round"]は
   // バックグラウンドタスク側で非同期・遅延更新されるため多重送信ガードには使えず
   // （2026-09-06、CIのai_turn_dedup.jsで間欠的に発覚）、WAITING_FOR_HUMANが運ぶ
@@ -562,8 +566,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     }
     if (event.type === 'JUDGMENT_RESOLVED') {
       const p = event.payload
-      const key = diceRollKey(p.character_id, p.stat_name, p.roll, p.judgment_value)
-      if (myDiceRollKeysRef.current.has(key)) {
+      const key = p.request_id as string | undefined
+      if (key && myDiceRollKeysRef.current.has(key)) {
         // 自分がPOST /diceで振った結果のブロードキャストが戻ってきただけ。
         // ローカルで既に表示済みのため、消費して無視する。
         myDiceRollKeysRef.current.delete(key)
@@ -1359,7 +1363,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   // タブにしかキーパー発言・判定結果が表示されない不具合があった）。
   const applyKeeperResult = async (sid: string, keeperResult: KeeperResult | null, roundSeq: number) => {
     if (keeperAppliedSeqRef.current === roundSeq) return
-    keeperAppliedSeqRef.current = roundSeq
+    // keeperResultがnull（生成失敗）の場合はここをapplied扱いにしない。マークして
+    // しまうと、後から別タブの成功結果がKEEPER_NARRATEDで届いても
+    // 「既にこのroundSeqは処理済み」として握り潰され、GMが永久に喋らなくなる
+    // （2026-09-08コードレビューで発覚）。
+    if (keeperResult) keeperAppliedSeqRef.current = roundSeq
     if (keeperResult?.text) {
       setMessages(prev => [...prev, {
         character_id: '_keeper', character_name: keeperResult.character_name || '🎩 Keeper', text: keeperResult.text, emotion: '', tags: [],
@@ -1451,6 +1459,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       const dead = isCharDead(j.character_id)
       return { total: 0, judgment: { success: dead, fumble: false, critical: false, judgment_value: 0 } }
     }
+    // 自分がこの結果を振ったことを記録し、対応するJUDGMENT_RESOLVEDブロードキャストが
+    // 自タブに戻ってきた際の二重表示を防ぐ（呼び出し元2箇所共通、2026-09-06）。
+    // サーバーはHTTPレスポンスより先にWS配信するため、レスポンス到着を待たず
+    // 送信前に登録する（2026-09-08）。
+    const requestId = newDiceRequestId()
+    myDiceRollKeysRef.current.add(requestId)
     try {
       const res = await authFetch(`/api/session/${sid}/dice`, {
         method: 'POST',
@@ -1462,18 +1476,15 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           character_id: j.character_id,
           stat_name: j.stat,
           is_skill: isSkill,
+          request_id: requestId,
         }),
       })
       const d = await parseJsonResponse(res)
-      if (d.error) { console.error(d.error); return null }
-      // 自分がこの結果を振ったことを記録し、対応するJUDGMENT_RESOLVEDブロードキャストが
-      // 自タブに戻ってきた際の二重表示を防ぐ（呼び出し元3箇所共通、2026-09-06）。
-      if (d.judgment) {
-        myDiceRollKeysRef.current.add(diceRollKey(j.character_id, j.stat, d.total, d.judgment?.judgment_value))
-      }
+      if (d.error) { console.error(d.error); myDiceRollKeysRef.current.delete(requestId); return null }
       return d
     } catch (e) {
       console.error(e)
+      myDiceRollKeysRef.current.delete(requestId)
       return null
     }
   }
@@ -1600,13 +1611,17 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         ? (sheet.skills?.[key]?.current ?? sheet.skills?.[key])
         : sheet.stats?.[key]?.current
       const resolvedVal: number | undefined = typeof raw === 'number' ? raw : undefined
-      const body: any = { notation: '1d100' }
+      // character_id/stat_nameを送らないと、JUDGMENT_RESOLVEDブロードキャストが
+      // 空のキャラ名で他タブに表示されてしまう（2026-09-08コードレビューで発覚）。
+      const requestId = newDiceRequestId()
+      const body: any = { notation: '1d100', character_id: charId, stat_name: key, request_id: requestId }
       if (resolvedVal) {
         body.skill_value = resolvedVal
         body.rulebook_id = selectedRulebook
         body.is_skill = type === 'skill'
         body.is_stat = type === 'stat'
       }
+      myDiceRollKeysRef.current.add(requestId)
       try {
         const res = await authFetch(`/api/session/${sessionId}/dice`, {
           method: 'POST',
@@ -1614,7 +1629,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           body: JSON.stringify(body),
         })
         const data = await parseJsonResponse(res)
-        if (data.error) continue
+        if (data.error) { myDiceRollKeysRef.current.delete(requestId); continue }
         let text = `[${data.rolls?.join(', ')}] = ${data.total}`
         if (data.judgment) {
           const j = data.judgment
@@ -1628,6 +1643,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         setMessages(prev => [...prev, { character_id: charId, character_name: `🎲 ${charName}`, text, emotion: '', tags: [] }])
       } catch (e) {
         console.error(e)
+        myDiceRollKeysRef.current.delete(requestId)
       }
     }
   }
