@@ -27,12 +27,12 @@
     "e2e:guest-onboarding": "node e2e/guest_onboarding.js"
   },
   "dependencies": {
-    "react": "^19.2.8",
+    "react": "^19.3.0",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
-    "@types/react": "^19.2.18",
+    "@types/react": "^19.3.0",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
