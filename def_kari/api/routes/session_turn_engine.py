@@ -189,6 +189,30 @@ def _mark_spoken_and_check_round_complete(session: dict, char_id: str) -> bool:
     return False
 
 
+def _normalize_round_turn(session: dict) -> None:
+    """session["turn"]が既に書き込まれた（境界超過の可能性がある）値のとき、その場で
+    round繰り上げ・turnのmodulo正規化を行う共有ヘルパー(2026-09-19)。
+
+    以前は`_advance_turn`・`_emit_waiting_for_human`・`_resolve_turn_start`の3箇所が
+    それぞれ独立に同じ「turn >= len(initiative)ならround+=1・turn%=len(initiative)」
+    ロジックを再実装していた。GMの強制スキップ（skip_turn）が_round_seq更新を
+    呼び忘れていたバグ（2026-09-08）と同根の「同じ状態を複数箇所が別々に扱う」構造が
+    残っていたため、コードレビューを機に1箇所へ集約した。`_resolve_turn_start`の
+    旧実装はturn境界超過時に常にturn=0へハードリセットしていた（moduloではない）が、
+    これは「AIターンは1ターンにつき+1しか進まない」という前提の下でのみmoduloと
+    同じ結果になる。この前提はキャラクタライゼーションテスト
+    （tests/test_regression_turn_round_state.py）で確認済みで、moduloへの置き換えは
+    その前提が将来崩れても壊れない方向への意図的な頑健化。
+    """
+    initiative = session.get("initiative", [])
+    if not initiative:
+        return
+    t = session.get("turn", 0)
+    if t >= len(initiative):
+        session["round"] = session.get("round", 1) + 1
+        session["turn"] = t % len(initiative)
+
+
 def _advance_turn(session: dict, new_turn: int) -> None:
     """human_turn_action(send)・_apply_skip(skip)からターン確定時に呼ぶ、turn/roundの
     同期的な巻き戻り正規化(2026-09-06)。
@@ -205,12 +229,11 @@ def _advance_turn(session: dict, new_turn: int) -> None:
     回帰テスト(frontend/e2e/ai_turn_dedup.js、200件数で判定)が間欠的に失敗して
     いた。turn/roundをこの場で即座に正規化することで、次のリクエストが読む時点では
     常に正規化済みの状態になり、必ずround_seqガードで一意に判定される。
+
+    正規化そのものは`_normalize_round_turn`に委譲する（2026-09-19、集約）。
     """
-    initiative = session.get("initiative", [])
-    if initiative and new_turn >= len(initiative):
-        session["round"] = session.get("round", 1) + 1
-        new_turn = new_turn % len(initiative)
     session["turn"] = new_turn
+    _normalize_round_turn(session)
 
 
 def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
@@ -277,11 +300,7 @@ def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
     current = _get_current_speaker(session)
     if not current or not _is_human_char(session, current):
         return False
-    _initiative = session.get("initiative", [])
-    _raw_turn = session.get("turn", 0)
-    if _initiative and _raw_turn >= len(_initiative):
-        session["round"] = session.get("round", 1) + 1
-        session["turn"] = _raw_turn % len(_initiative)
+    _normalize_round_turn(session)
     _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
         "character_id": current,
         "character_name": session.get("name_map", {}).get(current, current),
@@ -408,6 +427,61 @@ def _clean_history_for_retake(history: list, remove: int) -> tuple[list, int]:
         else:
             break
     return new_history, removed
+
+
+def _retaken_char_id(history: list) -> str | None:
+    """履歴末尾から実際に最後に発言した（_scene_imageを除く）キャラのIDを返す
+    （retake_turn用、2026-09-19新設）。
+
+    retake_turnは元々initiative[-1]（配列末尾）を「ラウンド境界で巻き戻す対象の
+    キャラ」として無条件に前提していたが、GM指名（designate）で配列順を無視した
+    相手が最後に喋っていた場合はこの前提が崩れる
+    （tests/test_regression_turn_round_state.py::
+    test_retake_round_boundary_after_designate_jump_may_pick_wrong_character で
+    実際に食い違いを確認済み）。履歴の実体（_scene_imageをスキップする点は
+    _clean_history_for_retakeと同じ）から直接特定することで、配列順の前提を排除する。
+    """
+    for entry in reversed(history):
+        if entry.get("character_id") == "_scene_image":
+            continue
+        if entry.get("role") == "assistant":
+            return entry.get("character_id")
+        break
+    return None
+
+
+def _restore_round_spoken_for_retake(session: dict, retaken_char_id: str | None, round_boundary: bool) -> None:
+    """retake_turnの3分岐それぞれで、巻き戻したキャラの「発言済み」記録を
+    _round_spokenから正しく取り除く（2026-09-19新設）。
+
+    以前はretake_turnが_round_spoken/_round_seqを一切更新しておらず、やり直し後に
+    ラウンド完了判定（_mark_spoken_and_check_round_complete）が壊れたままになる
+    欠陥があった（tests/test_regression_turn_round_state.pyのキャラクタライゼーション
+    テストで実測して発覚）。
+
+    - 途中ターン／同ラウンド内で1人戻るケース: _finalize_ai_turnがaction_countの
+      閾値判定より前に無条件で_mark_spoken_and_check_round_completeを呼ぶため、
+      retaken_char_idは既に_round_spokenに入っている。それを取り除くだけでよい。
+    - ラウンド境界（round_boundary=True）のケース: retaken_char_idの発言完了が
+      「全員発言済み」判定を成立させ_round_spokenを[]にリセットした張本人なので、
+      単純に取り除くだけでは他の全員の「発言済み」記録も一緒に消えてしまう。
+      本人以外全員を再度spoken扱いにして再構築する。
+
+    _round_seq自体はここでは一切変更しない——ラウンドの通し番号ではなく、多重送信
+    ガード（expected_round_seq）とキーパー発火の単調増加デデュープトークンであり、
+    減算すると古い値をキャッシュしたクライアントが本来拒否されるべき多重送信を
+    通してしまう（今週閉じたばかりの穴が再び開く）。ここでの修正でラウンドが
+    実際に再度完了すれば_round_seqは自然に前進する。
+    """
+    if retaken_char_id is None:
+        return
+    if round_boundary:
+        initiative = session.get("initiative", [])
+        session["_round_spoken"] = [c for c in initiative if c != retaken_char_id]
+    else:
+        spoken = session.get("_round_spoken", [])
+        if retaken_char_id in spoken:
+            spoken.remove(retaken_char_id)
 
 
 def _ai_action_select(
@@ -541,12 +615,9 @@ def _resolve_turn_start(session: dict, req: SessionNextRequest):
     _skip_gen_before）を持つ辞書を返す。
     """
     initiative = session["initiative"]
-    turn = session["turn"]
     _skip_gen_before = session.get("_skip_gen", 0)  # keeper_skip 競合検出用
-    if turn >= len(initiative):
-        session["round"] += 1
-        session["turn"] = 0
-        turn = 0
+    _normalize_round_turn(session)
+    turn = session["turn"]
 
     # 指名があれば優先
     designated = session.pop("designated_next", None)
@@ -974,6 +1045,14 @@ def _finalize_ai_turn(
         # LLM 実行中に keeper_skip が入った場合は turn を上書きしない
         if session.get("_skip_gen", 0) == skip_gen_before:
             session["turn"] = next_t
+            # 以前はここで正規化せず、turnがinitiative長と同値のままround未加算の
+            # 状態が次のAIターン評価か_emit_waiting_for_humanが走るまで残っていた。
+            # 人間側の経路で_advance_turnが閉じたのと同じ種類の「即座に正規化
+            # されないウィンドウ」をAI側でも閉じる（2026-09-19）。_skip_genガードの
+            # スコープ内（turnの書き込みを保護する範囲）に収め、競合時は正規化も
+            # 一切行わない（action_countのリセットはガード外のまま、非対称性は
+            # 変えない）。
+            _normalize_round_turn(session)
         session["action_count"] = 0
     else:
         session["action_count"] = action_count
@@ -1065,7 +1144,17 @@ def next_turn(req: SessionNextRequest):
 
 
 @router.post("/{session_id}/retake")
-def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
+async def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
+    """GM/ホストによる「やり直し」（直前のターンを巻き戻して再生成）。
+
+    以前は同期def（FastAPIがワーカースレッドへオフロードして実行する）のまま
+    内部で無条件にasyncio.create_task(_run_ai_turns(...))を呼んでおり、
+    ワーカースレッドには実行中のイベントループが無いため`ai_task`がNone/完了済み
+    （＝現在人間の番を待っている、ごくありふれた状況）の時に呼ぶと必ず
+    RuntimeError: no running event loopで500になっていた（2026-09-18、
+    キャラクタライゼーションテスト作成中に実バグとして発覚）。async defに変更し、
+    兄弟エンドポイントskip_turnと同じくイベントループ上で直接実行されるようにする。
+    """
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
@@ -1074,6 +1163,9 @@ def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     actions_per_turn = session.get("actions_per_turn", 2)
     turn = session.get("turn", 0)
     history = session.get("history", [])
+    initiative = session.get("initiative", [])
+    retaken_char_id = _retaken_char_id(history)
+    round_boundary = False
 
     if action_count > 0:
         # 現キャラが途中まで発言済み → その分を巻き戻す
@@ -1084,13 +1176,23 @@ def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
         if turn == 0 and session.get("round", 1) <= 1:
             return {"error": "Cannot retake: at the beginning"}
         if turn == 0:
+            round_boundary = True
             session["round"] -= 1
-            session["turn"] = len(session["initiative"])
-            turn = session["turn"]
-        session["turn"] = turn - 1
+            # 以前はinitiative[-1]（配列末尾）を無条件の前提としていたが、GM指名
+            # （designate）で配列順を無視した相手が最後に喋っていた場合はこの前提が
+            # 崩れる。履歴の実体から特定したretaken_char_idがinitiativeに存在すれば
+            # それを優先し、特定できない場合のみ従来のinitiative[-1]にフォールバック
+            # する（2026-09-19）。
+            if retaken_char_id and retaken_char_id in initiative:
+                session["turn"] = initiative.index(retaken_char_id)
+            else:
+                session["turn"] = len(initiative) - 1 if initiative else 0
+        else:
+            session["turn"] = turn - 1
         remove = actions_per_turn
         session["action_count"] = 0
 
+    _restore_round_spoken_for_retake(session, retaken_char_id, round_boundary)
     session["history"], removed = _clean_history_for_retake(history, remove)
 
     # 巻き戻し後にai_taskを再起動（WS経由でフロントに通知される）
