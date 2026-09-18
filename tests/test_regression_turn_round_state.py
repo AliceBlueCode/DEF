@@ -524,6 +524,13 @@ def test_retake_round_boundary_after_designate_jump_picks_correct_character():
         sess["_round_spoken"] = []
         sess["_round_seq"] = 1
         sess["action_count"] = 0
+        # remove(=actions_per_turn)を明示固定する。/api/session/startのデフォルトは
+        # ローカル設定ファイル(data/mvp_settings.json、gitignore対象)のsession_
+        # actions_per_turn次第で変わるため、明示しないとCI（設定ファイル無し、
+        # コード上のデフォルト2）とローカル(値によっては1)とで除去件数が変わり
+        # このテストの末尾アサーションが環境依存になってしまう
+        # （2026-09-18、実際にCIでのみ失敗して発覚）。
+        sess["actions_per_turn"] = 1
         # 実際に最後に発言したのはchar_b（指名でinitiative[-1]=char_cより先に
         # 発言済みだった、という状況を模す）。initiative[-1]は char_c。
         sess["history"] = [
