@@ -140,10 +140,13 @@ Una vez que tu configuración local esté lista, puedes cambiar a operación com
 
 ## Inicio rápido
 
+**Requisitos:** Python 3.13+, Node.js 22.12+
+
 ```bash
 git clone https://github.com/AliceBlueCode/DEF.git
 cd DEF
-pip install -r requirements.txt
+python -m venv venv
+venv/Scripts/pip install -r requirements.txt   # macOS/Linux: venv/bin/pip
 cd frontend && npm install && cd ..
 cp .env.example .env   # Configura backends y claves de API
 ```
@@ -152,7 +155,7 @@ Ejecuta `start_def.bat`, o en dos terminales separadas:
 
 ```bash
 # Terminal 1: backend
-python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+venv/Scripts/python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
 
 # Terminal 2: frontend
 cd frontend && npm run dev

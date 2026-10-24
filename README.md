@@ -140,10 +140,13 @@ DEFはローカルファーストですが、ローカル環境が揃ってい�
 
 ## クイックスタート
 
+**必要環境:** Python 3.13以上、Node.js 22.12以上
+
 ```bash
 git clone https://github.com/AliceBlueCode/DEF.git
 cd DEF
-pip install -r requirements.txt
+python -m venv venv
+venv/Scripts/pip install -r requirements.txt   # macOS/Linux: venv/bin/pip
 cd frontend && npm install && cd ..
 cp .env.example .env   # バックエンドの設定・APIキー等を記入
 ```
@@ -152,7 +155,7 @@ cp .env.example .env   # バックエンドの設定・APIキー等を記入
 
 ```bash
 # ターミナル1: バックエンド
-python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+venv/Scripts/python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
 
 # ターミナル2: フロントエンド
 cd frontend && npm run dev

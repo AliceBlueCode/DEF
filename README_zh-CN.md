@@ -140,10 +140,13 @@ DEF 是本地优先（Local-First）的平台，但即使你还没有准备好�
 
 ## 快速开始
 
+**环境要求：** Python 3.13 及以上，Node.js 22.12 及以上
+
 ```bash
 git clone https://github.com/AliceBlueCode/DEF.git
 cd DEF
-pip install -r requirements.txt
+python -m venv venv
+venv/Scripts/pip install -r requirements.txt   # macOS/Linux: venv/bin/pip
 cd frontend && npm install && cd ..
 cp .env.example .env   # 设置后端与 API 密钥等
 ```
@@ -152,7 +155,7 @@ cp .env.example .env   # 设置后端与 API 密钥等
 
 ```bash
 # 终端 1：后端
-python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+venv/Scripts/python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
 
 # 终端 2：前端
 cd frontend && npm run dev

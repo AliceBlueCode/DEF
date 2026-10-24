@@ -140,10 +140,13 @@ DEF는 로컬 퍼스트이지만, 로컬 환경이 갖춰져 있지 않아도 �
 
 ## 빠른 시작
 
+**필요 환경:** Python 3.13 이상, Node.js 22.12 이상
+
 ```bash
 git clone https://github.com/AliceBlueCode/DEF.git
 cd DEF
-pip install -r requirements.txt
+python -m venv venv
+venv/Scripts/pip install -r requirements.txt   # macOS/Linux: venv/bin/pip
 cd frontend && npm install && cd ..
 cp .env.example .env   # 백엔드 설정・API 키 등을 입력
 ```
@@ -152,7 +155,7 @@ cp .env.example .env   # 백엔드 설정・API 키 등을 입력
 
 ```bash
 # 터미널 1: 백엔드
-python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
+venv/Scripts/python -m uvicorn def_kari.api.main:app --host 127.0.0.1 --port 8511 --reload
 
 # 터미널 2: 프론트엔드
 cd frontend && npm run dev

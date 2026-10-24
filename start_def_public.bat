@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 echo Starting DEF(kari) with Public (Cloudflare Tunnel) Port...
 echo.
 
-start "DEF-API-Dual" cmd /k "cd /d E:\tools\DEF && E:\tools\DEF\poc\venv\Scripts\python.exe -m def_kari.api.dual_run --local-port 8511 --public-port 8512 --cloudflare-tunnel"
+start "DEF-API-Dual" cmd /k "cd /d E:\tools\DEF && E:\tools\DEF\venv\Scripts\python.exe -m def_kari.api.dual_run --local-port 8511 --public-port 8512 --cloudflare-tunnel"
 
 echo Waiting for backend (http://127.0.0.1:8511/api/health) to respond...
 set DEF_HEALTH_WAIT=0
