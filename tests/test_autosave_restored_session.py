@@ -38,7 +38,7 @@ def test_revoke_token_on_restored_session_does_not_raise():
     _sessions[sid] = _restored_session(sid)
     try:
         revoke_token(token)  # 例外を投げないこと自体がテスト
-        from jose import jwt as _jwt
+        import jwt as _jwt
         from def_kari.settings import get_jwt_secret
         payload = _jwt.decode(token, get_jwt_secret(), algorithms=["HS256"])
         assert payload["jti"] in _revoked_jtis

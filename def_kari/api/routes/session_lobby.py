@@ -11,7 +11,7 @@ import uuid as _uuid_mod
 
 from fastapi import Header, HTTPException, Depends, Request
 from pydantic import BaseModel
-from jose import JWTError as _JWTError
+from jwt import PyJWTError as _JWTError
 
 from def_kari.characters import load_profiles, get_character
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND

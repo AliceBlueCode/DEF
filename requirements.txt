@@ -6,16 +6,15 @@
 # "pip install -r requirements.txt" on Japanese Windows (cp932) and other
 # non-UTF-8 locales.
 
-# Web framework
-# fastapi >= 0.96 pulls in pydantic v2 / starlette 1.x, which conflicts with
-# the pydantic v1 style (@validator etc.) the codebase is written against,
-# so the upper bound is pinned.
-fastapi>=0.95.0,<0.96.0
+# Web framework (pydantic v2 / starlette 1.x)
+fastapi>=0.162.0
 uvicorn[standard]>=0.54.0
 python-multipart>=0.0.32
 
 # Authentication (JWT: online-session invite codes, host/player tokens)
-python-jose>=3.5.0
+# python-jose was replaced: it had an unfixed algorithm-confusion advisory
+# (PYSEC-2026-4298) and pulled in ecdsa (Minerva timing attack, no fix).
+PyJWT>=2.15.1
 
 # HTTP client
 requests>=2.34.2
@@ -41,8 +40,6 @@ deep-translator>=1.11.4
 # --- dev / test ---
 pytest>=9.1.1
 pytest-asyncio>=1.4.0
-# For FastAPI TestClient. Newer httpx/anyio change TestClient initialization
-# and exception propagation when combined with the starlette that
-# fastapi<0.96 requires, so both are pinned.
-httpx==0.23.3
-anyio<4.0.0
+# For FastAPI TestClient. starlette's test client prefers httpx2 (pydantic's
+# maintained successor of httpx) and deprecates plain httpx.
+httpx2>=2.16.0

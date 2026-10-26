@@ -15,7 +15,8 @@ import datetime as _dt
 from collections import deque
 
 from fastapi import Header, HTTPException, Request
-from jose import jwt as _jwt, JWTError as _JWTError
+import jwt as _jwt
+from jwt import PyJWTError as _JWTError
 import uuid as _uuid_mod
 
 from def_kari.safety.audit_log import record_rate_limit_violation
@@ -138,7 +139,7 @@ def _release_generation_lock(session_id: str, key: str) -> None:
 # ── JWT 認証 ─────────────────────────────────────────────────────────
 
 # jti(JWTのユニークID) → 失効理由の有効期限(exp、UTC unixタイムスタンプ)。
-# 値はトークン自身のexpをそのまま流用する: exp到来後はverify_jwtのjose.decode自体が
+# 値はトークン自身のexpをそのまま流用する: exp到来後はverify_jwtのjwt.decode自体が
 # 期限切れとして拒否するため、それより後までブラックリストに残しておく意味がない。
 _revoked_jtis: dict[str, float] = {}
 # 0.0ではなく-infにする理由は_autosave_last_cleanupと同じ（session_turn_engine.py参照）。
@@ -157,7 +158,7 @@ def issue_player_jwt(session_id: str, role: str, char_id: str = "") -> str:
         "session_id": session_id,
         "role": role,
         "jti": jti,
-        "exp": _dt.datetime.utcnow() + _dt.timedelta(hours=24),
+        "exp": _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=24),
     }
     if char_id:
         payload["char_id"] = char_id

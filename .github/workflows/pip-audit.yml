@@ -4,9 +4,11 @@ on:
   push:
     paths:
       - "requirements.txt"
+      - ".github/workflows/pip-audit.yml"
   pull_request:
     paths:
       - "requirements.txt"
+      - ".github/workflows/pip-audit.yml"
   schedule:
     # 依存自体に変更がなくても新規CVEが公表され得るため週次でも実行する
     - cron: "0 3 * * 1"
@@ -24,31 +26,17 @@ jobs:
         run: pip install pip-audit
       - name: Run pip-audit
         run: |
-          pip-audit -r requirements.txt \
-            --ignore-vuln PYSEC-2024-38 \
-            --ignore-vuln PYSEC-2026-348 \
-            --ignore-vuln PYSEC-2026-161 \
-            --ignore-vuln PYSEC-2026-248 \
-            --ignore-vuln PYSEC-2026-249 \
-            --ignore-vuln PYSEC-2026-1943 \
-            --ignore-vuln PYSEC-2026-1941 \
-            --ignore-vuln PYSEC-2026-2281 \
-            --ignore-vuln PYSEC-2026-2280 \
-            --ignore-vuln PYSEC-2022-252 \
-            --ignore-vuln PYSEC-2026-1325
+          pip-audit -r requirements.txt             --ignore-vuln PYSEC-2022-252
         # 既知脆弱性が見つかった場合はデフォルトで非ゼロ終了し、このジョブを失敗させる。
-        # python-jose / cryptography / Pillow は本プロジェクトのセキュリティ上
+        # PyJWT / cryptography / Pillow は本プロジェクトのセキュリティ上
         # 特に重要な依存であるため、失敗時は優先的に確認すること。
         #
-        # 以下は個別調査の上で受け入れ済みのため無視する:
-        # - PYSEC-2024-38 / PYSEC-2026-348 / PYSEC-2026-161・248・249・1943・1941・2281・2280:
-        #   fastapi/h11/starlette。requirements.txtのfastapi<0.96.0固定（Pydantic v1
-        #   スタイル依存の互換性維持、dependabot.ymlのignoreと同じ理由）に伴う既知の
-        #   受け入れリスク。Pydantic v2移行が完了するまで修正版に上げられない。
-        # - PYSEC-2026-1325: ecdsa（Minerva timing attack）。DEFのJWTはHS256固定
-        #   （session.pyのissue_player_jwt/verify_jwt参照）で、脆弱性のあるECDSA
-        #   署名パス（ecdsa.SigningKey.sign_digest等）自体を呼んでいない。上流も
-        #   サイドチャネル攻撃を対象外・修正予定なしと明言しており恒久的に解消しない。
+        # ignoreは「脆弱性そのものが存在しない誤検知」に限る。実在する脆弱性は依存の
+        # 更新・置き換えで解消する（2026-10-24、fastapi<0.96固定の解除とpython-jose→PyJWT
+        # 置き換えにより、fastapi/h11/starlette/ecdsa/anyio/python-jose由来の受け入れ済み
+        # ignore計10件を撤去した）。
+        #
+        # 以下は個別調査の上で誤検知と判断したため無視する:
         # - PYSEC-2022-252: deep-translator。2022年8月にPyPIアカウントが乗っ取られ
         #   悪意あるリリース（1.8.5）が公開された実際のインシデントに由来するが、
         #   当該リリースはPyPIから削除されアカウントは正規化済み。このアドバイザリは

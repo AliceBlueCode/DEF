@@ -25,7 +25,7 @@ def test_issue_and_verify_player_jwt():
 
 def test_revoke_token_blocks_verify():
     from def_kari.api.routes.session import issue_player_jwt, verify_jwt, revoke_token, _revoked_jtis
-    from jose import JWTError
+    from jwt import PyJWTError as JWTError
     token = issue_player_jwt("sess-r", "player")
     revoke_token(token)
     with pytest.raises(JWTError):
@@ -33,7 +33,7 @@ def test_revoke_token_blocks_verify():
     # クリーンアップ
     payload_raw = verify_jwt.__code__  # just to confirm import ok
     # jti 除去
-    from jose import jwt as _jwt
+    import jwt as _jwt
     from def_kari.api.routes.session import _get_jwt_secret
     p = _jwt.decode(token, _get_jwt_secret(), algorithms=["HS256"])
     _revoked_jtis.pop(p["jti"], None)
@@ -49,7 +49,7 @@ def test_revoke_token_stores_expiry_and_cleanup_prunes_expired_only():
         issue_player_jwt, revoke_token, _revoked_jtis,
         _cleanup_expired_revoked_jtis, _revoked_jtis_last_cleanup,
     )
-    from jose import jwt as _jwt
+    import jwt as _jwt
     from def_kari.api.routes.session import _get_jwt_secret
 
     expired_token = issue_player_jwt("sess-cleanup-1", "player")
@@ -78,7 +78,7 @@ def test_revoke_token_stores_expiry_and_cleanup_prunes_expired_only():
 
 def test_invalid_token_raises():
     from def_kari.api.routes.session import verify_jwt
-    from jose import JWTError
+    from jwt import PyJWTError as JWTError
     with pytest.raises(JWTError):
         verify_jwt("not.a.valid.token")
 

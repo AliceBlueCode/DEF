@@ -93,7 +93,14 @@ def test_session_body_size_limit_allows_normal_request_without_content_length():
     def _small_stream():
         yield b'{"character_ids": [], "online_mode": true}'
 
-    resp = client.post("/api/session/start", content=_small_stream())
+    # 実クライアント（authFetch）と同じくContent-Typeを付ける。FastAPIはContent-Typeが
+    # application/jsonでない本文をJSONとして解釈しない（CORSプリフライト無しで送れる
+    # text/plain等によるCSRF対策）ため、付けないと本テストの意図と無関係に422になる。
+    resp = client.post(
+        "/api/session/start",
+        content=_small_stream(),
+        headers={"Content-Type": "application/json"},
+    )
     assert resp.status_code == 200
     assert "session_id" in resp.json()
 

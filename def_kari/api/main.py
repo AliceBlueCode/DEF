@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -105,28 +106,59 @@ app = FastAPI(
 _SESSION_BODY_SIZE_LIMIT = 512 * 1024  # 512KB
 
 
-class SessionBodySizeLimitMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        if request.url.path.startswith("/api/session"):
-            content_length = request.headers.get("content-length")
-            if content_length is not None and int(content_length) > _SESSION_BODY_SIZE_LIMIT:
-                return JSONResponse({"error": "Request body too large"}, status_code=413)
-            if content_length is None:
-                # 8.15対策: Content-Lengthを詐称・省略されると（chunked transfer等）上の
-                # チェックを素通りできていた。ストリームを実際に読んで累積サイズを検証する。
-                # Content-Lengthが正しく送られている通常のケースでは二重読み込みを避ける
-                # ため、ヘッダーが無い場合のみこの経路を通る。
-                body = b""
-                async for chunk in request.stream():
-                    body += chunk
-                    if len(body) > _SESSION_BODY_SIZE_LIMIT:
-                        return JSONResponse({"error": "Request body too large"}, status_code=413)
+class SessionBodySizeLimitMiddleware:
+    """純粋なASGIミドルウェア。
 
-                async def _receive() -> dict:
-                    return {"type": "http.request", "body": body, "more_body": False}
+    以前はBaseHTTPMiddlewareの上で本文を読み切った後、非公開属性 request._receive を
+    差し替えて後続に本文を渡し直していた。starlette 1.xでBaseHTTPMiddlewareの内部実装が
+    変わるとこの差し替えが後続に届かず、本文が空になって全リクエストが422になる
+    （fastapi<0.96固定の下でだけ動いていた）。ASGIのreceiveを公開仕様どおりに包む形にし、
+    starletteの内部実装に依存しないようにした。
+    """
 
-                request._receive = _receive
-        return await call_next(request)
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith("/api/session"):
+            await self.app(scope, receive, send)
+            return
+
+        too_large = JSONResponse({"error": "Request body too large"}, status_code=413)
+        content_length = Headers(scope=scope).get("content-length")
+        if content_length is not None:
+            if int(content_length) > _SESSION_BODY_SIZE_LIMIT:
+                await too_large(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+
+        # 8.15対策: Content-Lengthを詐称・省略されると（chunked transfer等）上の
+        # チェックを素通りできていた。ストリームを実際に読んで累積サイズを検証する。
+        # Content-Lengthが正しく送られている通常のケースでは二重読み込みを避ける
+        # ため、ヘッダーが無い場合のみこの経路を通る。
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body += message.get("body", b"")
+            if len(body) > _SESSION_BODY_SIZE_LIMIT:
+                await too_large(scope, receive, send)
+                return
+            more_body = message.get("more_body", False)
+
+        replayed = False
+
+        async def replay_receive():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

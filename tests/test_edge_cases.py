@@ -60,7 +60,7 @@ def test_ws_revoked_token_closes_4001():
     from fastapi.testclient import TestClient
     from def_kari.api.main import app
     from def_kari.api.routes.session import issue_player_jwt, revoke_token, _revoked_jtis, _get_jwt_secret
-    from jose import jwt as _jwt
+    import jwt as _jwt
     client = TestClient(app)
     sid, _ = _start(client)
     token = issue_player_jwt(sid, "host")
@@ -178,7 +178,7 @@ def test_invite_revoked_host_token_401():
     from fastapi.testclient import TestClient
     from def_kari.api.main import app
     from def_kari.api.routes.session import revoke_token, _revoked_jtis, _get_jwt_secret
-    from jose import jwt as _jwt
+    import jwt as _jwt
     client = TestClient(app)
     sid, host_token = _start(client)
     revoke_token(host_token)
@@ -444,6 +444,9 @@ def test_human_turn_invalid_action_422():
         "text": "payload",
     })
     assert resp.status_code == 422
+    # Authorizationヘッダー欠落でも422になるため、ステータスだけではactionの検証が
+    # 効いているか区別できない。エラーがbody.actionを指していることまで確認する。
+    assert any(tuple(e["loc"]) == ("body", "action") for e in resp.json()["detail"])
 
 
 def test_human_turn_missing_action_422():
@@ -454,6 +457,7 @@ def test_human_turn_missing_action_422():
     sid, _ = _start(client)
     resp = client.post(f"/api/session/{sid}/human_turn", json={"text": "hello"})
     assert resp.status_code == 422
+    assert any(tuple(e["loc"]) == ("body", "action") for e in resp.json()["detail"])
 
 
 def test_human_turn_send_empty_text_error():

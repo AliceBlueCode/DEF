@@ -52,7 +52,7 @@ def test_get_session_requires_participant_token():
 def test_get_session_rejects_revoked_token():
     """退室・追放でrevokeされたトークンでは読めなくなること（expelの実効性）。"""
     from def_kari.api.routes.session import revoke_token, _revoked_jtis, _get_jwt_secret
-    from jose import jwt as _jwt
+    import jwt as _jwt
 
     sid, host_token = _start_with_token()
     assert client.get(

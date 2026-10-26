@@ -1722,7 +1722,7 @@ def test_leave_revokes_token():
     from fastapi.testclient import TestClient
     from def_kari.api.main import app
     from def_kari.api.routes.session import _sessions, verify_jwt
-    from jose import JWTError
+    from jwt import PyJWTError as JWTError
     client = TestClient(app)
 
     start = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})

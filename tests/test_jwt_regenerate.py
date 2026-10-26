@@ -57,7 +57,7 @@ async def test_regenerate_endpoint_invalidates_existing_tokens_and_closes_ws(tmp
         _sessions, issue_player_jwt, verify_jwt,
     )
     from def_kari.api.routes.settings import regenerate_jwt_secret_endpoint
-    from jose import JWTError
+    from jwt import PyJWTError as JWTError
 
     settings_path = tmp_path / "mvp_settings.json"
     settings_path.write_text(json.dumps({}), encoding="utf-8")

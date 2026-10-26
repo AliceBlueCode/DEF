@@ -152,7 +152,7 @@ locales/
 - `requirements.txt` の依存は Dependabot（`.github/dependabot.yml`）が週次で更新PRを自動生成します。`pip-audit`（`.github/workflows/pip-audit.yml`）が `requirements.txt` 変更時・週次で既知脆弱性を検査し、検出時はCIを失敗させます。
 - **セキュリティパッチ**（`pip-audit`が検出した脆弱性の修正）は優先度高として即時対応してください。
 - **マイナー更新**（Dependabotの通常の更新PR）は月次でまとめてレビューする運用で構いません。
-- `python-jose` / `cryptography` / `Pillow` はJWT・暗号化・画像処理という性質上セキュリティ影響が特に大きいため、これらの更新PRは優先的に確認してください。
+- `PyJWT` / `cryptography` / `Pillow` はJWT・暗号化・画像処理という性質上セキュリティ影響が特に大きいため、これらの更新PRは優先的に確認してください。
 
 -----
 

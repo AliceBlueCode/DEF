@@ -20,7 +20,7 @@ _log = logging.getLogger("def.session")
 
 
 from fastapi import WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from def_kari.characters import load_profiles, get_character
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
@@ -1294,9 +1294,7 @@ class HumanTurnRequest(BaseModel):
     # (下のhuman_turn_action参照)。
     expected_round_seq: int = -1
 
-    from pydantic import validator as _pv
-
-    @_pv("action")
+    @field_validator("action")
     @classmethod
     def _validate_action(cls, v: str) -> str:
         valid = {"send", "extend", "skip", "interrupt", "generate_image"}

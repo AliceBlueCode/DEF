@@ -52,23 +52,41 @@ def test_upload_icon_rejects_non_image_content_type():
 
 
 def test_upload_icon_spoofed_content_type_still_rejected_by_pil():
-    """Content-Typeをimage/pngと偽装しても、中身が画像でなければPIL側で例外になり
+    """Content-Typeをimage/pngと偽装しても、中身が画像でなければ400で拒否され
     保存されないこと（Content-Type検証だけに頼らない多層防御の確認）。
-    TestClientはデフォルトでハンドルされない例外をそのまま再送出するため
-    （raise_server_exceptions=True、本番環境ではFastAPIが500化する）、ここでは
-    PIL.UnidentifiedImageErrorが実際に飛ぶこと自体を確認する。
+    以前は未処理のPIL例外がTestClientまで素通りすること（本番では500）を確認する
+    テストだったが、例外の伝わり方はstarlette/anyioの版で変わるため、明示的な400で
+    検証する形に変更した。拒否時はキャラクターディレクトリも作られないこと。
     """
-    from PIL import UnidentifiedImageError
-    import pytest
-
     char_id = "_upload_test_spoofed"
     try:
-        with pytest.raises(UnidentifiedImageError):
-            client.post(
-                f"/api/characters/{char_id}/icon",
-                files={"file": ("fake.png", b"this is not really a png file", "image/png")},
-            )
-        assert not (_CHAR_DIRS[0] / char_id / "icon.png").exists()
+        resp = client.post(
+            f"/api/characters/{char_id}/icon",
+            files={"file": ("fake.png", b"this is not really a png file", "image/png")},
+        )
+        assert resp.status_code == 400
+        assert not (_CHAR_DIRS[0] / char_id).exists()
+    finally:
+        import shutil
+        shutil.rmtree(_CHAR_DIRS[0] / char_id, ignore_errors=True)
+
+
+def test_upload_standing_truncated_png_rejected_with_400():
+    """PNGのシグネチャは正しいが途中で切れている画像。Image.open()は通り、
+    convert()でのデコード時にOSErrorになる経路でも400で拒否されること。"""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), color="blue").save(buf, "PNG")
+    truncated = buf.getvalue()[:-40]
+
+    char_id = "_upload_test_truncated"
+    try:
+        resp = client.post(
+            f"/api/characters/{char_id}/standing",
+            files={"file": ("standing.png", truncated, "image/png")},
+        )
+        assert resp.status_code == 400
+        assert not (_CHAR_DIRS[0] / char_id).exists()
     finally:
         import shutil
         shutil.rmtree(_CHAR_DIRS[0] / char_id, ignore_errors=True)

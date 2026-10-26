@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from fastapi import Body, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from def_kari.characters import load_profiles, get_character
 from def_kari.history.store import save_session_mode, list_session_mode_files
@@ -416,9 +416,7 @@ class SaveSessionMediaItem(BaseModel):
     image_url: str = ""
     audio_url: str = ""
 
-    from pydantic import validator as _pv
-
-    @_pv("image_url", "audio_url")
+    @field_validator("image_url", "audio_url")
     @classmethod
     def _validate_media_url(cls, v: str) -> str:
         """8.20対策: image_url/audio_urlは自サーバーの配信エンドポイントのみ許可する。
