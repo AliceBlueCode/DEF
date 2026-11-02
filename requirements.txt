@@ -38,7 +38,7 @@ PyYAML>=6.0.3
 deep-translator>=1.11.4
 
 # --- dev / test ---
-pytest>=9.1.1
+pytest>=9.2.0
 pytest-asyncio>=1.4.0
 # For FastAPI TestClient. starlette's test client prefers httpx2 (pydantic's
 # maintained successor of httpx) and deprecates plain httpx.
