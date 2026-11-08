@@ -116,6 +116,16 @@ jobs:
           npm run e2e:vote-expel
           npm run e2e:vote-expel-defense-and-handover
 
+      # v4.2.1 の実機確認手順を自動化したシナリオ（2026-11-08）。モックLLMの台本で状況を作り、
+      # 途中でバックエンドを再起動するものもあるため、scripts/e2e_local.py が別のポート
+      # （5100/8611/8612/3100、制御用5199）に独立した環境を立てて流す。上の環境とは共有しない。
+      - name: Run scripted e2e scenarios (isolated stack)
+        timeout-minutes: 15
+        env:
+          E2E_WORK_ROOT: ${{ runner.temp }}
+        run: |
+          python scripts/e2e_local.py generation_failure chat_thinking_output trpg_skip_designate vote_flow expel_flow restart_recovery
+
       # 実時間で~2分・~6分かかる2本は既定で除外し、手動実行時の任意指定のみで走らせる。
       - name: Run slow e2e scenarios (optional)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.include_slow == 'true'
@@ -133,3 +143,4 @@ jobs:
             mock_llm.log
             backend.log
             frontend.log
+            ${{ runner.temp }}/def_e2e_*/_logs/

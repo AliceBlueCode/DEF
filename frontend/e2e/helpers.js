@@ -9,12 +9,13 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-export const BASE_URL = 'http://localhost:3000'
+// ローカルで別環境に流すとき（scripts/e2e_local.py）は環境変数で宛先を変える。
+export const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
 // dual_run.pyの公開ポート（`--no-trust-cloudflare-tunnel`でloopback直起動、CI/ローカル
 // e2e向け）。ホストのnpm run devプロキシ経由のBASE_URLとは別物で、frontend/dist（要
 // npm run build）をpublic_main.pyが直接配信する経路——実ゲストが辿るのと同じ経路を
 // 検証するために存在する（guest_onboarding.js参照、2026-08-23）。
-export const GUEST_BASE_URL = 'http://127.0.0.1:8512'
+export const GUEST_BASE_URL = process.env.E2E_GUEST_BASE_URL || 'http://127.0.0.1:8512'
 export const GUEST_CHAR_JSON = path.join(__dirname, 'fixtures', 'test_guest_char.json')
 
 export function assert(cond, message) {
@@ -198,7 +199,7 @@ export async function startSession(hostPage) {
 }
 
 // バックエンドのWS直接URL（フロントのViteプロキシを経由しない生WebSocket接続用）。
-export const WS_URL = 'ws://127.0.0.1:8511'
+export const WS_URL = process.env.E2E_WS_URL || 'ws://127.0.0.1:8511'
 
 // ページが送信するAuthorizationヘッダーからBearerトークンを継続的に収集する。
 // createOnlineSession/joinAsPlayer が返した直後(何らかの認証済みリクエストが
@@ -255,4 +256,143 @@ export async function rawWsState(page, id) {
 
 export async function rawWsClose(page, id) {
   await page.evaluate(id => { try { window.__rawWs[id].close() } catch {} }, id)
+}
+
+// ── モックLLMの台本（scripts/e2e_mock_llm.py、2026-11-08） ──────────────────
+// 規則の形はモックの docstring を参照。シナリオの最初に mockReset() を呼び、
+// 前のシナリオの規則と呼び出しの記録を消してから台本を足す。
+export const MOCK_LLM_URL = process.env.MOCK_LLM_URL || 'http://127.0.0.1:5000'
+
+async function mockPost(path, payload) {
+  const res = await fetch(`${MOCK_LLM_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  })
+  if (!res.ok) throw new Error(`mock LLM ${path} failed: ${res.status}`)
+  return res.json()
+}
+
+export async function mockReset() {
+  return mockPost('/_reset', {})
+}
+
+export async function mockScript(rules) {
+  return mockPost('/_script', { rules })
+}
+
+// 呼び出しの記録 [{n, matched, text}]。matched は当たった規則の name（既定の応答なら ''）。
+export async function mockCalls() {
+  const res = await fetch(`${MOCK_LLM_URL}/_calls`)
+  return res.json()
+}
+
+// 条件を満たすまで待つ（ポーリング）。満たさなければ message で失敗する。
+export async function waitUntil(fn, { timeout = 30000, interval = 300, message = 'condition' } = {}) {
+  const t0 = Date.now()
+  for (;;) {
+    const v = await fn()
+    if (v) return v
+    if (Date.now() - t0 > timeout) throw new Error(`timeout waiting for: ${message}`)
+    await new Promise(r => setTimeout(r, interval))
+  }
+}
+
+// 呼び出しの種類ごとの照合条件（DEFの日本語プロンプト基準。2026-11-08 の調査に基づく）。
+// 会話の履歴に過去の指示が残るので、種類は「最後の user メッセージ」、話しているキャラは
+// 「system の あなたの役割: 名前」で見分ける。プロンプトの文言を変えたら、ここも直す。
+//   行動選択   session_turn_engine._ai_action_select（TRPG・Round 2以降。JSON・入れ子不可）
+//   発言       _generate_ai_turn_reply → generate_structured_reply（JSON。RESPONSE_SCHEMA）
+//   弁明       vote_deliberate（発言と同じ形。最後の user が deliberation_prompt）
+//   判定計画   judgment_planner._decide_check_pairs（JSON {"judgments": [...]}）
+//   語り       gm_agent.narrate（テキスト。【シーン進行】【セッション終了提案】で合図）
+//   チャット   chat.py（発言と同じ形。あなたの役割: が無い）
+export const mockRules = {
+  // AIの行動選択。action: none|skip|extend|designate|vote。payload は target_name/vote_type/vote_detail/reason
+  actionSelect: (name, action, payload = {}, extra = {}) => ({
+    name: `action:${name}:${action}`,
+    last_user_contains: ['[TRPGアクション選択]', `、${name}のターンです`],
+    json: { action, target_name: '', vote_type: '', vote_detail: '', reason: '', ...payload },
+    ...extra,
+  }),
+  // セッションでのAIの発言（弁明を除く）。reply は json か content を含むオブジェクト
+  dialogue: (name, reply, extra = {}) => ({
+    name: `dialogue:${name}`,
+    system_contains: [`あなたの役割: ${name}`],
+    last_user_not_contains: ['[TRPGアクション選択]', '今、投票が提案されています:'],
+    json_mode: true,
+    ...reply,
+    ...extra,
+  }),
+  // 投票の弁明
+  deliberation: (name, reply, extra = {}) => ({
+    name: `deliberation:${name}`,
+    system_contains: [`あなたの役割: ${name}`],
+    last_user_contains: ['今、投票が提案されています:'],
+    ...reply,
+    ...extra,
+  }),
+  // キーパーの判定計画。judgments: [{character: 名前, skill: '察知'}]
+  judgmentPlan: (judgments, extra = {}) => ({
+    name: 'judgment-plan',
+    system_contains: ['あなたはTRPGの判定要否決定システムです'],
+    json: { judgments },
+    ...extra,
+  }),
+  // キーパーの語り（テキスト）
+  keeperNarration: (text, extra = {}) => ({
+    name: 'keeper-narration',
+    last_user_contains: ['キーパーとして、直近の状況を踏まえて場面を進めてください。'],
+    json_mode: false,
+    content: text,
+    ...extra,
+  }),
+  // 1人用チャットの返事（セッションの文脈が無い = あなたの役割: が無い）
+  chatReply: (reply, extra = {}) => ({
+    name: 'chat',
+    json_mode: true,
+    not_contains: ['あなたの役割:', '[TRPGアクション選択]', 'あなたはTRPGの判定要否決定システムです'],
+    ...reply,
+    ...extra,
+  }),
+}
+
+// このタブのセッションIDとトークン（作成・参加が成功した時点で sessionStorage に入る）。
+export async function getSessionAuth(page) {
+  const state = await page.evaluate(() => {
+    try { return JSON.parse(sessionStorage.getItem('def_active_session') || 'null') } catch { return null }
+  })
+  if (!state?.sessionId || !state?.token) throw new Error('session restore state not found in sessionStorage')
+  return state
+}
+
+// このタブの権限で、セッションのAPIを呼ぶ（Viteのプロキシ経由）。戻り値は {status, body}。
+export async function sessionApi(page, path, { method = 'POST', body } = {}) {
+  const { sessionId, token } = await getSessionAuth(page)
+  return page.evaluate(async ({ url, method, body, token }) => {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    let data = null
+    try { data = await res.json() } catch { /* ignore */ }
+    return { status: res.status, body: data }
+  }, { url: `/api/session/${sessionId}${path}`, method, body, token })
+}
+
+// ロビーにAIキャラを追加する（ホストのタブで）。名前ではなくキャラID（data/public/characters の名前）。
+export async function lobbyAddAi(hostPage, charId) {
+  const r = await sessionApi(hostPage, '/lobby/add_ai', { body: { character_id: charId } })
+  if (r.status !== 200) throw new Error(`lobby/add_ai ${charId} failed: ${r.status} ${JSON.stringify(r.body)}`)
+  return r.body
+}
+
+// バックエンドを再起動する（scripts/e2e_local.py の制御用の窓口。CI の素の起動には無い）。
+// 応答が返った時点で、新しいプロセスが /api/health に答えている。
+export const E2E_CONTROL_URL = process.env.E2E_CONTROL_URL || ''
+export async function restartBackend() {
+  if (!E2E_CONTROL_URL) throw new Error('restartBackend needs scripts/e2e_local.py (E2E_CONTROL_URL is not set)')
+  const res = await fetch(`${E2E_CONTROL_URL}/restart-backend`, { method: 'POST' })
+  if (!res.ok) throw new Error(`backend restart failed: ${res.status}`)
 }
