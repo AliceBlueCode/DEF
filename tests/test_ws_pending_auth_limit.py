@@ -94,8 +94,11 @@ def test_ws_connection_within_limit_still_authenticates_normally(monkeypatch):
 
     monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 20)
     sid = _start()
-    token = issue_player_jwt(sid, "host")
-    session_module._sessions[sid]["players"][token] = ""
+    # 接続が生きている合図に PLAYER_RECONNECTED を使うため、参加者（join 済み）として登録する。
+    # ホストのトークンでは通知が出ない（ホストのJWTが全タブに漏れていたため塞いだ。2026-11-08）。
+    token = issue_player_jwt(sid, "player", "char_p")
+    session_module._sessions[sid]["players"][token] = "char_p"
+    session_module._sessions[sid].setdefault("token_to_participant", {})[token] = "char_p"
 
     with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
         ws.send_json({"type": "auth", "token": token})
@@ -111,8 +114,10 @@ def test_slot_released_after_successful_auth_allows_reuse(monkeypatch):
 
     monkeypatch.setattr(session_ws_module, "_WS_PENDING_AUTH_LIMIT_PER_IP", 1)
     sid = _start()
-    token = issue_player_jwt(sid, "host")
-    session_module._sessions[sid]["players"][token] = ""
+    # 受信できる合図（PLAYER_RECONNECTED）のため、参加者として登録する（上と同じ理由）
+    token = issue_player_jwt(sid, "player", "char_p")
+    session_module._sessions[sid]["players"][token] = "char_p"
+    session_module._sessions[sid].setdefault("token_to_participant", {})[token] = "char_p"
 
     with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
         ws.send_json({"type": "auth", "token": token})

@@ -40,12 +40,15 @@ _log = logging.getLogger("def.session")
 _VRAM_LOCK_TIMEOUT_SECONDS = float(os.environ.get("DEF_VRAM_LOCK_TIMEOUT", "60"))
 
 _BASE = Path(__file__).parent.parent.parent.parent
+# 書き込むデータは def_kari.runtime_paths の置き場所（テストでは一時ディレクトリ）
+from def_kari.runtime_paths import writable_data_dir as _writable_data_dir
+_DATA_W = _writable_data_dir()
 _SESSION_HISTORY_DIRS = [
-    _BASE / "data" / "public" / "session_history",
-    _BASE / "data" / "private" / "session_history",
+    _DATA_W / "public" / "session_history",
+    _DATA_W / "private" / "session_history",
 ]
-_AUTOSAVE_DIR = _BASE / "data" / "private" / "session_autosave"
-_VISITORS_DIR = _BASE / "data" / "visitors"
+_AUTOSAVE_DIR = _DATA_W / "private" / "session_autosave"
+_VISITORS_DIR = _DATA_W / "visitors"
 _VISITORS_MAX_FILES = 5000  # 新規ディレクトリ作成時のみ判定。既存の上書き更新は無制限
 _SAFE_FILENAME_RE = re.compile(r'^[A-Za-z0-9_\-]+\.json$')
 

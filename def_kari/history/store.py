@@ -11,7 +11,10 @@ from pathlib import Path
 
 from def_kari.config import MAX_VISIBLE_TURNS
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+from def_kari.runtime_paths import REPO_DATA_DIR, writable_data_dir
+
+# 会話の履歴は実行中に書き込むデータ（テストでは一時ディレクトリ。def_kari.runtime_paths 参照）
+DATA_DIR = writable_data_dir()
 PRIVATE_DIR = DATA_DIR / "private"
 
 _EXCLUDE_KEYS = {"llm_attempts", "_undo_stack", "_redo_stack"}
@@ -23,7 +26,8 @@ _SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 
 
 def _is_private_character(character_id: str) -> bool:
-    private_chars = PRIVATE_DIR / "characters"
+    # キャラが非公開かの判定は、同梱データ（リポジトリの data/）を見る（書き込み先とは別）
+    private_chars = REPO_DATA_DIR / "private" / "characters"
     if private_chars.exists():
         return (private_chars / character_id / "profile.json").exists()
     return False
@@ -123,7 +127,7 @@ def clear_history(character_id: str) -> None:
 # --- セッションモード履歴の永続化 ---
 
 def _is_private_rule_set(rule_set: str) -> bool:
-    return (PRIVATE_DIR / "session_rules" / f"{rule_set}.json").exists()
+    return (REPO_DATA_DIR / "private" / "session_rules" / f"{rule_set}.json").exists()
 
 
 def _session_mode_path(session_id: str, participants: list[str], rule_set: str = "") -> Path:

@@ -368,16 +368,12 @@ def test_start_via_public_app_cannot_pull_private_rule_content(tmp_path):
     with patch.object(session_rules_module, "_RULE_DIRS", [public_dir, private_dir]), \
          patch.object(session_rules_module, "_PUBLIC_RULE_DIRS", [public_dir]):
 
-        # public_app（無認証）: private rule_setを指定しても中身は空で作られる
+        # public_app（無認証）: 2026-11-08 から /start 自体が 403（セッションを作れるのはローカルの
+        # ホストだけ）。private rule_set を指定しても、セッションが作られない。
+        before = set(session_module._sessions)
         r_pub = client.post("/api/session/start", json={"character_ids": [], "rule_set": "nsfw_secret"})
-        assert r_pub.status_code == 200
-        sid_pub = r_pub.json()["session_id"]
-        try:
-            sess_pub = session_module._sessions[sid_pub]
-            assert sess_pub["rules"] == []
-            assert sess_pub["scene"] == ""
-        finally:
-            session_module._sessions.pop(sid_pub, None)
+        assert r_pub.status_code == 403
+        assert set(session_module._sessions) == before
 
         # main.py（ローカル専用）: 従来どおりprivateコンテンツも読み込まれる
         from def_kari.api.main import app

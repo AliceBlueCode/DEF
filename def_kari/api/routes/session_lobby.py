@@ -134,6 +134,14 @@ class SessionStartRequest(BaseModel):
 
 @router.post("/start")
 def start_session(req: SessionStartRequest, request: Request):
+    # セッションを作れるのは、ローカルのポートのホストだけ。公開ポート（招待コードで参加する
+    # ゲスト向け）からは作れない。以前は公開ポートでも通し、非公開のキャラ・ルール等を個別に
+    # 絞っていた（8.28・8.35）が、公開ポートの /start で誰でも自分のセッションのホストになれる
+    # ため、ホスト権限の経路（lobby_config の host_char_id・set_keeper_char・指示セット等）が
+    # 増えるたびに同じ型の穴が再発していた（2026-11-08、全体レビューで指摘、ユーザー決定）。
+    # 下の public_only の絞り込みは、多層防御として残す。
+    if _is_public_request(request):
+        raise HTTPException(403, "Sessions can only be created by the host on the local port")
     client_ip = _resolve_client_ip(request)
     if not _check_session_create_rate(client_ip):
         raise HTTPException(429, "Too many session creation requests")

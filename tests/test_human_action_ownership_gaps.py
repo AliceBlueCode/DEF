@@ -310,15 +310,12 @@ def test_start_via_public_app_excludes_private_character(tmp_path, monkeypatch):
     _write_private_character(private_dir)
     _patch_char_dirs(monkeypatch, public_dir, private_dir)
 
+    # 2026-11-08 から、公開ポートの /start はそもそも 403（セッションを作れるのはローカルのホストだけ）。
+    # 非公開キャラを指定しても、セッション自体が作られない。
+    before = set(_sessions)
     r = public_client.post("/api/session/start", json={"character_ids": ["secret_char"]})
-    assert r.status_code == 200
-    sid = r.json()["session_id"]
-    try:
-        sess = _sessions[sid]
-        assert "secret_char" not in sess["initiative"]
-        assert "secret_char" not in sess["name_map"]
-    finally:
-        _sessions.pop(sid, None)
+    assert r.status_code == 403
+    assert set(_sessions) == before
 
 
 def test_start_via_local_app_still_allows_private_character(tmp_path, monkeypatch):
@@ -345,7 +342,9 @@ def test_lobby_add_ai_via_public_app_rejects_private_character(tmp_path, monkeyp
     _write_private_character(private_dir)
     _patch_char_dirs(monkeypatch, public_dir, private_dir)
 
-    r = public_client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
+    # 公開ポートの /start は 403 になったので、セッションはローカルで作る。公開ポート経由の
+    # add_ai が非公開キャラを拒むこと（多層防御）は、そのホストのトークンで確かめる。
+    r = client.post("/api/session/start", json={"character_ids": [], "online_mode": True})
     d = r.json()
     sid = d["session_id"]
     host_token = d["host_token"]

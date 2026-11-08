@@ -14,7 +14,8 @@ _formatter = logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT)
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_formatter)
 
-_log_dir = Path(__file__).parent.parent.parent / "data" / "private" / "logs"
+from def_kari.runtime_paths import writable_data_dir as _writable_data_dir
+_log_dir = _writable_data_dir() / "private" / "logs"
 _log_dir.mkdir(parents=True, exist_ok=True)
 # 日次ローテーション、直近14日分を保持（ログには会話断片等の非公開情報が含まれ得るため data/private/ 配下）
 _file_handler = TimedRotatingFileHandler(

@@ -123,6 +123,10 @@ def test_ws_observer_role_closes_4001():
     observer_token = issue_player_jwt(sid, "observer")
     # 8.30対策でWS認証もplayers登録を要求するため、実際のjoinを模してここでも登録する。
     _sessions[sid]["players"][observer_token] = ""
+    # 参加者の ID も実際の join と同じく登録する。以前はここを省いても、トークンそのものが
+    # participant_id の代わりに PLAYER_RECONNECTED に入って届いていた（ホストのJWTが全タブに
+    # 漏れていた不具合と同じ経路。2026-11-08 に塞いだ）。
+    _sessions[sid].setdefault("token_to_participant", {})[observer_token] = "_observer_test"
     # observer は verify_jwt を通過できる → セッションあり → 接続成立
     with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
         ws.send_json({"type": "auth", "token": observer_token})

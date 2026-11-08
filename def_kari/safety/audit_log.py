@@ -12,8 +12,10 @@ from collections import defaultdict, deque
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
+from def_kari.runtime_paths import writable_data_dir as _writable_data_dir
+
 _BASE = Path(__file__).parent.parent.parent
-_LOG_DIR = _BASE / "data" / "private" / "logs"
+_LOG_DIR = _writable_data_dir() / "private" / "logs"
 
 # 構造化JSON専用ロガー。会話断片等は含まないが念のためdata/private/配下に置く
 # （main.pyのdef.logと同じ規約）。ルートロガーへは伝播させず、コンソール等に

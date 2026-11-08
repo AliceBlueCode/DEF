@@ -115,6 +115,13 @@ def generate_session_image(session_id: str, req: SessionGenerateImageRequest, re
     if not _try_acquire_generation_lock(session_id, gen_key):
         raise HTTPException(429, "An image is already being generated for you. Please wait for it to finish.")
     record_generation_event("generate_session_image", session_id, client_ip, gen_key)
+    # 使うバックエンド・モデルを選べるのは、ローカルのポートから来たホストだけ（このPCの持ち主）。
+    # 参加者や公開ポート経由の指定は無視し、セッションと設定の値を使う。以前は参加者の権限で
+    # 課金APIの画像生成（openai・civitai 等）や、ホストのPCにある任意のモデルを指定できた
+    # （2026-11-08、全体レビューで指摘）。
+    from def_kari.api.routes.session_rules import _is_public_request
+    if _auth.get("role") != "host" or _is_public_request(request):
+        req = req.model_copy(update={"backend": "", "t2i_backend": "", "t2i_model": ""})
     try:
         return _generate_session_image_impl(session_id, req)
     finally:

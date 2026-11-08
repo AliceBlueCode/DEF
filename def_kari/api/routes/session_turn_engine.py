@@ -1928,8 +1928,12 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
 
     # 参加者（host以外）の再接続を全タブに通知（切断表示からの復帰）。
     # 初回接続時にも飛ぶが、フロント側は connected:true への上書きのみなので無害。
-    if raw_token in sess.get("players", {}):
-        _rc_participant_id = sess.get("token_to_participant", {}).get(raw_token, raw_token)
+    # participant_id は token_to_participant にある参加者だけ。ホストのトークンはそこに無いので
+    # 通知しない。以前は「無ければトークンそのもの」を ID の代わりにしており、ホストが再接続する
+    # たびにホストのJWTが全タブ（招待コードで入れる Observer を含む）に配られていた
+    # （2026-11-08、全体レビューで指摘。ホストのなりすましが可能だった）。
+    _rc_participant_id = sess.get("token_to_participant", {}).get(raw_token)
+    if raw_token in sess.get("players", {}) and _rc_participant_id:
         _rc_char_id = sess["players"].get(raw_token, "")
         _game_event_bus.emit(session_id, "PLAYER_RECONNECTED", {
             "participant_id": _rc_participant_id,
@@ -1990,13 +1994,16 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
             # /leave で既に除去済み（players からも消えている）なら通知しない。
             # 参加者データは保持したまま切断のみを通知する（退室とは異なり再接続可能）
             if raw_token in sess.get("players", {}):
-                _dc_participant_id = sess.get("token_to_participant", {}).get(raw_token, raw_token)
+                # 再接続の通知と同じく、ホスト（token_to_participant に無い）は通知しない。
+                # トークンを ID の代わりにしない（ホストのJWTが全タブに漏れていた。2026-11-08）
+                _dc_participant_id = sess.get("token_to_participant", {}).get(raw_token)
                 _dc_char_id = sess["players"].get(raw_token, "")
-                _game_event_bus.emit(session_id, "PLAYER_DISCONNECTED", {
-                    "participant_id": _dc_participant_id,
-                    "character_id": _dc_char_id,
-                    "timeout_sec": _disconnect_timeout_sec(),
-                })
+                if _dc_participant_id:
+                    _game_event_bus.emit(session_id, "PLAYER_DISCONNECTED", {
+                        "participant_id": _dc_participant_id,
+                        "character_id": _dc_char_id,
+                        "timeout_sec": _disconnect_timeout_sec(),
+                    })
                 # 切断したのが現在のターン担当者なら、タイムアウト後の自動skipタイマーを
                 # 起動する（マルチプレイ設計書§3.7）。他キャラのターン中の切断は、
                 # そのキャラの番が回ってきた時点で _maybe_schedule_disconnect_skip が

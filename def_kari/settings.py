@@ -3,7 +3,10 @@
 import json
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+from def_kari.runtime_paths import writable_data_dir
+
+# 設定は実行中に書き込むデータ（テストでは一時ディレクトリ。def_kari.runtime_paths 参照）
+DATA_DIR = writable_data_dir()
 SETTINGS_PATH = DATA_DIR / "mvp_settings.json"
 
 PERSISTED_KEYS = [

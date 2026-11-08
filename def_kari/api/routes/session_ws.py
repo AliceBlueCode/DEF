@@ -8,12 +8,16 @@
 """
 
 import asyncio
+import json
+import logging
 
 from fastapi import WebSocket
 
 from def_kari.api.routes import session_state as _session_state
 from def_kari.api.routes.session_state import _sessions, _ws_send_locks
 from def_kari.gm.events import game_event_bus as _game_event_bus
+
+_log = logging.getLogger("def.session")
 
 
 # 8.32対策: WS接続はaccept()直後にfirst-message authを最大5秒待つが、それまでの
@@ -62,6 +66,14 @@ async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) ->
             _ws_send_locks.pop(token, None)
 
 
+def _session_tokens(sess: dict) -> set[str]:
+    """このセッションの認証トークン（ホスト・参加者・GM）。イベントに混ざっていないかの照合用。"""
+    tokens = set(sess.get("players", {}).keys())
+    tokens.update(t for t in (sess.get("host_token"), sess.get("invited_gm_token")) if t)
+    tokens.update(sess.get("token_to_participant", {}).keys())
+    return {t for t in tokens if isinstance(t, str) and len(t) >= 20}
+
+
 def _ws_broadcast_handler(session_id: str, event: dict) -> None:
     """game_event_bus の全イベントを接続中の全 WebSocket に配信する。
 
@@ -75,6 +87,30 @@ def _ws_broadcast_handler(session_id: str, event: dict) -> None:
     connections = list(sess.get("ws_connections", {}).items())
     if not connections:
         return
+
+    # 守り1: このセッションの認証トークンを含むイベントは、誰にも送らない。
+    # 以前は WS の接続・切断の通知が、ホストのJWTを participant_id の代わりに入れて全タブへ
+    # 配っていた（2026-11-08、全体レビューで指摘）。発生源は直したが、同じ型の漏れが
+    # どこかで再発しても外へ出ないよう、全イベントが通るここで止める。
+    tokens = _session_tokens(sess)
+    if tokens:
+        try:
+            text = json.dumps(event, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(event)
+        if any(t in text for t in tokens):
+            _log.error("[ws] dropped event %s: it contained a session token", event.get("type"))
+            return
+
+    # 守り2: GM専用（gm_only）のイベントは、キーパー（ホスト・参加したGM）の接続にだけ送る。
+    # 以前は全接続へ送っており、GET からは外した NPC の知識（8.27）が、WS 経由でプレイヤーと
+    # Observer に届いていた（2026-11-08、全体レビューで指摘）。
+    payload = event.get("payload")
+    if isinstance(payload, dict) and payload.get("gm_only"):
+        keepers = {sess.get("host_token"), sess.get("invited_gm_token")} - {None, ""}
+        connections = [(t, ws) for t, ws in connections if t in keepers]
+        if not connections:
+            return
 
     async def _do_broadcast() -> None:
         for token, ws in connections:
