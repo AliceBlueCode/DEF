@@ -11,7 +11,7 @@ import requests
 
 from def_kari.llm.backend import DEFAULT_LLM_BACKEND, LLM_BACKENDS
 from def_kari.llm.prompts import build_system_prompt
-from def_kari.llm.schema import EMOTIONS, VALIDATOR
+from def_kari.llm.schema import EMOTIONS, RESPONSE_SCHEMA, VALIDATOR
 
 MAX_CHAT_HISTORY_TURNS = 10
 DEFAULT_OPTIONS = {"num_predict": 512}
@@ -25,6 +25,15 @@ _THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL)
 
 def _strip_thinking(raw: str) -> str:
     result = _THINK_CLOSED_RE.sub("", raw)
+    # チャットテンプレートが<think>をプロンプト側に入れるモデル（Qwen3系・R1系等）は
+    # 「推論…</think>本文」と開きタグ無しで返す。対になる<think>は上で除去済みなので、
+    # ここに残る</think>は開きタグ無しの閉じタグで、その手前は推論（2026-11-08）。
+    # ただしJSONの値の中（"dialogue": "タグ</think>って何？" 等）にある</think>は推論の
+    # 終わりではないので、最初の"{"より前にあるときだけ扱う。
+    close_idx = result.find("</think>")
+    brace_idx = result.find("{")
+    if close_idx >= 0 and (brace_idx < 0 or close_idx < brace_idx):
+        result = result[close_idx + len("</think>"):]
     result = _THINK_OPEN_RE.sub("", result)
     return result.strip()
 
@@ -136,8 +145,41 @@ def _extract_json_object(text: str) -> str:
     return text[start:]
 
 
+# _FIELD_NAME_FIXES のうちキー名の表記揺れだけを、パース済みdictのキーに直接当てるための版。
+# 値の誤字（"exicted"等）は対象外（emotionの値は下の EMOTIONS 判定で扱う）。
+_KEY_NAME_FIXES = [
+    (re.compile(pattern.strip('"'), re.IGNORECASE), replacement.strip('"'))
+    for pattern, replacement in _FIELD_NAME_FIXES.items()
+    if replacement.strip('"') in RESPONSE_SCHEMA["properties"]
+]
+
+
+def _normalize_keys(parsed: dict) -> dict:
+    """キー名の表記揺れを正規化し、スキーマ外のキーを取り除く。
+
+    スキーマは additionalProperties: false なので、LLMが余計なキー（内心の独白
+    "inner_thoughts" 等）を1つ付けただけで全段の検証に落ち、段3の正規表現が1行JSONを
+    切り損ねて独白ごとセリフに混ぜてしまっていた。余計なキーは捨てて検証に進める。
+    先に表記揺れ（"dialog"→"dialogue" 等）を直すのは、そうしないと本来のフィールドまで
+    「スキーマ外」として捨ててしまうため。正規のキーが既にあるときは揺れ側を捨てる。
+    """
+    normalized = {}
+    for key, value in parsed.items():
+        if key in RESPONSE_SCHEMA["properties"]:
+            normalized[key] = value
+    for key, value in parsed.items():
+        if key in RESPONSE_SCHEMA["properties"]:
+            continue
+        for pattern, canonical in _KEY_NAME_FIXES:
+            if pattern.fullmatch(key) and canonical not in normalized:
+                normalized[canonical] = value
+                break
+    return normalized
+
+
 def _repair_types(parsed: dict) -> dict:
-    """スキーマ検証前に既知の型不一致を修復する。"""
+    """スキーマ検証前にキー名の揺れ・スキーマ外のキー・既知の型不一致を修復する。"""
+    parsed = _normalize_keys(parsed)
     img = parsed.get("image_prompt_en")
     if isinstance(img, list):
         parsed["image_prompt_en"] = ", ".join(str(x) for x in img) if img else ""
@@ -177,6 +219,16 @@ def _try_parse_and_validate(text: str):
 
     if not isinstance(parsed, dict):
         return False, None, ["トップレベルがオブジェクト(dict)ではありません"]
+
+    # セリフのキーが（表記揺れを直しても）無いJSONは、ここで成功にしない。_repair_types は
+    # 無いdialogueを""で埋めるため、{"response": "…"} のような想定外のキー名だと、
+    # スキーマ外のキーとして捨てられた本文の代わりに空のセリフで成功してしまう。
+    # 失敗にして後段（段3・段4）へ回せば、少なくとも本文は残る（2026-11-08）。
+    # ただし何も捨てていない（スキーマ内のキーだけで dialogue が無い）場合は従来どおり
+    # ""で埋めて通す。失敗にすると、残っていた image_prompt_en まで失われる。
+    normalized = _normalize_keys(parsed)
+    if "dialogue" not in normalized and len(normalized) < len(parsed):
+        return False, None, ["dialogue キーがありません（スキーマ外のキーのみ）"]
 
     parsed = _repair_types(parsed)
 
@@ -450,10 +502,14 @@ def generate_structured_reply(
     if not raw:
         attempts.append({"stage": "LLMリクエスト", "raw": "", "errors": ["APIから空のレスポンスが返されました（レート制限・安全フィルターの可能性）"]})
         return {"success": False, "result": None, "attempts": attempts}
-    raw_before_strip = raw
-    raw = _strip_thinking(raw)
-    if not raw and raw_before_strip:
-        raw = raw_before_strip
+    # 思考過程（<think>…）を除いた本文。閉じていない<think>の中にJSONを書くモデルもあるため、
+    # 本文が空ならJSONを拾う段（直接・段1・段2）だけは元の文字列で試す。
+    # 段3・段4は本文（reply_text）だけを使う。元の文字列を使うと、トークン切れで思考だけ
+    # 返ったときに推論の中身がそのままセリフとして表示されてしまう。
+    # 代償として、思考の途中に書かれた「下書きの」JSONが段1・2で採用されることはあり得る。
+    # 思考だけで終わった応答を空振りにするより、その下書きを使う方を意図して選んでいる。
+    reply_text = _strip_thinking(raw)
+    raw = reply_text or raw
     ok, parsed, errors = _try_parse_and_validate(raw)
     attempts.append({"stage": "LLMリクエスト", "raw": raw, "errors": errors})
     if ok:
@@ -474,6 +530,19 @@ def generate_structured_reply(
     attempts.append({"stage": "段2. 補正パターン変更による再パース", "raw": fallback_extract, "errors": errors})
     if ok:
         return {"success": True, "result": _append_lora_tags(_prepend_name_tags(_normalize_tag_format(_ensure_appearance_tags(parsed, appearance_tags), tag_format), image_name_tags), lora), "attempts": attempts}
+
+    if not reply_text:
+        # 最後の<think>が閉じていなければ、思考の途中で切れている
+        # （<think>a</think><think>b… のように2つ目が切れた場合も含む）
+        if raw.rfind("<think>") > raw.rfind("</think>"):
+            reason = "思考過程の途中で応答が終わっています（トークン切れの可能性）"
+        elif "</think>" in raw:
+            reason = "思考過程のみで応答本文がありません"
+        else:
+            reason = "応答本文が空です"
+        attempts.append({"stage": "思考過程の除去", "raw": raw, "errors": [reason]})
+        return {"success": False, "result": None, "attempts": attempts}
+    raw = reply_text
 
     # 段3: プレーンテキスト形式からの抽出
     plain_result = _try_parse_plain_format(raw)
@@ -653,4 +722,9 @@ def _try_parse_plain_format(raw: str):
         "image_prompt_en": image_prompt_en,
         "tags": tags,
     }
+    # 他の段と同じ補正・検証を通す（以前は "cheerful" 等の感情がそのまま通っていた）
+    parsed = _repair_types(parsed)
+    schema_errors = [str(e.message) for e in VALIDATOR.iter_errors(parsed)]
+    if schema_errors:
+        return False, None, schema_errors
     return True, parsed, []
