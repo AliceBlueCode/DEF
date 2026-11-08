@@ -142,3 +142,59 @@ def test_autosave_serialization_still_keeps_tokens_for_restore():
         assert "SFW-ABC-123" in serialized.get("invite_codes", {})
     finally:
         _sessions.pop(sid, None)
+
+
+def test_get_session_returns_only_callers_own_game_sheet_id():
+    """再読み込みで復帰したプレイヤーが自分のキャラシートを読み込み直せるよう、本人のキャラの
+    シートIDだけを返す。他人の対応（char_game_sheets全体）は引き続き返さない（2026-11-08）。"""
+    from def_kari.api.routes.session import _sessions, issue_player_jwt
+
+    sid, host_token = _start_with_token()
+    sess = _sessions[sid]
+    sess["char_game_sheets"] = {"char_a": "sheet_a", "char_b": "sheet_b"}
+    tok_a = issue_player_jwt(sid, "player", "char_a")
+    sess["players"][tok_a] = "char_a"
+
+    resp = client.get(f"/api/session/{sid}", headers={"Authorization": f"Bearer {tok_a}"})
+    body = resp.json()
+    assert body["my_game_sheet_id"] == "sheet_a"
+    assert "char_game_sheets" not in body["session"]
+    assert "sheet_b" not in resp.text
+
+    host_body = client.get(f"/api/session/{sid}", headers={"Authorization": f"Bearer {host_token}"}).json()
+    assert "my_game_sheet_id" not in host_body
+
+
+def test_get_session_returns_participants_snapshot_with_connection_state():
+    """再読み込みしたタブが参加者の一覧と接続状況を復元できること（2026-11-08）。
+
+    キーパーのタブは、この一覧で「接続中のプレイヤーが自分で振るキャラ」を決める。以前は
+    イベントでしか一覧が作られず、再読み込みの後は空になり、プレイヤーのキャラの判定まで
+    振って判定が二重になっていた。トークンと game_sheet_id（8.27）は返さない。
+    """
+    from def_kari.api.routes.session import _sessions, issue_player_jwt
+
+    sid, host_token = _start_with_token()
+    sess = _sessions[sid]
+    tok_a = issue_player_jwt(sid, "player", "char_a")
+    tok_b = issue_player_jwt(sid, "player", "char_b")
+    sess["players"][tok_a] = "char_a"
+    sess["players"][tok_b] = "char_b"
+    sess["token_to_participant"] = {tok_a: "char_a", tok_b: "char_b"}
+    sess["joined_participants"] = [
+        {"character_id": "char_a", "participant_id": "char_a", "display_name": "A",
+         "role": "player", "claimed_char_id": "", "game_sheet_id": "sheet_a"},
+        {"character_id": "char_b", "participant_id": "char_b", "display_name": "B",
+         "role": "player", "claimed_char_id": "", "game_sheet_id": "sheet_b"},
+    ]
+    sess["ws_connections"] = {tok_a: object()}  # A だけ接続中
+
+    resp = client.get(f"/api/session/{sid}", headers={"Authorization": f"Bearer {host_token}"})
+    body = resp.json()
+    by_id = {p["participant_id"]: p for p in body["participants"]}
+    assert by_id["char_a"]["connected"] is True
+    assert by_id["char_b"]["connected"] is False
+    assert by_id["char_a"]["character_id"] == "char_a"
+    assert "game_sheet_id" not in by_id["char_a"]
+    assert "sheet_a" not in resp.text and "sheet_b" not in resp.text
+    assert tok_a not in resp.text and tok_b not in resp.text

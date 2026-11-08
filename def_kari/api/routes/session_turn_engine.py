@@ -181,12 +181,70 @@ def _mark_spoken_and_check_round_complete(session: dict, char_id: str) -> bool:
     spoken: list = session.setdefault("_round_spoken", [])
     if char_id not in spoken:
         spoken.append(char_id)
+    return _complete_round_if_all_spoken(session)
+
+
+def _complete_round_if_all_spoken(session: dict) -> bool:
+    """initiativeの全員が_round_spokenに出そろっていれば、発言済み集合をリセットして
+    _round_seqを進め、Trueを返す。発言の記録時と、initiativeから人が抜けた時に呼ぶ。"""
+    spoken = session.get("_round_spoken", [])
     initiative = session.get("initiative", [])
     if initiative and set(initiative) <= set(spoken):
         session["_round_spoken"] = []
         session["_round_seq"] = session.get("_round_seq", 0) + 1
         return True
     return False
+
+
+def _remove_from_initiative(session: dict, char_id: str) -> bool:
+    """セッション進行中にchar_idをinitiativeから外し、手番まわりの状態を整合させる。
+    戻り値はラウンド完了フラグ（外したことで残り全員が発言済みになった場合にTrue）。
+
+    以前は投票による追放（vote_expel_resolve）が独自にturnを補正しており、手番が
+    回ってきている最後尾のキャラを外すと、ラウンドを進めずturnをlen-1に詰めていた。
+    その結果、直前のキャラにもう一度手番が回っていた。また_round_spokenから外さず
+    完了判定もしなかったため、残り全員が発言済みでもラウンドが完了せず、キーパーの
+    発言が次ラウンドへずれていた（2026-11-08、_normalize_round_turnへ寄せて集約）。
+    """
+    initiative = session.get("initiative", [])
+    if char_id not in initiative:
+        return False
+    idx = initiative.index(char_id)
+    turn = session.get("turn", 0)
+    # 除去前のinitiative・turnを持ったまま走っているAIターン（next_turn）が、後から
+    # 「古いturn+1」を書き戻してこの補正を潰さないようにする（skip_turnと同じ
+    # _skip_genの進め方。_run_ai_turns・_finalize_ai_turnの既存ガードが効く）。
+    session["_skip_gen"] = session.get("_skip_gen", 0) + 1
+    session["initiative"] = [c for c in initiative if c != char_id]
+    # 指名の戻り先はinitiativeの位置（index）で持っているので、同じ規則でずらす
+    for key in ("_designated_return_turn", "designated_return_turn"):
+        rt = session.get(key)
+        if isinstance(rt, int) and idx < rt:
+            session[key] = rt - 1
+    if session.get("designated_next") == char_id:
+        session.pop("designated_next", None)
+        session.pop("designated_return_turn", None)
+    if idx < turn:
+        session["turn"] = turn - 1
+    elif idx == turn:
+        # 手番中のキャラが抜けた: 手番を新しく始める。指名で割り込んでいたキャラなら、
+        # 手番を終えた場合（_finalize_ai_turn・_skip_turn_and_mark_spoken）と同じく
+        # 指名前の戻り先へ返す（以前は次のキャラへ進み、戻り先が残ったままのため
+        # そのラウンドで同じキャラが2回発言していた）。それ以外は次のキャラが同じ位置に
+        # 詰まってくるのでturnはそのまま。最後尾だった場合は_normalize_round_turnが
+        # 次ラウンドへ回す。
+        session["action_count"] = 0
+        return_turn = session.pop("_designated_return_turn", None)
+        if return_turn is not None and session["initiative"]:
+            session["turn"] = return_turn % len(session["initiative"])
+    if not session["initiative"]:
+        session["turn"] = 0
+        return False
+    _normalize_round_turn(session)
+    spoken = session.get("_round_spoken", [])
+    if char_id in spoken:
+        session["_round_spoken"] = [c for c in spoken if c != char_id]
+    return _complete_round_if_all_spoken(session) if session.get("_round_spoken") else False
 
 
 def _normalize_round_turn(session: dict) -> None:
@@ -236,6 +294,97 @@ def _advance_turn(session: dict, new_turn: int) -> None:
     _normalize_round_turn(session)
 
 
+VOTE_IN_PROGRESS = "vote_in_progress"
+EXPEL_DECISION_PENDING = "expel_decision_pending"
+
+
+def _turn_discarded() -> dict:
+    """投票・追放の決定待ちに入ったため、走っていたAIターンの結果を捨てたことを示す
+    next_turn の戻り値。受け取った側が書き換えても他に波及しないよう、毎回作る。"""
+    return {"discarded": True}
+
+
+def _turn_progress_blocked(session: dict) -> str | None:
+    """投票中（発議〜確定）と追放の続行方法の決定待ちの間は、ターンを進める操作を
+    止める。止める理由のコードを返す（止めないならNone）。
+
+    以前は投票中もサーバー側ではターンが進められ、確定時にturn/round/action_count
+    だけを投票前の値へ巻き戻していた。その間の発言の履歴・発言力・発言済みの記録・
+    指名は巻き戻らないため、「手番は戻ったのにその人は発言済み」といった食い違いが
+    起きていた。巻き戻すのではなく、そもそも進めないことにする（2026-11-08）。
+    ターンを進める入口（human_turn_actionのsend/skip・skip_turn・retake_turn・
+    ai_resume・切断タイムアウトの自動skip）と_run_ai_turnsが、これを確認する。
+    """
+    if session.get("_pending_vote"):
+        return VOTE_IN_PROGRESS
+    if session.get("_pending_expel_followup"):
+        return EXPEL_DECISION_PENDING
+    return None
+
+
+def _on_turn_progress_unblocked(
+    session_id: str, session: dict, *, resume_ai: bool = False, allow_auto_resume: bool = True,
+) -> None:
+    """投票・追放の決定待ちが解けた直後に呼ぶ（vote_commit・vote_expel_resolve・vote_cancel）。
+
+    投票の決着を知っているのはサーバーだけなので、ここで VOTE_CLOSED を1回だけ配信する。
+    フロントはこれを受けたときだけ、止まっている表示を消し、自動進行の再開を判断する
+    （以前は vote_result の付帯情報や各操作の応答から決着を推測しており、キーパー交代の
+    通知のような別の vote_result が再開のきっかけになってしまっていた。2026-11-08）。
+    allow_auto_resume: フロントが自動進行を再開してよいか。キーパーに再開を任せる場合
+                       （TRPGで追放によりラウンドが完了した）は False。
+    resume_ai: サーバー自身がAIターンを再開する（手番中の人を追放・AIに引き継いだ場合）。
+
+    あわせて、止まっている間に捨てた切断タイムアウトの自動skipを、現在の手番の人に
+    仕掛け直す。仕掛け直しは通常WAITING_FOR_HUMANの送出時に行われるが、人間の手番では
+    誰も_run_ai_turnsを起動しない（「次へ」は入力待ちの間は押せない）ため、ここでやらないと
+    切断した人の手番で止まり続けていた（2026-11-08レビュー指摘）。
+    """
+    if _turn_progress_blocked(session):
+        return
+    _game_event_bus.emit(session_id, "VOTE_CLOSED", {"resume": allow_auto_resume})
+    if not session.get("initiative"):
+        return
+    current = _get_current_speaker(session)
+    if current and _is_human_char(session, current):
+        _maybe_schedule_disconnect_skip(session_id, session, current)
+    if resume_ai and not session.get("lobby_active"):
+        _ensure_ai_turns_running(session_id, session, unpause=True)
+
+
+def _raise_if_turn_progress_blocked(session: dict) -> None:
+    reason = _turn_progress_blocked(session)
+    if reason:
+        raise HTTPException(409, reason)
+
+
+def _skip_turn_and_mark_spoken(session: dict, char_id: str, turn: int) -> bool:
+    """char_idの手番（turn）をskipで終える共通処理（発言力+1・手番を進めて正規化・
+    action_countリセット・発言済み記録）。戻り値はラウンド完了フラグ。
+
+    skipの経路は4つある（プレイヤーの自主skip=_apply_skip、GMの強制skip=skip_turn、
+    発言力マイナスによる自動skip=_resolve_turn_start、AIの自発skip=_resolve_ai_action）。
+    2026-09-08にskip_turnだけ_mark_spoken_and_check_round_completeを呼び忘れていた
+    バグを直したが、残り2経路（自動skip・AI自発skip）は同じ欠落を抱えたままだった。
+    そのキャラは_round_spokenに入らず、ラウンド完了（_round_seq更新・キーパー発火）が
+    次のラウンドまで遅れる。turnも正規化されずlen(initiative)のまま残っていた
+    （2026-11-08）。経路ごとに書き写すと同じ漏れが再発するため、ここを唯一の窓口にする。
+    """
+    counters = session.setdefault("counters", {})
+    counters[char_id] = counters.get(char_id, 0) + 1
+    # 指名で割り込んだキャラの手番なら、発言して終えた場合（_finalize_ai_turn）と同じく
+    # 指名前の戻り先へ返す。以前はskipだとturn+1へ進み、戻り先のキャラが飛ばされていた
+    # （そのキャラが発言済みに入らず、ラウンド完了も遅れる。2026-11-08）。
+    return_turn = session.pop("_designated_return_turn", None)
+    initiative = session.get("initiative", [])
+    if return_turn is not None and initiative:
+        _advance_turn(session, return_turn % len(initiative))
+    else:
+        _advance_turn(session, turn + 1)
+    session["action_count"] = 0
+    return _mark_spoken_and_check_round_complete(session, char_id)
+
+
 def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     """指定キャラの現ターンをskip扱いで処理する（発言力+1・ターン進行・AIターン再開）。
 
@@ -245,10 +394,7 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
     name_map = session.get("name_map", {})
     char_name = name_map.get(char_id, char_id)
     counters = session.setdefault("counters", {})
-    counters[char_id] = counters.get(char_id, 0) + 1
-    _advance_turn(session, session.get("turn", 0) + 1)
-    session["action_count"] = 0
-    round_completed = _mark_spoken_and_check_round_complete(session, char_id)
+    round_completed = _skip_turn_and_mark_spoken(session, char_id, session.get("turn", 0))
     _autosave(session_id)
     _game_event_bus.emit(session_id, "HUMAN_ACTION", {
         "character_id": char_id,
@@ -259,9 +405,7 @@ def _apply_skip(session_id: str, session: dict, char_id: str) -> dict:
         "round_completed": round_completed,
         "round_seq": session.get("_round_seq", 0),
     })
-    _ai_task = session.get("ai_task")
-    if not _ai_task or _ai_task.done():
-        session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    _ensure_ai_turns_running(session_id, session)
     return {
         "action": "skip",
         "character_id": char_id,
@@ -318,6 +462,29 @@ def _emit_waiting_for_human(session_id: str, session: dict) -> bool:
 from def_kari.api.routes.session_turn_media import _maybe_generate_turn_media, _start_background_tts
 
 
+def _ensure_ai_turns_running(session_id: str, session: dict, *, unpause: bool = False, restart: bool = False) -> None:
+    """AIターン処理（_run_ai_turns）のタスクを起動する唯一の窓口。
+
+    以前は7箇所（_apply_skip・human_turn_action・retake_turn・skip_turn・ai_resume・
+    set_auto_advance・session_lobby._resume_ai_turns_for）が、それぞれ「ai_taskが無いか
+    終わっていれば作る」を書き写していた。一時停止の解除（ai_paused）をするかどうか、
+    実行中のタスクを止めて作り直すかどうかが箇所ごとに暗黙に違っており、どの経路が
+    どう振る舞うかを追うには7箇所を読む必要があった（2026-11-08、集約）。
+
+    unpause: ai_pausedを解除する（ai_resume・自動進行オン・追放/AI引き継ぎ後の再開）。
+    restart: 実行中のタスクをキャンセルして作り直す（GMの強制skip。キャンセルしても
+             executorで走っている生成は止まらないので、結果は_skip_genのガードで捨てる）。
+    """
+    if unpause:
+        session["ai_paused"] = False
+    task = session.get("ai_task")
+    if task and not task.done():
+        if not restart:
+            return
+        task.cancel()
+    session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+
+
 async def _run_ai_turns(session_id: str) -> None:
     """ai_resume で呼ばれる非同期タスク。現在のターンを1回だけ実行して停止する。
     連続進行（自動モード）はフロントエンドが AI_TURN_COMPLETED を受け取った後に
@@ -327,6 +494,11 @@ async def _run_ai_turns(session_id: str) -> None:
         return
     try:
         if session.get("ai_paused"):
+            return
+        # 投票中・追放の決定待ちはAIのターンも進めない（入口を通らない起動経路
+        # ＝自動進行のオン・ホストのAI引き継ぎ、もここで止まる）。決定待ちを解く
+        # vote_expel_resolve は、印を消した後で再開を仕掛ける。
+        if _turn_progress_blocked(session):
             return
         current = _get_current_speaker(session)
         if not current:
@@ -341,12 +513,19 @@ async def _run_ai_turns(session_id: str) -> None:
         # skip_turn が新しいタスクを作成するのでここでは再実行不要。
         if session.get("_skip_gen", 0) != _skip_gen_snap:
             return
+        # 生成中に投票が発議された（next_turnが結果を捨てた）。決着後に再開される
+        if result.get("discarded"):
+            return
         if result.get("error"):
             # 生成エラー時は自動進行を止め、全タブに状態を同期する
             if session.get("auto_advance"):
                 session["auto_advance"] = False
                 _game_event_bus.emit(session_id, "AUTO_ADVANCE_CHANGED", {"enabled": False})
-            _game_event_bus.emit(session_id, "AI_ERROR", {"error": result["error"]})
+            _game_event_bus.emit(session_id, "AI_ERROR", {
+                "error": result["error"],
+                "character_id": result.get("character_id", ""),
+                "character_name": result.get("character_name", ""),
+            })
             return
         if result.get("waiting_for_human"):
             _game_event_bus.emit(session_id, "WAITING_FOR_HUMAN", {
@@ -616,6 +795,13 @@ def _resolve_turn_start(session: dict, req: SessionNextRequest):
     """
     initiative = session["initiative"]
     _skip_gen_before = session.get("_skip_gen", 0)  # keeper_skip 競合検出用
+    # AIの発議の後、受け付けられないまま次の手番の処理が始まった: その発議は流れたとみなし、
+    # 消費した発言力を戻す（2026-11-08）。発議の直後にキーパーのタブが vote_deliberate を
+    # 呼ぶ前に「次へ」が押されると、まだ受け付けられる途中の発議も流れたとみなされるが、
+    # 発議ではターンが進まないので、同じAIが改めて行動を選び直すだけで済む。
+    if "_ai_vote_proposal" in session and not session.get("_pending_vote"):
+        from def_kari.api.routes.session_persistence import _refund_unaccepted_ai_vote_proposal
+        _refund_unaccepted_ai_vote_proposal(session)
     _normalize_round_turn(session)
     turn = session["turn"]
 
@@ -637,9 +823,7 @@ def _resolve_turn_start(session: dict, req: SessionNextRequest):
     _ctr_now = counters.get(current_char_id, 0)
     _log.info("[counter] %s = %d (Round %d)", name_map.get(current_char_id, current_char_id), _ctr_now, session["round"])
     if _ctr_now < 0:
-        counters[current_char_id] = _ctr_now + 1
-        session["turn"] = turn + 1
-        session["action_count"] = 0
+        round_completed = _skip_turn_and_mark_spoken(session, current_char_id, turn)
         _autosave(req.session_id)
         _log.info("[forced_skip] %s: %d → %d", name_map.get(current_char_id, current_char_id), _ctr_now, _ctr_now + 1)
         return {
@@ -649,6 +833,8 @@ def _resolve_turn_start(session: dict, req: SessionNextRequest):
             "character_name": name_map.get(current_char_id, current_char_id),
             "round": session["round"],
             "counters": dict(counters),
+            "round_completed": round_completed,
+            "round_seq": session.get("_round_seq", 0),
         }, None
 
     profiles = load_profiles()
@@ -709,10 +895,40 @@ def _build_recent_history(session: dict, current_char_id: str, name_map: dict) -
     return history
 
 
+def _normalize_ai_vote_proposal(
+    ai_action: dict, initiative: list, name_map: dict, current_char_id: str,
+) -> dict | None:
+    """AIが行動選択で出した発議を、vote_deliberate が受け付ける形に正規化する。成り立たなければ None。
+
+    以前はLLMの出力をそのまま発議に使っており、vote_deliberate の内容の確認（種類・長さ・
+    禁止語・追放の対象）で400になっていた。特にAIの追放の発議は対象（target_id）が
+    空のまま送られ、必ず失敗していた（2026-11-08レビュー指摘）。成り立たない発議は、
+    発議ではなく何もしない（none）として扱い、発言力も消費しない。
+    """
+    from def_kari.api.routes.session_voting import _VOTE_DETAIL_MAX_LEN, _VOTE_TYPES
+    vote_type = ai_action.get("vote_type", "")
+    if vote_type not in _VOTE_TYPES:
+        return None
+    detail = (ai_action.get("vote_detail", "") or "")[:_VOTE_DETAIL_MAX_LEN]
+    if detail and contains_blocked_content(detail):
+        return None
+    target_id = ""
+    if vote_type == "expel":
+        # 指名（designate）と同じく、名前でinitiativeから探す。LLMが対象を内容欄に書く場合も拾う
+        names = (ai_action.get("target_name", ""), ai_action.get("vote_detail", ""))
+        target_id = next((c for c in initiative for n in names if n and name_map.get(c, c) == n), "")
+        if not target_id or target_id == current_char_id:
+            return None
+    reason = (ai_action.get("reason", "") or "")[:_VOTE_DETAIL_MAX_LEN]
+    if reason and contains_blocked_content(reason):
+        reason = ""
+    return {"vote_type": vote_type, "detail": detail, "target_id": target_id, "reason": reason}
+
+
 def _resolve_ai_action(
     session: dict, req: SessionNextRequest, current_char_id: str, turn: int, counters: dict,
     initiative: list, name_map: dict, speaker_name: str, backend_id: str, model: str,
-    char: dict, user_lang: str,
+    char: dict, user_lang: str, skip_gen_before: int = 0,
 ):
     """TRPGモード Round>=2 のAI行動選択（none/skip/vote/designate/extend）と、
     各選択肢の発言力消費・状態反映を行う（`next_turn`から切り出し、2026-08-15、
@@ -735,14 +951,20 @@ def _resolve_ai_action(
             session["round"], session["history"],
             initiative, name_map, speaker_name, user_lang,
         )
+        # 行動選択のLLM呼び出し中に投票が発議されていたら、何も反映せずに捨てる
+        if _turn_progress_blocked(session):
+            return _turn_discarded(), ai_action, designated_target_name
         _log.info("[action] %s chose: %s", speaker_name, ai_action.get("action"))
 
     if ai_action["action"] == "skip":
         _ctr_before_skip = counters.get(current_char_id, 0)
-        counters[current_char_id] = _ctr_before_skip + 1
-        session["turn"] = turn + 1
-        session["action_count"] = 0
-        _autosave(req.session_id)
+        round_completed = False
+        # 行動選択（_ai_action_select）はLLM呼び出しで時間がかかる。その間にGMが
+        # keeper_skipで同じ手番を既に進めていたら、手番を二重に進めない
+        # （_finalize_ai_turnと同じ_skip_genガード）。
+        if session.get("_skip_gen", 0) == skip_gen_before:
+            round_completed = _skip_turn_and_mark_spoken(session, current_char_id, turn)
+            _autosave(req.session_id)
         return {
             "skipped": True,
             "voluntary": True,
@@ -751,20 +973,34 @@ def _resolve_ai_action(
             "character_name": name_map.get(current_char_id, current_char_id),
             "round": session["round"],
             "counters": dict(counters),
+            "round_completed": round_completed,
+            "round_seq": session.get("_round_seq", 0),
         }, ai_action, designated_target_name
 
     if ai_action["action"] == "vote":
         _cur = counters.get(current_char_id, 0)
-        if _cur >= 3:
+        _proposal = _normalize_ai_vote_proposal(ai_action, initiative, name_map, current_char_id)
+        if _cur >= 3 and _proposal is not None:
+            # 発議のコストとして、ここで発言力を全て消費する。後で vote_deliberate が発議を
+            # 受け付けなかった（レート制限・タブが落ちた等）場合に、同じAIが次の手番で
+            # 発議を繰り返さないため。消費した量は _ai_vote_proposal に記録し、
+            # vote_deliberate が投票（proposer_counter_spent）へ引き継ぐ。取り消し・再起動で
+            # 投票が流れたら、そこから戻す（2026-11-08）。
             counters[current_char_id] = 0
+            # reason: 弁明としてそのAIの発言に記録する文章。vote_deliberate は申告された文章ではなく
+            # これを使う（発言の偽装を防ぐため）
+            # 投票の中身（種類・内容・追放の対象）も正規化した値を記録し、vote_deliberate は
+            # AIの発議のときは申告ではなくこれを使う。
+            session["_ai_vote_proposal"] = {"proposer_id": current_char_id, "spent": _cur, **_proposal}
             _autosave(req.session_id)
             return {
                 "action": "vote_proposal",
                 "character_id": current_char_id,
                 "character_name": name_map.get(current_char_id, current_char_id),
-                "vote_type": ai_action.get("vote_type", "topic_change"),
-                "vote_detail": ai_action.get("vote_detail", ""),
-                "proposer_text": ai_action.get("reason", ""),
+                "vote_type": _proposal["vote_type"],
+                "vote_detail": _proposal["detail"],
+                "target_id": _proposal["target_id"],
+                "proposer_text": _proposal["reason"],
                 "round": session["round"],
                 "counters": dict(counters),
             }, ai_action, designated_target_name
@@ -922,7 +1158,7 @@ def _generate_ai_turn_reply(
     if not vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
         err = f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s"
         _last_session_debug = {"error": err, "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
-        return {"error": err, "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {err})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
+        return {"error": err, "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {err})", "emotion": "neutral", "round": session["round"], "turn": turn, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
     try:
         narrate_kwargs = dict(
             character=char,
@@ -937,13 +1173,14 @@ def _generate_ai_turn_reply(
             char_id=current_char_id,
         )
         result = _player_agent.narrate(**narrate_kwargs)
-        if not result.get("success"):
+        # 投票中なら再試行しない（どのみち next_turn が結果を捨てる。LLM呼び出しの無駄）
+        if not result.get("success") and not _turn_progress_blocked(session):
             import time as _time
             _time.sleep(1)
             result = _player_agent.narrate(**narrate_kwargs)
     except Exception as e:
         _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
-        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn + 1, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
+        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
     finally:
         vram_lock.release()
 
@@ -979,7 +1216,6 @@ def _generate_ai_turn_reply(
     else:
         attempts = result.get("attempts", [])
         errors = "; ".join(e for a in attempts for e in a.get("errors", []))
-        text = f"(generation failed: {errors})" if errors else "(generation failed)"
         _last_session_debug = {
             "success": False,
             "character_id": current_char_id,
@@ -991,6 +1227,14 @@ def _generate_ai_turn_reply(
             "attempts": attempts,
             "user_text": user_text,
         }
+        # 以前は "(generation failed: …)" をそのキャラの発言として履歴に入れ、ターンも
+        # 進めていた。その文字列が次のターンでLLMへの入力に混ざるうえ、設計書8.1節の
+        # 「TRPGセッションではAI_ERRORをブロードキャスト」とも食い違っていた。例外時と
+        # 同じエラー応答にして、_run_ai_turns に AI_ERROR を出させ、履歴・ターンは
+        # 動かさない（2026-11-08。思考モデルのトークン切れを失敗として返すようにした
+        # ことで、この経路を通る頻度が上がったため）。
+        error = f"generation failed: {errors}" if errors else "generation failed"
+        return {"error": error, "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"({error})", "emotion": "neutral", "round": session["round"], "turn": turn, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
 
     return None, text, emotion, tags, image_prompt_en
 
@@ -1119,7 +1363,7 @@ def next_turn(req: SessionNextRequest):
 
     early_result, _ai_action, _designated_target_name = _resolve_ai_action(
         session, req, current_char_id, turn, counters, initiative, name_map,
-        speaker_name, backend_id, model, char, _user_lang,
+        speaker_name, backend_id, model, char, _user_lang, _skip_gen_before,
     )
     if early_result is not None:
         return early_result
@@ -1133,6 +1377,15 @@ def next_turn(req: SessionNextRequest):
         session, current_char_id, char, user_text, history, model, backend_id,
         session_ctx, _allowed_sexual, _allowed_violence, name_map, topic, turn, _is_dead,
     )
+    # 生成のLLM呼び出し中に投票が発議されていたら、履歴にもターンにも書かずに捨てる
+    # （_run_ai_turnsは始まる時点でしか確認しないため。2026-11-08レビュー指摘）。生成の
+    # 失敗（early_result）より先に見る: 投票中に AI_ERROR を出して自動進行を止めないため。
+    # なお、この確認と_finalize_ai_turnの書き込みの間はロックしていない。next_turn
+    # （executorのスレッド）とvote_deliberate（スレッドプール）は並行して走るので、ここを
+    # 通った直後に発議されると、この1ターンだけは投票中に書き込まれ得る（数行の隙間で、
+    # 今は許容している）。
+    if _turn_progress_blocked(session):
+        return _turn_discarded()
     if early_result is not None:
         return early_result
 
@@ -1158,6 +1411,7 @@ async def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+    _raise_if_turn_progress_blocked(session)
 
     action_count = session.get("action_count", 0)
     actions_per_turn = session.get("actions_per_turn", 2)
@@ -1196,9 +1450,7 @@ async def retake_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     session["history"], removed = _clean_history_for_retake(history, remove)
 
     # 巻き戻し後にai_taskを再起動（WS経由でフロントに通知される）
-    ai_task = session.get("ai_task")
-    if not ai_task or ai_task.done():
-        session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    _ensure_ai_turns_running(session_id, session)
 
     _autosave(session_id)
     return {"removed": removed}
@@ -1212,10 +1464,8 @@ async def ai_resume(session_id: str, _auth: dict = Depends(require_keeper)):
         raise HTTPException(404, "Session not found")
     if sess.get("lobby_active"):
         return {"status": "lobby"}
-    sess["ai_paused"] = False
-    ai_task = sess.get("ai_task")
-    if not ai_task or ai_task.done():
-        sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    _raise_if_turn_progress_blocked(sess)
+    _ensure_ai_turns_running(session_id, sess, unpause=True)
     return {"status": "ok"}
 
 
@@ -1246,6 +1496,7 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+    _raise_if_turn_progress_blocked(session)
     initiative = session["initiative"]
     char_id = _get_current_speaker(session)
     if not char_id:
@@ -1253,12 +1504,9 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
     turn = session.get("turn", 0) % len(initiative)
     char_name = session["name_map"].get(char_id, char_id)
     counters = session.setdefault("counters", {})
-    counters[char_id] = counters.get(char_id, 0) + 1
     # _skip_gen を先にインクリメント → next_turn の turn 書き戻しを防止
     session["_skip_gen"] = session.get("_skip_gen", 0) + 1
-    _advance_turn(session, turn + 1)
-    session["action_count"] = 0
-    round_completed = _mark_spoken_and_check_round_complete(session, char_id)
+    round_completed = _skip_turn_and_mark_spoken(session, char_id, turn)
     _autosave(session_id)
     _game_event_bus.emit(session_id, "HUMAN_ACTION", {
         "character_id": char_id,
@@ -1271,10 +1519,7 @@ async def skip_turn(session_id: str, _auth: dict = Depends(require_keeper)):
         "round_seq": session.get("_round_seq", 0),
     })
     # 実行中の ai_task をキャンセルしてスキップ位置から再起動
-    _ai_task = session.get("ai_task")
-    if _ai_task and not _ai_task.done():
-        _ai_task.cancel()
-    session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    _ensure_ai_turns_running(session_id, session, restart=True)
     return {
         "character_id": char_id,
         "character_name": char_name,
@@ -1431,6 +1676,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         return {"error": "Session not found"}
     if session.get("lobby_active"):
         raise HTTPException(409, "Session has not started yet")
+    _raise_if_turn_progress_blocked(session)
 
     initiative = session["initiative"]
     turn = session["turn"]
@@ -1548,9 +1794,7 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
             "round_seq": session.get("_round_seq", 0),
         })
         # AIタスク起動（二重起動防止）
-        _ai_task = session.get("ai_task")
-        if not _ai_task or _ai_task.done():
-            session["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+        _ensure_ai_turns_running(session_id, session)
         return {
             "action": "send",
             "turn_advanced": True,
@@ -1630,6 +1874,22 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
 
     sess.setdefault("ws_connections", {})[raw_token] = ws
     _cancel_idle_shutdown(session_id)
+
+    # 接続してきたタブが、どのビルドのフロントで、いつ読み込まれたページかを記録する。
+    # 実機確認で「再読み込みしたのに直っていない」ときに、古いページ・古いビルドのまま
+    # 動いていないかをログで確かめるため（2026-11-08）。値はクライアントの申告なので、
+    # ログを汚さないよう英数字と記号の一部だけを残して短く切る。
+    _client = auth_msg.get("client") if isinstance(auth_msg.get("client"), dict) else {}
+
+    def _clean(v: object) -> str:
+        return re.sub(r"[^0-9A-Za-z:.\-TZ]", "", str(v or ""))[:32] or "-"
+
+    jwt_role = jwt_payload.get("role", "")
+    _log.info(
+        "[ws] connected session=%s role=%s char=%s build=%s page_loaded=%s",
+        session_id[:8], jwt_role, sess.get("players", {}).get(raw_token, "") or "-",
+        _clean(_client.get("build")), _clean(_client.get("page_loaded_at")),
+    )
 
     # 参加者（host以外）の再接続を全タブに通知（切断表示からの復帰）。
     # 初回接続時にも飛ぶが、フロント側は connected:true への上書きのみなので無害。

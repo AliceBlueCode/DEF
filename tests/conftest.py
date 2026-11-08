@@ -81,3 +81,55 @@ def _block_real_llm_calls():
     finally:
         for bid, entry in LLM_BACKENDS.items():
             entry["chat"] = originals[bid]
+
+
+def _blocked_synthesize(*args, **kwargs):
+    raise RuntimeError("TTS backend called during a test without mocking.")
+
+
+def _install_tts_block() -> None:
+    from def_kari.tts.backend import TTS_BACKENDS
+
+    for name in TTS_BACKENDS:
+        TTS_BACKENDS[name] = _blocked_synthesize
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _block_real_tts_calls_for_session():
+    """_block_real_tts_calls の土台。テストの全期間、TTSの実呼び出しを止めておく。
+
+    テスト1件ごとに止めて元に戻すだけだと、裏の読み上げスレッドがロック待ちのままテストを
+    抜けたとき、元に戻した後に本物のTTSを呼ぶ隙間があった（2026-11-08、レビューで指摘）。
+    元に戻すのは全テストが終わった後だけにする。
+    """
+    from def_kari.tts.backend import TTS_BACKENDS
+
+    originals = dict(TTS_BACKENDS)
+    _install_tts_block()
+    try:
+        yield
+    finally:
+        TTS_BACKENDS.clear()
+        TTS_BACKENDS.update(originals)
+
+
+@pytest.fixture(autouse=True)
+def _block_real_tts_calls(_block_real_tts_calls_for_session):
+    """テスト環境ではTTSバックエンドへの実呼び出しを一切許可しない（_block_real_llm_calls と同じ考え方）。
+
+    人間の発言・AIの発言のテストは裏で読み上げ（_start_background_tts）を始め、vram_lockを
+    持ったまま本物のTTSを呼ぶ。開発機でVOICEVOX等が起動していると実際に合成が走って数秒
+    ロックを握り、後続のテストがvram_lockのタイムアウトで落ちていた。VOICEVOXが止まって
+    いれば即座に失敗するので気付かず、開発機の状態次第で結果が変わっていた（2026-11-08、
+    実機確認のためDEFを起動したまま流して発覚）。呼ばれたら即座に例外を投げ、ロックを
+    すぐ解放させる。TTSそのものを確かめるテストは、アダプターを直接呼ぶかモックする。
+
+    テストが設定を保存すると、互換TTSが本物で登録し直されて止めが外れる（settings.py）。
+    そのため、テストの前後で毎回止め直す。後始末でも本物には戻さない（戻すのは
+    _block_real_tts_calls_for_session が全テストの後に行う）。
+    """
+    _install_tts_block()
+    try:
+        yield
+    finally:
+        _install_tts_block()

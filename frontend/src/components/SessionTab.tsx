@@ -120,6 +120,20 @@ function CharMultiSelect({
 
 // ── メインコンポーネント ──────────────────────────────────────
 
+
+// このページ（タブ）を読み込んだ時刻。WS接続時にビルドの印と一緒に送り、サーバーのログで
+// 「再読み込みした新しいページか」を確かめられるようにする（2026-11-08）
+const PAGE_LOADED_AT = new Date().toISOString()
+declare const __DEF_BUILD__: string
+
+// サーバーがターンの進行を止めているときの409のdetail（session_turn_engine.py の
+// VOTE_IN_PROGRESS / EXPEL_DECISION_PENDING と一致させること）
+const TURN_BLOCKED_BY_VOTE = 'vote_in_progress'
+const TURN_BLOCKED_BY_EXPEL = 'expel_decision_pending'
+type TurnBlockedCode = typeof TURN_BLOCKED_BY_VOTE | typeof TURN_BLOCKED_BY_EXPEL
+const isTurnBlockedCode = (v: unknown): v is TurnBlockedCode =>
+  v === TURN_BLOCKED_BY_VOTE || v === TURN_BLOCKED_BY_EXPEL
+
 export default function SessionTab({ characters, backend, t2iBackend, initialJoinResult }: Props) {
   const t = useT()
 
@@ -346,6 +360,84 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     return data
   }
 
+  // 投票中・追放の決定待ちの間、サーバーはターンを進める操作を409で拒否する（2026-11-08）。
+  // キーパーのタブには理由と「保留中の投票を取り消す」を出す。確定や選択のUIはタブの状態に
+  // しか無く、再読み込みで失われると取り消す以外に進める手段が無いため。
+  const [turnBlocked, setTurnBlocked] = useState<TurnBlockedCode | null>(null)
+  const turnBlockedRef = useRef<TurnBlockedCode | null>(null)
+  const notifyTurnBlocked = (code: TurnBlockedCode) => {
+    if (turnBlockedRef.current === code) return  // 自動進行の連鎖などで同じ通知を重ねない
+    turnBlockedRef.current = code
+    if (myRoleRef.current === 'host' || myRoleRef.current === 'gm') setTurnBlocked(code)
+    setMessages(prev => [...prev, {
+      character_id: '_keeper', character_name: '⚙ System',
+      text: t(code === TURN_BLOCKED_BY_VOTE ? 'session.msg.turnBlockedByVote' : 'session.msg.turnBlockedByExpel'),
+      emotion: '', tags: [],
+    }])
+  }
+  const clearTurnBlocked = () => {
+    turnBlockedRef.current = null
+    setTurnBlocked(null)
+  }
+  // 投票中（発議〜確定・取り消し）と追放の決定待ちの間は、サーバーがターンの進行を止めて
+  // いる。以前はキーパーのタブも自動進行をタブの中だけで止め、決着後に戻していたが、
+  // サーバーの auto_advance とタブの状態の2箇所に自動進行があるせいで、復帰の取りこぼし・
+  // 他の一時停止との競合・失敗時の戻し忘れを3回続けて直すことになった（2026-11-08）。
+  // サーバーが止めている以上タブで止める必要は無いので、投票のための一時停止はやめ、
+  // 決着したら「自動進行オン・他の一時停止なし」のときにAIターンを再開するだけにする。
+  // 決着はWSの vote_result（追放の決定待ちに入るものを除く）で全タブに届くので、
+  // キーパーの権限を持つタブが複数あっても、どれも同じ判断をする（二重起動はサーバーが防ぐ）。
+  // 他の一時停止（人間キーパーの発言待ち・判定の待ち・自分の手番）は、クリックや await の
+  // 後に呼ばれても古い値を見ないよう ref で読む。
+  const waitingForKeeperTurnRef = useRef(false)
+  const pendingJudgmentsCountRef = useRef(0)
+  const waitingForHumanRef = useRef(false)
+  useEffect(() => { waitingForKeeperTurnRef.current = waitingForKeeperTurn }, [waitingForKeeperTurn])
+  useEffect(() => { pendingJudgmentsCountRef.current = pendingJudgments.length }, [pendingJudgments])
+  useEffect(() => { waitingForHumanRef.current = waitingForHuman }, [waitingForHuman])
+  // applyKeeperResult はWSのイベントの受け口（接続した時点の状態を覚えた関数）から呼ばれる
+  // ため、participants を直接読むと接続した時点の一覧（プレイヤーの参加前なら空）を見てしまう。
+  // ref で最新の一覧を読む（2026-11-08、実機確認で発覚: キーパーのタブがプレイヤーのキャラの
+  // 判定を飛ばせていなかった）。
+  const participantsRef = useRef(participants)
+  useEffect(() => { participantsRef.current = participants }, [participants])
+  // 同じ理由で、自動判定が読むキャラシートも ref から読む。再読み込みの後に読み直した
+  // 自分のシートが、WSの受け口からは空に見え、自動判定が黙って行われなかった（2026-11-08）。
+  const charSheetDataRef = useRef(charSheetData)
+  useEffect(() => { charSheetDataRef.current = charSheetData }, [charSheetData])
+  const resumeAfterVoteIfAuto = (sid: string) => {
+    if (myRoleRef.current !== 'host' && myRoleRef.current !== 'gm') return
+    if (!autoAdvanceRef.current) return
+    if (waitingForKeeperTurnRef.current || pendingJudgmentsCountRef.current > 0 || waitingForHumanRef.current) return
+    void resumeAI(sid)
+  }
+  const resumeAI = async (sid: string) => {
+    // ai_resume はキーパー（host/gm）専用。プレイヤーのタブから呼ぶと403になるだけなので呼ばない
+    // （キーパーの処理の最後で全タブが呼んでおり、ログに403が並んでいた）
+    if (myRoleRef.current !== 'host' && myRoleRef.current !== 'gm') return
+    const res = await authFetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
+    if (res.status === 409) {
+      const d = await parseJsonResponse(res)
+      if (isTurnBlockedCode(d.error)) notifyTurnBlocked(d.error)
+    }
+  }
+  const cancelPendingVote = async () => {
+    if (!sessionId) return
+    const res = await authFetch(`/api/session/${sessionId}/vote/cancel`, { method: 'POST' })
+    const data = await parseJsonResponse(res)
+    if (data.error) return
+    clearTurnBlocked()
+    setExpelFollowupTarget(null)
+    if (data.counters) setCounters(capCounters(data.counters))  // 発議者の発言力が戻っている
+    // 自動進行の再開は、サーバーが配信する VOTE_CLOSED で行う
+    setMessages(prev => {
+      const kept = prev.filter(m => !m.isKeeperVote)
+      return data.result_text
+        ? [...kept, { character_id: '_keeper', character_name: '🗳 Vote', text: data.result_text, emotion: '', tags: [] }]
+        : kept
+    })
+  }
+
   // characters（App.tsxのprop、ローカル専用ポートの/api/characters/でしか取得できず
   // 公開ポート経由のゲストでは常に空）を主としつつ、そこに無い/image_colorが
   // 欠けているキャラをsessionCharColors（GET /{session_id}経由、公開ポートでも
@@ -419,7 +511,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       wsRef.current = ws
       ws.onopen = () => {
         retries = 0
-        ws.send(JSON.stringify({ type: 'auth', token: hostTokenRef.current }))
+        // client: どのビルドの、いつ読み込んだページかをサーバーのログに残す（再読み込みの確認用）
+        ws.send(JSON.stringify({ type: 'auth', token: hostTokenRef.current, client: { build: __DEF_BUILD__, page_loaded_at: PAGE_LOADED_AT } }))
       }
       ws.onmessage = (e) => {
         // サーバーは認証成功後にしかメッセージを送らないため、何か1件でも
@@ -483,6 +576,40 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           if (res.ok && !cancelled && typeof data.session?.trpg_mode === 'boolean') {
             trpgModeRef.current = data.session.trpg_mode
             setTrpgMode(data.session.trpg_mode)
+          }
+          // 参加者の一覧と接続状況をサーバーから復元する。一覧は SESSION_STARTED / PLAYER_JOINED の
+          // イベントでしか作られず、途中で再読み込みしたタブでは空だった。キーパーのタブは
+          // この一覧で「接続中のプレイヤーが自分で振るキャラ」を決めるため、再読み込みの後は
+          // プレイヤーのキャラの判定まで振り、判定が二重になっていた（2026-11-08、レビューで指摘）。
+          // WSの接続はこの取得の後なので、以降の変化はイベントで追いつく。
+          if (res.ok && !cancelled && Array.isArray(data.participants)) {
+            setParticipants(prev => data.participants.map((p: any) => {
+              const pid = p.participant_id || p.character_id
+              const old = prev.find(x => x.participant_id === pid)
+              return {
+                participant_id: pid,
+                char_id: p.character_id || '',
+                display_name: p.display_name || '',
+                role: p.role || 'player',
+                connected: !!p.connected,
+                claimed_char_id: p.claimed_char_id || '',
+                disconnectTimeoutSec: p.connected ? undefined : old?.disconnectTimeoutSec,
+              }
+            }))
+          }
+          // 再読み込みで復帰したプレイヤーは、自分のキャラシートを読み込み直す（参加の瞬間にしか
+          // 読み込んでおらず、再読み込みの後は「振る」ボタンが消えていた。2026-11-08）
+          const mySheetId: string = data.my_game_sheet_id || ''
+          const myChar = myCharIdRef.current
+          if (res.ok && !cancelled && mySheetId && myChar) {
+            try {
+              const r = await fetch(`/api/characters/${myChar}/game_sheets?session_id=${sessionId}`)
+              const d = await r.json()
+              const sheet = d.game_sheets?.[mySheetId]
+              if (sheet && !cancelled) {
+                setCharSheetData(prev => ({ ...prev, [myChar]: normalizeSheetStats({ ...sheet, _sheet_id: mySheetId }) }))
+              }
+            } catch {}
           }
           const nameMap: Record<string, string> = data.session?.name_map || {}
           if (res.ok && !cancelled && data.session?.name_map) {
@@ -749,8 +876,26 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         })
       }
     }
+    // 投票の決着（確定・取り消し・追放の決定）。決着を知っているのはサーバーだけなので、
+    // 止まっている表示を消すのも、自動進行の再開を判断するのも、このイベントだけで行う
+    // （以前は vote_result の付帯情報や各操作の応答から推測しており、キーパー交代の通知の
+    // ような別の vote_result が再開のきっかけになっていた。2026-11-08）。resume=false は
+    // キーパーの処理に再開を任せる場合（TRPGで追放によりラウンドが完了した）。
+    if (event.type === 'VOTE_CLOSED') {
+      clearTurnBlocked()
+      if (event.payload?.resume) resumeAfterVoteIfAuto(sessionIdRef.current)
+    }
     if (event.type === 'AI_ERROR') {
       setLoading(false)
+      // 生成に失敗した手番は履歴にもターンにも反映されない（サーバー側で止める）ので、
+      // 自動進行かどうかに関係なく失敗したことを全タブに表示する（2026-11-08。以前は
+      // "(generation failed: …)"がそのキャラの発言として出ていた）。
+      const failedName = event.payload?.character_name
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: '⚙ System',
+        text: failedName ? t('session.msg.aiGenerationFailed', { name: failedName }) : t('session.msg.autoStopError'),
+        emotion: '', tags: [],
+      }])
       if (autoAdvanceRef.current) {
         setAutoStopMsg(t('session.msg.autoStopError'))
         setAutoAdvance(false)
@@ -945,12 +1090,29 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           ? t('session.msg.counterSkip', { name: data.character_name, prev: String(ctrB), next: String(ctrB + 1) })
           : t('session.msg.humanSkip', { name: data.character_name })
       setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: skipText, emotion: '', tags: [] }])
+      // skipでラウンドが完了することもある（発言力マイナスの自動skip・AIの自発skip）。
+      // 以前はサーバーがこの2経路でround_completedを返しておらず、ここでも見ていなかった
+      // ため、そのラウンドのキーパー発言が次ラウンドまで遅れていた（2026-11-08）。
+      if (data.round_completed && trpgModeRef.current && keeperFiredRoundRef.current !== data.round_seq) {
+        await fireKeeperTurn(sid, data.round_seq)
+      }
+      // 通常の発言の経路（関数末尾）と同じく、自動進行中なら次のターンへ進める。以前は
+      // ここで先にreturnしていたため、AIの自発skip・発言力マイナスの自動skipの後に
+      // 自動進行が止まっていた（2026-11-08）。
+      if (autoAdvanceRef.current && (myRoleRef.current === 'host' || myRoleRef.current === 'gm')) {
+        void resumeAI(sid)
+      }
       return
     }
 
     if (data.action === 'vote_proposal') {
       if (data.counters) setCounters(capCounters(data.counters))
       setMessages(prev => [...prev, { character_id: '_keeper', character_name: '⚙ System', text: t('session.msg.voteProposalSystem', { name: data.character_name }), emotion: '', tags: [] }])
+      // 発議を受け付ける（弁明を頼む）のはキーパーのタブだけ。全タブが呼ぶと、2本目以降は
+      // 投票中の409になるうえ、レート制限と1日の生成上限をタブの数だけ消費していた
+      // （2026-11-08レビュー指摘）。他のタブには弁明がWS（vote_deliberation）で届く。
+      if (myRoleRef.current !== 'host' && myRoleRef.current !== 'gm') return
+      let delibCompleted = false
       try {
         skipMyDeliberationRef.current = true
         const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
@@ -965,15 +1127,18 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: d.tags || [] }])
           }
         }
+        // 弁明の生成中にキーパーが取り消した（サーバーは届いた分の弁明だけ返して打ち切る）。
+        // 投票のボタンを出したり自動進行を切り替えたりしない（2026-11-08レビュー指摘）
+        if (delibData.cancelled) return
+        delibCompleted = true
         setMessages(prev => [...prev, { character_id: '_keeper', character_name: t('trpg.keeper.label'), text: t('session.msg.voteProposalDetail', { name: data.character_name, detail: data.vote_detail || data.vote_type || '' }), emotion: '', tags: [], isKeeperVote: true }])
-        // 投票中の自動停止・復帰はキーパー権限タブのローカル駆動状態のみ操作する
-        // （player タブの表示はセッション状態 AUTO_ADVANCE_CHANGED にのみ従う）
-        if (myRoleRef.current === 'host' || myRoleRef.current === 'gm') {
-          wasAutoAdvancingRef.current = autoAdvanceRef.current
-          setAutoAdvance(false)
-          autoAdvanceRef.current = false
-        }
-      } catch (e) { console.error(e) }
+      } catch (e) { console.error(e) } finally {
+        // 発議が失敗・取り消しで終わると vote_deliberation_done が来ないので、ここで戻す
+        // （戻さないと、このタブは次の投票の弁明を自分の発議だと思って捨て続け、キーパーの
+        // タブなら確定ボタンが出なくなっていた。2026-11-08レビュー指摘）。成功したときは
+        // 従来どおり vote_deliberation_done で戻す（自分の弁明のWSの重複表示を防ぐため）
+        if (!delibCompleted) skipMyDeliberationRef.current = false
+      }
       return
     }
 
@@ -1011,7 +1176,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     // ai_resume は require_keeper（host/gm）のため、player タブから呼んでも403になる。
     // 人間ターン到達はサーバーが AI_TURN_COMPLETED 直後に WAITING_FOR_HUMAN を emit して通知する。
     if (autoAdvanceRef.current && (myRoleRef.current === 'host' || myRoleRef.current === 'gm')) {
-      void authFetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
+      void resumeAI(sid)
     }
   }
 
@@ -1126,6 +1291,13 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   const _initSession = async (data: any, chars: string[]) => {
     setParticipants([])
     setLobbyActive(false)
+    // トークンと役割は、セッションIDを入れる前に設定する。setSessionId をきっかけにWSの接続と
+    // 最初の履歴の取得（GET /{session_id}）が走るため、後で設定すると、トークンが空（422）や
+    // 前のセッションのもの（403）のまま取得していた。TRPGモードでは下のキャラシートの取得を
+    // 待つ間に必ずこの順番になっていた（2026-08-23から。2026-11-08、実機確認で発覚）。
+    hostTokenRef.current = data.host_token ?? ''
+    myRoleRef.current = 'host'
+    setMyRole('host')
     sessionIdRef.current = data.session_id
     setSessionId(data.session_id)
     trpgModeRef.current = trpgMode
@@ -1159,9 +1331,6 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       )
       setCharSheetData(sheetData)
     }
-    hostTokenRef.current = data.host_token ?? ''
-    myRoleRef.current = 'host'
-    setMyRole('host')
     if (data.invite_code) {
       setInviteCode(data.invite_code)
       // オンライン(招待コード発行あり)セッションのみ復帰対象とする。ローカル
@@ -1241,7 +1410,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     autoAdvanceRef.current = false
     const res = await authFetch(`/api/session/${sessionId}/retake`, { method: 'POST' })
     const data = await parseJsonResponse(res)
-    if (data.error) { console.error(data.error); return }
+    if (data.error) {
+      if (isTurnBlockedCode(data.error)) notifyTurnBlocked(data.error)
+      else console.error(data.error)
+      return
+    }
     const removed = data.removed ?? 0
     if (removed > 0) setMessages(prev => prev.slice(0, -removed))
     // サーバー側でai_task再起動済み（WS経由でAIターンが来る）
@@ -1389,6 +1562,9 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         text: t('session.msg.keeperEndProposal'),
         emotion: '', tags: [],
       }])
+      // 終了提案の発議もキーパーのタブだけが行う（AIの発議と同じ理由。2026-11-08レビュー指摘）
+      if (myRoleRef.current !== 'host' && myRoleRef.current !== 'gm') return
+      let delibCompleted = false
       try {
         skipMyDeliberationRef.current = true
         const delibRes = await authFetch(`/api/session/${sid}/vote/deliberate`, {
@@ -1403,26 +1579,51 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             setMessages(prev => [...prev, { character_id: d.character_id, character_name: d.character_name, text: d.text, emotion: d.emotion, tags: d.tags || [] }])
           }
         }
+        // 弁明の生成中にキーパーが取り消した（サーバーは届いた分の弁明だけ返して打ち切る）。
+        // 投票のボタンを出したり自動進行を切り替えたりしない（2026-11-08レビュー指摘）
+        if (delibData.cancelled) return
+        delibCompleted = true
         setMessages(prev => [...prev, {
           character_id: '_keeper', character_name: t('trpg.keeper.label'),
           text: t('session.msg.keeperEndVoteText'),
           emotion: '', tags: [], isKeeperVote: true,
         }])
-        wasAutoAdvancingRef.current = autoAdvanceRef.current
-        setAutoAdvance(false)
-        autoAdvanceRef.current = false
-      } catch (e) { console.error(e) }
+      } catch (e) { console.error(e) } finally {
+        // 発議が失敗・取り消しで終わると vote_deliberation_done が来ないので、ここで戻す
+        // （戻さないと、このタブは次の投票の弁明を自分の発議だと思って捨て続け、キーパーの
+        // タブなら確定ボタンが出なくなっていた。2026-11-08レビュー指摘）。成功したときは
+        // 従来どおり vote_deliberation_done で戻す（自分の弁明のWSの重複表示を防ぐため）
+        if (!delibCompleted) skipMyDeliberationRef.current = false
+      }
       return
     }
-    if (keeperResult?.judgments && keeperResult.judgments.length > 0) {
+    // サーバーは、プレイヤーが他人のキャラ名義でダイスを振ることを拒否する（2026-11-08）。
+    // プレイヤーのタブには自分のキャラの判定だけを出す（全キャラ分を出すと「全員振る」で
+    // 他人の分が黙って409になっていた）。キーパーのタブは従来どおり全キャラ分。
+    // 誰がどのキャラの判定を振るか: プレイヤーのキャラは本人が振る（自分のダイスは自分で振る）。
+    // キーパーのタブは、他のプレイヤーが接続して担当しているキャラを飛ばし、それ以外（AI・
+    // キーパー自身・切断中のプレイヤーのキャラ）を振る。以前は両方のタブが振り、プレイヤーの
+    // キャラの判定が2回出ていた（2026-11-08、実機確認で発覚）。
+    const isKeeperTab = myRoleRef.current === 'host' || myRoleRef.current === 'gm'
+    const charsRolledByTheirPlayer = new Set(
+      participantsRef.current
+        .filter(p => p.role === 'player' && p.connected)
+        .map(p => p.char_id || p.claimed_char_id || '')
+        .filter(c => c && c !== myCharIdRef.current),
+    )
+    const canRollFor = (charId: string) =>
+      isKeeperTab ? !charsRolledByTheirPlayer.has(charId) : charId === myCharIdRef.current
+    const myJudgments = (keeperResult?.judgments ?? []).filter((j: KeeperJudgment) => canRollFor(j.character_id))
+    if (myJudgments.length > 0) {
       wasAutoAdvancingRef.current = autoAdvanceRef.current
       setAutoAdvance(false)
       autoAdvanceRef.current = false
-      setPendingJudgments(keeperResult.judgments)
+      setPendingJudgments(myJudgments)
     }
-    if (autoJudgmentStatRef.current && Object.keys(charSheetData).length > 0) {
-      for (const [charId, sheet] of Object.entries(charSheetData)) {
-        if (isCharDead(charId)) continue
+    const sheetsNow = charSheetDataRef.current
+    if (autoJudgmentStatRef.current && Object.keys(sheetsNow).length > 0) {
+      for (const [charId, sheet] of Object.entries(sheetsNow)) {
+        if (isCharDead(charId) || !canRollFor(charId)) continue
         const statVal = (sheet as any)?.stats?.[autoJudgmentStatRef.current]?.current ?? 0
         if (statVal <= 0) continue
         const j: KeeperJudgment = {
@@ -1450,7 +1651,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       }
     }
     // WS経由でAI_TURN_COMPLETEDが届く。ai_resumeでai_taskを再起動
-    void authFetch(`/api/session/${sid}/ai_resume`, { method: 'POST' })
+    void resumeAI(sid)
   }
 
   const rollJudgmentAuto = async (sid: string, j: KeeperJudgment, isSkill = false) => {
@@ -1575,7 +1776,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       autoAdvanceRef.current = true
     }
     wasAutoAdvancingRef.current = false
-    void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+    void resumeAI(sessionId)
   }
 
   const rollPendingJudgment = async (j: KeeperJudgment, idx: number) => {
@@ -1663,11 +1864,13 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       const history: any[] = data.history || []
       const reconstructed: SessionMessage[] = reconstructMessages(history, nameMap, charMap)
 
-      sessionIdRef.current = data.session_id
-      setSessionId(data.session_id)
       // ロード復元セッションにもホストトークンが発行されるようになった
       // （GET /{session_id} の認証必須化に伴うバックエンド変更）。
+      // トークンは setSessionId より先に入れる（_initSession と同じ決まり。sessionId の変更で
+      // 走る履歴の取得・WS認証が、空のトークンで動かないように）。
       hostTokenRef.current = data.host_token ?? ''
+      sessionIdRef.current = data.session_id
+      setSessionId(data.session_id)
       initiativeRef.current = data.initiative || []
       setInitiative(data.initiative || [])
       setRound(data.round || 1)
@@ -1915,7 +2118,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       setWaitingForKeeperTurn(false)
       setAutoAdvance(true)
       autoAdvanceRef.current = true
-      void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+      void resumeAI(sessionId)
     } else if (autoAdvanceRef.current) {
       setAutoAdvance(false)
       autoAdvanceRef.current = false
@@ -1926,7 +2129,10 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     if (!sessionId) return
     const res = await authFetch(`/api/session/${sessionId}/skip`, { method: 'POST' })
     const data = await parseJsonResponse(res)
-    if (data.error) return
+    if (data.error) {
+      if (isTurnBlockedCode(data.error)) notifyTurnBlocked(data.error)
+      return
+    }
     if (data.counters) setCounters(capCounters(data.counters))
     setRound(data.round)
     setMessages(prev => [...prev, {
@@ -1986,6 +2192,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     const data = await parseJsonResponse(res)
     if (data.error) {
       if (action === 'send' || action === 'skip') setWaitingForHuman(true)  // 失敗時は戻す
+      // 投票中・追放の決定待ちはサーバーがターンの進行を止めている（2026-11-08）
+      if (isTurnBlockedCode(data.error)) notifyTurnBlocked(data.error)
       return
     }
 
@@ -2043,6 +2251,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     setVoteLoading(true)
     setShowVoteDialog(false)
     skipMyDeliberationRef.current = true
+    let delibCompleted = false
     try {
       const res = await authFetch(`/api/session/${sessionId}/vote/deliberate`, {
         method: 'POST',
@@ -2071,6 +2280,9 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           })
         }
       }
+      // 弁明の生成中にキーパーが取り消した場合は、投票のボタンを出さない（2026-11-08レビュー指摘）
+      if (data.cancelled) return
+      delibCompleted = true
       const canCastMyVote = !isKeeperUi && !!humanCharId && initiativeRef.current.includes(humanCharId)
       setMessages(prev => [...prev, {
         character_id: '_keeper',
@@ -2083,6 +2295,9 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         isKeeperVote: true,
       }])
     } finally {
+      // 発議が失敗・取り消しで終わると vote_deliberation_done が来ないので、ここで戻す
+      // （2026-11-08レビュー指摘。成功したときは従来どおり vote_deliberation_done で戻す）
+      if (!delibCompleted) skipMyDeliberationRef.current = false
       setVoteLoading(false)
     }
   }
@@ -2098,6 +2313,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       })
       const data = await parseJsonResponse(res)
       if (data.error) return
+      // 止まっている表示の消去と自動進行の再開は、サーバーが配信する VOTE_CLOSED で行う
       setMessages(prev => [
         ...prev.filter(m => !m.isKeeperVote),
         {
@@ -2156,11 +2372,20 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       })
       const data = await parseJsonResponse(res)
       if (data.error) return
+      clearTurnBlocked()
       setExpelFollowupTarget(null)
       if (data.initiative) { initiativeRef.current = data.initiative; setInitiative(data.initiative) }
       setMessages(prev => [...prev, {
         character_id: '_keeper', character_name: '🗳 Vote', text: data.result_text, emotion: '', tags: [],
       }])
+      // 自動進行の再開は、サーバーが配信する VOTE_CLOSED で判断する
+      // 追放で残り全員が発言済みになると、その場でラウンドが完了する（2026-11-08）。
+      // キーパー発火はサーバー側でround_seq単位に重複排除されるので、操作したこのタブから
+      // 発火すれば全タブに届く。
+      if (typeof data.round === 'number') setRound(data.round)
+      if (data.round_completed && trpgModeRef.current && keeperFiredRoundRef.current !== data.round_seq) {
+        await fireKeeperTurn(sessionId, data.round_seq)
+      }
     } finally {
       setVoteLoading(false)
     }
@@ -3451,7 +3676,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
               <button onClick={() => submitHumanTurn(interruptMode ? 'interrupt' : 'send')} disabled={(!waitingForHuman && !interruptMode) || (humanPending.length === 0 && !humanInput.trim())} className="keeper-send-btn">{interruptMode ? t('session.ctrl.interruptDoneBtn') : t('session.ctrl.speakDoneBtn')}</button>
               <button onClick={() => { setHumanInput(''); setHumanPending([]); setHasDiscarded(true) }} disabled={humanPending.length === 0 || hasDiscarded} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
               {isKeeperUi && (
-                <button onClick={() => void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+                <button onClick={() => void resumeAI(sessionId)} disabled={waitingForHuman || interruptMode || loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
               )}
               <button onClick={() => submitHumanTurn('skip')} disabled={!waitingForHuman} className="keeper-add-btn" title={t('session.ctrl.skipBtn.title')}>{t('session.ctrl.skipBtn')}</button>
             </div>
@@ -3536,7 +3761,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           <button onClick={addKeeperAction} disabled={!keeperInput.trim() || (actionsPerTurn > 0 && pendingActions.length >= actionsPerTurn)} className="keeper-add-btn">{t('session.ctrl.queueBtn')}</button>
           <button onClick={commitKeeperActions} disabled={pendingActions.length === 0} className="keeper-send-btn">{t('session.ctrl.keeperSendBtn')}</button>
           <button onClick={() => setPendingActions([])} disabled={pendingActions.length === 0} className="keeper-redo-btn">{t('session.ctrl.discardBtn')}</button>
-          <button onClick={() => void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })} disabled={loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
+          <button onClick={() => void resumeAI(sessionId)} disabled={loading || autoAdvance} className="next-btn">{t('session.ctrl.nextBtn')}</button>
           {t2iBackend && (
             <button
               onClick={generateSceneImage}
@@ -3643,6 +3868,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           </div>
         </div>
       )}
+      {turnBlocked && (myRole === 'host' || myRole === 'gm') && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', fontSize: 12, color: 'var(--error-color, #e74c3c)' }}>
+          <span>⚠ {t(turnBlocked === TURN_BLOCKED_BY_VOTE ? 'session.msg.turnBlockedByVote' : 'session.msg.turnBlockedByExpel')}</span>
+          <button className="novel-hdr-btn" onClick={() => void cancelPendingVote()}>{t('session.vote.cancelPending')}</button>
+        </div>
+      )}
       {expelFollowupTarget && (
         <div className="plot-dialog-overlay">
           <div className="plot-dialog" style={{ maxWidth: 380 }}>
@@ -3698,7 +3929,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                   autoAdvanceRef.current = true
                 }
                 wasAutoAdvancingRef.current = false
-                void authFetch(`/api/session/${sessionId}/ai_resume`, { method: 'POST' })
+                void resumeAI(sessionId)
               }}>{t('trpg.judgment.skip')}</button>
               <button className="novel-hdr-btn apply-btn" onClick={rollAllPendingJudgments}>{t('trpg.judgment.rollAll')}</button>
             </div>

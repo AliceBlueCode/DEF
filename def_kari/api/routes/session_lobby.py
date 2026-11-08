@@ -672,14 +672,11 @@ class AiTakeoverRequest(BaseModel):
 
 async def _resume_ai_turns_for(session_id: str, sess: dict) -> None:
     """ai_resumeエンドポイントと全く同じ手順でAIターン処理を再起動する。"""
-    from def_kari.api.routes.session_turn_engine import _run_ai_turns
-    sess["ai_paused"] = False
-    ai_task = sess.get("ai_task")
-    if not ai_task or ai_task.done():
-        sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+    from def_kari.api.routes.session_turn_engine import _ensure_ai_turns_running
+    _ensure_ai_turns_running(session_id, sess, unpause=True)
 
 
-def _hand_char_to_ai_control(session_id: str, sess: dict, character_id: str) -> None:
+def _hand_char_to_ai_control(session_id: str, sess: dict, character_id: str, *, resume: bool = True) -> None:
     """human_char_idsから外す、AI引き継ぎの中核処理。ai_takeoverエンドポイント本体と、
     投票expelの「AIに引き継ぐ」follow-up（session_voting.py _apply_vote_expel_handover）
     の両方から呼ばれる共有実装（重複を避けるための切り出し、2026-08-22）。
@@ -695,12 +692,16 @@ def _hand_char_to_ai_control(session_id: str, sess: dict, character_id: str) -> 
     （非同期エンドポイント）の両方から呼ばれるため、_ws_broadcast_handler
     （session_ws.py）と同じ「実行中ループの有無で経路を切り替える」パターンで
     asyncio.create_taskを安全にスケジュールする。
+
+    resume=False: 再開は呼び出し側に任せる。投票追放の「AIに引き継ぐ」は、追放の決定待ちの
+    印を消した後（vote_expel_resolveの最後）で再開する必要があるため（決定待ちの間は
+    _run_ai_turnsが何もしないので、ここで仕掛けると空振りしてセッションが止まる。2026-11-08）。
     """
     human_ids: list = sess.setdefault("human_char_ids", [])
     if character_id in human_ids:
         human_ids.remove(character_id)
 
-    if sess.get("lobby_active"):
+    if sess.get("lobby_active") or not resume:
         return
     from def_kari.api.routes.session_turn_engine import _get_current_speaker
     if character_id != _get_current_speaker(sess):

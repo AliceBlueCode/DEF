@@ -5,7 +5,6 @@ NPC状態・stat同期。`session.py`分割の一部。
 （TODO.md「session_gameplay.pyの投票ロジック分離」参照）。
 """
 
-import asyncio
 import logging
 import os
 
@@ -17,6 +16,7 @@ from def_kari.gm.gm_agent import _gm_agent
 from def_kari.gm.context_builder import load_trpg_scenario as _load_trpg_scenario
 from def_kari.gm.events import game_event_bus as _game_event_bus
 from def_kari.safety.audit_log import reset_violations as _reset_audit_violations
+from def_kari.safety.content_filter import contains_blocked_content
 
 from def_kari.api.routes.session_state import router, _sessions, _session_for_public_json
 from def_kari.api.routes.session_auth import (
@@ -74,12 +74,10 @@ async def set_auto_advance(session_id: str, req: AutoAdvanceRequest, _auth: dict
             # 再emitで入力欄が再オープンされ、スキップ送信と競合するのを防ぐ）
             # _get_current_speaker/_is_human_char/_run_ai_turnsはturn_engine
             # （session.py側、まだ未抽出）に依存するため、循環import回避のため遅延import。
-            from def_kari.api.routes.session import _get_current_speaker, _is_human_char, _run_ai_turns
+            from def_kari.api.routes.session import _ensure_ai_turns_running, _get_current_speaker, _is_human_char
             current = _get_current_speaker(sess)
             if current and not _is_human_char(sess, current):
-                ai_task = sess.get("ai_task")
-                if not ai_task or ai_task.done():
-                    sess["ai_task"] = asyncio.create_task(_run_ai_turns(session_id))
+                _ensure_ai_turns_running(session_id, sess)
     else:
         sess["ai_paused"] = True
     return {"auto_advance": req.enabled}
@@ -238,6 +236,9 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
     return resp
 
 
+_STAT_NAME_MAX_LEN = 40
+
+
 class SessionDiceRollRequest(BaseModel):
     notation: str
     skill_value: int = 0
@@ -269,10 +270,26 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+    # 判定の結果は「🎲 {キャラ名}【{能力名}】…」としてそのキャラ名義で履歴に入り、LLMの入力
+    # にも混ざる。以前はどのプレイヤーでも、どのキャラ名義でも振れ、能力名も申告どおりに
+    # 入っていた（投票の発議者と同じ種類の偽装。2026-11-08レビュー指摘）。プレイヤーは自分の
+    # キャラだけ（キーパーは全キャラ分を振るので制限しない）。判定値（skill_value）を
+    # サーバー側のキャラシートから引く対応は、判定エンジンを作り直す v5.0 で行う（残課題）。
+    if req.character_id and _auth.get("role") == "player":
+        from def_kari.api.routes.session import _check_actor_char_ownership
+        _check_actor_char_ownership(session, _auth, req.character_id)
+    if len(req.stat_name) > _STAT_NAME_MAX_LEN:
+        raise HTTPException(400, "Stat name is too long")
+    if req.stat_name and contains_blocked_content(req.stat_name):
+        raise HTTPException(400, "This message cannot be sent.")
 
     from def_kari.api.routes.trpg import compute_dice_judgment
     try:
-        computed = compute_dice_judgment(req.notation, req.skill_value, req.rulebook_id, req.is_skill, req.is_stat)
+        # 判定のルールブックはセッションの設定を使う（申告はセッションに設定が無いときだけ）。
+        # 以前は申告どおりで、ルールブックを選ぶ画面を通らないプレイヤーのタブは空を送るため、
+        # 判定（成功・失敗）が作られず合計だけになっていた（2026-11-08、実機確認で発覚）。
+        rulebook_id = session.get("trpg_rulebook") or req.rulebook_id
+        computed = compute_dice_judgment(req.notation, req.skill_value, rulebook_id, req.is_skill, req.is_stat)
     except ValueError as e:
         return {"error": str(e)}
     result = computed["result"]
@@ -554,7 +571,41 @@ def get_session(session_id: str, _auth: dict = Depends(require_participant)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
-    return {"session": _session_for_public_json(session)}
+    result = {"session": _session_for_public_json(session)}
+    # 再読み込みで復帰したプレイヤーのタブが、自分のキャラシートを読み込み直せるよう、
+    # 呼び出した本人のキャラのシートIDだけを返す。以前は参加の瞬間にしか読み込まず、
+    # 再読み込みの後は「振る」ボタンが消えて自分の判定を振れなくなっていた（2026-11-08、
+    # 実機確認で発覚）。char_game_sheets 全体は 8.27対策で公開しない方針のままにする。
+    if _auth.get("role") == "player" and _auth.get("char_id"):
+        result["my_game_sheet_id"] = session.get("char_game_sheets", {}).get(_auth["char_id"], "")
+    result["participants"] = _participants_snapshot(session)
+    return result
+
+
+def _participants_snapshot(session: dict) -> list[dict]:
+    """参加者の一覧と、いまWSで接続しているかどうかを返す（再読み込みしたタブの復元用）。
+
+    フロントの参加者一覧は SESSION_STARTED / PLAYER_JOINED のイベントでしか作られず、
+    セッションの途中で再読み込みしたタブでは空のままだった。キーパーのタブは、この一覧から
+    「接続中のプレイヤーが自分で振るキャラ」を決めているため、再読み込みの後はプレイヤーの
+    キャラの判定まで振り、判定が二重になっていた（2026-11-08、レビューで指摘）。
+    中身は PLAYER_JOINED で全タブに配っているものと同じ。ただし game_sheet_id は
+    char_game_sheets と同じく公開しない（8.27）ので落とす。トークンは含めない。
+    """
+    connected_tokens = set(session.get("ws_connections", {}))
+    token_to_pid = session.get("token_to_participant", {})
+    connected_pids = {pid for tok, pid in token_to_pid.items() if tok in connected_tokens}
+    return [
+        {
+            "character_id": p.get("character_id", ""),
+            "participant_id": p.get("participant_id", ""),
+            "display_name": p.get("display_name", ""),
+            "role": p.get("role", "player"),
+            "claimed_char_id": p.get("claimed_char_id", ""),
+            "connected": p.get("participant_id", "") in connected_pids,
+        }
+        for p in session.get("joined_participants", [])
+    ]
 
 
 class StatSyncRequest(BaseModel):

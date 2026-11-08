@@ -64,9 +64,15 @@ def _schedule_disconnect_skip(session_id: str, char_id: str) -> None:
         token = _find_player_token(sess, char_id)
         if token is not None and token in sess.get("ws_connections", {}):
             return  # 再接続済み
-        from def_kari.api.routes.session_turn_engine import _apply_skip, _get_current_speaker
+        from def_kari.api.routes.session_turn_engine import (
+            _apply_skip, _get_current_speaker, _turn_progress_blocked,
+        )
         if _get_current_speaker(sess) != char_id:
             return  # 別の経緯で既にターンが進んでいた
+        if _turn_progress_blocked(sess):
+            # 投票中・追放の決定待ちはskipしない。決着後にターンが再開されると、入力待ち
+            # （WAITING_FOR_HUMAN）の時点でこのタイマーが改めて仕掛けられる。
+            return
         _apply_skip(session_id, sess, char_id)
 
     timers[char_id] = asyncio.create_task(_do_skip())

@@ -374,3 +374,89 @@ async def test_expel_vote_ai_handover_resumes_stuck_turn_when_target_is_current_
         assert sess.get("ai_task") is not None
     finally:
         _sessions.pop(sid, None)
+
+
+@pytest.mark.asyncio
+async def test_expel_vote_continue_resumes_turn_when_target_is_current_speaker():
+    """「人数を減らして続行」で、ちょうど手番中（入力待ち）の人間を追放した場合も、
+    _run_ai_turnsを再起動して次のキャラへ進めること。AI引き継ぎ側で2026-08-22に直した
+    停止と同じ問題が、こちらの経路に残っていた（2026-11-08）。追放で手番は次のキャラ
+    （char_a）へ移り、ラウンドは進まない。"""
+    from def_kari.api.routes.session import (
+        vote_commit, VoteCommitRequest, vote_expel_resolve, VoteExpelResolveRequest, _sessions,
+    )
+    sid = "_expel_test_continue_resume"
+    fake_ws = AsyncMock()
+
+    _sessions[sid] = {
+        "initiative": ["char_b", "char_a"],  # turn=0 → char_bが現在の話者(=expel対象と一致)
+        "name_map": {"char_a": "Alice", "char_b": "Bob"},
+        "char_backends": {},
+        "backend": "tgw",
+        "human_char_ids": ["char_a", "char_b"],
+        "players": {"token_b": "char_b"},
+        "token_to_participant": {"token_b": "pid_b"},
+        "joined_participants": [{"participant_id": "pid_b", "character_id": "char_b"}],
+        "ws_connections": {"token_b": fake_ws},
+        "counters": {},
+        "history": [],
+        "turn": 0,
+        "round": 1,
+        "action_count": 0,
+        "_pending_vote": _make_pending_vote("char_b"),
+    }
+    try:
+        req = VoteCommitRequest(keeper_vote=True)
+        await vote_commit(sid, req, _fake_request(), _auth={})
+        with patch("def_kari.api.routes.session_turn_engine._run_ai_turns") as mock_run_ai_turns:
+            result = await vote_expel_resolve(sid, VoteExpelResolveRequest(choice="continue"), _auth={"role": "host"})
+            await asyncio.sleep(0.05)
+            mock_run_ai_turns.assert_called_once_with(sid)
+
+        sess = _sessions[sid]
+        assert sess["initiative"] == ["char_a"]
+        assert sess["turn"] == 0
+        assert result["round"] == 1
+        assert result["round_completed"] is False
+    finally:
+        _sessions.pop(sid, None)
+
+
+@pytest.mark.asyncio
+async def test_expel_vote_continue_does_not_resume_when_round_completes_in_trpg():
+    """外したことでラウンドが完了した場合、サーバーはAIターンを再開しない。キーパーの発言の
+    後に、キーパーの処理（フロントのapplyKeeperResult）が再開する（レビュー指摘 2026-11-08）。"""
+    from def_kari.api.routes.session import (
+        vote_commit, VoteCommitRequest, vote_expel_resolve, VoteExpelResolveRequest, _sessions,
+    )
+    sid = "_expel_test_continue_round_complete"
+    _sessions[sid] = {
+        "initiative": ["char_a", "char_b"],  # turn=1 → char_b が手番中（最後尾）
+        "name_map": {"char_a": "Alice", "char_b": "Bob"},
+        "char_backends": {},
+        "backend": "tgw",
+        "human_char_ids": ["char_a", "char_b"],
+        "players": {"token_b": "char_b"},
+        "token_to_participant": {"token_b": "pid_b"},
+        "joined_participants": [{"participant_id": "pid_b", "character_id": "char_b"}],
+        "ws_connections": {"token_b": AsyncMock()},
+        "counters": {},
+        "history": [],
+        "turn": 1,
+        "round": 1,
+        "action_count": 0,
+        "trpg_mode": True,
+        "_round_spoken": ["char_a"],
+        "_pending_vote": _make_pending_vote("char_b"),
+    }
+    try:
+        await vote_commit(sid, VoteCommitRequest(keeper_vote=True), _fake_request(), _auth={})
+        with patch("def_kari.api.routes.session_turn_engine._run_ai_turns") as mock_run_ai_turns:
+            result = await vote_expel_resolve(sid, VoteExpelResolveRequest(choice="continue"), _auth={"role": "host"})
+            await asyncio.sleep(0.05)
+            mock_run_ai_turns.assert_not_called()
+        assert result["round_completed"] is True
+        assert result["round"] == 2
+        assert _sessions[sid]["turn"] == 0
+    finally:
+        _sessions.pop(sid, None)

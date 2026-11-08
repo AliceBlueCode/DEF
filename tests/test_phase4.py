@@ -1936,3 +1936,27 @@ def test_available_slots_includes_waiting_for_gm():
     assert "waiting_for_gm" in data
     assert data["waiting_for_gm"] is True
     assert "trpg_mode" in data
+
+
+@pytest.mark.asyncio
+async def test_run_ai_turns_error_names_the_failed_character():
+    """AI_ERROR に失敗したキャラ名を載せ、手動進行でもフロントが「誰の生成に失敗したか」を
+    表示できること（2026-11-08。生成失敗を発言として履歴に入れなくなったため）。"""
+    from def_kari.api.routes.session import _run_ai_turns, _sessions
+
+    sid = "test-error-names-char"
+    _sessions[sid] = {
+        "initiative": ["char_ai"], "turn": 0, "human_char_ids": [], "guest_chars": {},
+        "ai_task": None, "idle_shutdown_task": None, "name_map": {"char_ai": "AI"},
+        "counters": {}, "_skip_gen": 0, "ai_paused": False, "auto_advance": False,
+    }
+    emitted = []
+    failed = {"error": "generation failed", "character_id": "char_ai", "character_name": "AI"}
+    with patch("def_kari.api.routes.session_turn_engine._execute_ai_turn", side_effect=lambda s: failed):
+        with patch("def_kari.api.routes.session_turn_engine._game_event_bus") as mock_bus:
+            mock_bus.emit.side_effect = lambda *a, **kw: emitted.append(a)
+            await _run_ai_turns(sid)
+
+    errors = [e[2] for e in emitted if len(e) > 2 and e[1] == "AI_ERROR"]
+    assert errors == [{"error": "generation failed", "character_id": "char_ai", "character_name": "AI"}]
+    del _sessions[sid]

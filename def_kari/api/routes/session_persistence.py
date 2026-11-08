@@ -20,6 +20,7 @@ from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import DEFAULT_LLM_BACKEND
 from def_kari.gm.context_builder import load_trpg_scenario as _load_trpg_scenario
 from def_kari.settings import load_settings
+from def_kari.prompts import sp as _sp
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
 from def_kari.gm.events import game_event_bus as _game_event_bus
 
@@ -255,6 +256,64 @@ def _cleanup_stale_autosaves() -> None:
         pass
 
 
+def _refund_proposer_counter(session: dict, pending_vote: dict | None) -> None:
+    """流れた投票（取り消し・再起動）の発議者に、発議で消費した発言力を戻す。
+
+    消費後に別の理由（キーパーの調整等）で増減していても失わないよう、0に戻した値を
+    上書きするのではなく、消費した量を足し戻す。
+    """
+    if not pending_vote:
+        return
+    proposer_id = pending_vote.get("proposer_id")
+    spent = pending_vote.get("proposer_counter_spent", 0)
+    if proposer_id and proposer_id != "_keeper" and spent:
+        counters = session.setdefault("counters", {})
+        counters[proposer_id] = counters.get(proposer_id, 0) + spent
+
+
+def _refund_unaccepted_ai_vote_proposal(session: dict) -> None:
+    """受け付けられなかったAIの発議（_ai_vote_proposal が残ったまま）の発言力を戻し、記録を消す。
+
+    AIの発議は行動選択の時点で発言力を消費して記録し、vote_deliberate が受け付けると記録を
+    投票へ引き継ぐ。受け付けられなかった（キーパーのタブが無い・レート制限・失敗等）場合は
+    記録が残り続け、発言力も戻らず、古い理由が後からそのAIの発言として使われ得た
+    （2026-11-08レビュー指摘）。受け付けられなかった発議も「流れた」ものとして戻す。
+    """
+    proposal = session.pop("_ai_vote_proposal", None)
+    if proposal:
+        _refund_proposer_counter(session, {
+            "proposer_id": proposal.get("proposer_id"), "proposer_counter_spent": proposal.get("spent", 0),
+        })
+
+
+def _note_pending_vote_dropped_on_restore(restored: dict, expel: dict | None) -> None:
+    """復元時に捨てた投票・追放の決定待ちを、履歴に残す。
+
+    黙って捨てると、可決済みの追放の対象が何事も無かったように発言でき、参加者には何が
+    起きたか分からない（2026-11-08レビュー指摘）。文言は session_prompts.json で変えられる
+    （vote_cancel と同じ仕組み）。想定外の形のファイル（historyがnull等）でも、通知の
+    失敗でセッションごと復元できなくならないよう、ここだけで例外を握る。
+    """
+    try:
+        lang = load_settings().get("user_language", "ja") or "ja"
+        if expel:
+            target = (restored.get("name_map") or {}).get(expel.get("target_id"), expel.get("target_id", ""))
+            note = (_sp("expel_cancelled_by_restart_notice", lang) or (
+                "🗳 The passed expulsion was cancelled because the server restarted ({name} stays in the session)"
+                if lang == "en" else "🗳 サーバーの再起動のため、可決された退場の処理を取り消しました（{name} はセッションに残ります）"
+            )).format(name=target)
+        else:
+            note = _sp("vote_cancelled_by_restart_notice", lang) or (
+                "🗳 The pending vote was cancelled because the server restarted"
+                if lang == "en" else "🗳 サーバーの再起動のため、保留中の投票を取り消しました"
+            )
+        if not isinstance(restored.get("history"), list):
+            restored["history"] = []
+        restored["history"].append({"role": "user", "content": note, "character_id": "_keeper"})
+    except Exception:
+        _log.warning("failed to note dropped pending vote for session %s", restored.get("id"), exc_info=True)
+
+
 def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
     """1件のautosaveファイルを復元する。TTLを超えて放置されたファイルは復元せず削除する。"""
     if f.suffix != ".json":
@@ -265,7 +324,22 @@ def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
             return
         restored = json.loads(f.read_text(encoding="utf-8"))
         if isinstance(restored, dict) and restored.get("id"):
+            # 投票中・追放の決定待ちのまま保存されていたら捨てる。確定や選択のUIはキーパーの
+            # タブの状態にしか無く、再起動後には出せない。残すとターンの進行が止まったまま
+            # 二度と進まなくなる（2026-11-08。投票の発言は履歴に残っている）。
+            pending_vote = restored.pop("_pending_vote", None)
+            expel = restored.pop("_pending_expel_followup", None)
+            had_ai_proposal = "_ai_vote_proposal" in restored
+            _refund_unaccepted_ai_vote_proposal(restored)
             _sessions[restored["id"]] = restored
+            if had_ai_proposal and not (pending_vote or expel):
+                _autosave(restored["id"])
+            if pending_vote or expel:
+                _refund_proposer_counter(restored, pending_vote)
+                _note_pending_vote_dropped_on_restore(restored, expel)
+                # 捨てた状態をすぐ保存し直す。しないと、何も操作しないまま再起動が続くたびに
+                # 同じ待ち状態を捨て直し、通知が重複して入る（2026-11-08レビュー指摘）
+                _autosave(restored["id"])
     except Exception:
         pass
 

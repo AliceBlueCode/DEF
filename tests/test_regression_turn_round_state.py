@@ -16,7 +16,7 @@
 （`tender-puzzling-frog.md`）参照。
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,6 +29,7 @@ from def_kari.api.routes.session_turn_engine import (
     _emit_waiting_for_human,
     _finalize_ai_turn,
     _mark_spoken_and_check_round_complete,
+    _resolve_ai_action,
     _resolve_turn_start,
     SessionNextRequest,
 )
@@ -283,7 +284,11 @@ def test_resolve_turn_start_designate_after_round_wraparound_interaction():
     assert session["turn"] == 1  # だが最終的にはdesignateの"b"（新ラウンド内のindex）
 
 
-def test_resolve_turn_start_negative_counter_forces_skip_unnormalized():
+def test_resolve_turn_start_negative_counter_forces_skip_normalized():
+    """2026-11-08 意図した挙動変更: 以前は turn=2・round=1 の未正規化のまま返し、次の
+    呼び出しで初めて正規化されていた（9/19に人間・AI発言の経路で閉じた「正規化されない
+    窓」の取り残し）。_skip_turn_and_mark_spoken へ集約し、その場で正規化する。
+    """
     session = _base_session("_t14", ["a", "b"], turn=1)  # turn+1 == len(initiative)
     session["human_char_ids"] = []
     session["counters"]["b"] = -1
@@ -291,14 +296,65 @@ def test_resolve_turn_start_negative_counter_forces_skip_unnormalized():
     early, ctx = _resolve_turn_start(session, req)
     assert early is not None and early.get("skipped") is True
     assert session["counters"]["b"] == 0
-    assert session["turn"] == 2  # 生の値のまま、正規化されない
-    assert session["round"] == 1  # 正規化されていないのでroundも据え置き
-    assert session["action_count"] == 0
-    # 2回目の呼び出しで初めて正規化される
-    req2 = SessionNextRequest(session_id="_t14")
-    _resolve_turn_start(session, req2)
     assert session["turn"] == 0
     assert session["round"] == 2
+    assert session["action_count"] == 0
+
+
+def test_resolve_turn_start_forced_skip_counts_as_spoken():
+    """発言力マイナスで自動skipされたキャラも、そのラウンドの発言済みに数える
+    （skip_turn・_apply_skipと同じ。2026-11-08までは欠落しラウンド完了が遅れていた）。"""
+    session = _base_session("_t14b", ["a", "b"], turn=1)
+    session["counters"]["b"] = -1
+    session["_round_spoken"] = ["a"]
+    early, _ = _resolve_turn_start(session, SessionNextRequest(session_id="_t14b"))
+    assert early["round_completed"] is True
+    assert early["round_seq"] == 1
+    assert session["_round_spoken"] == []
+
+
+# ── 1c'. _resolve_ai_action のAI自発skip（2026-11-08、_skip_turn_and_mark_spokenへ集約） ──
+
+def _ai_skip(session, turn, skip_gen_before=0):
+    current = session["initiative"][turn]
+    with patch(
+        "def_kari.api.routes.session_turn_engine._ai_action_select",
+        return_value={"action": "skip"},
+    ):
+        return _resolve_ai_action(
+            session, SessionNextRequest(session_id=session["id"]), current, turn,
+            session["counters"], session["initiative"], session["name_map"], current,
+            "mock", "", {}, "ja", skip_gen_before,
+        )
+
+
+def test_ai_voluntary_skip_normalizes_and_marks_spoken():
+    session = _base_session("_t16", ["a", "b"], turn=1, round_=2)
+    session["trpg_mode"] = True
+    session["counters"]["b"] = 2
+    session["_round_spoken"] = ["a"]
+    early, _, _ = _ai_skip(session, turn=1)
+    assert early["skipped"] is True and early["voluntary"] is True
+    assert session["counters"]["b"] == 3
+    assert session["turn"] == 0  # 以前は2のまま（未正規化）
+    assert session["round"] == 3
+    assert session["action_count"] == 0
+    assert early["round_completed"] is True  # 以前はbが発言済みに入らなかった
+    assert early["round_seq"] == 1
+
+
+def test_ai_voluntary_skip_does_not_advance_twice_after_keeper_skip():
+    """行動選択（LLM）中にGMがkeeper_skipで手番を進めていたら、AIのskipで二重に進めない。"""
+    session = _base_session("_t17", ["a", "b", "c"], turn=1, round_=2)
+    session["trpg_mode"] = True
+    session["counters"]["b"] = 2
+    session["_skip_gen"] = 1  # 行動選択の開始時点は0だった＝その間にkeeper_skipが入った
+    session["turn"] = 2       # keeper_skipが既に進めた位置
+    early, _, _ = _ai_skip(session, turn=1, skip_gen_before=0)
+    assert early["skipped"] is True
+    assert session["turn"] == 2
+    assert session["counters"]["b"] == 2
+    assert early["round_completed"] is False
 
 
 def test_resolve_turn_start_waiting_for_human_no_llm_call():
@@ -567,3 +623,195 @@ def test_retake_restarts_ai_task():
         assert sess.get("ai_task") is not None
     finally:
         _sessions.pop(sid, None)
+
+
+# ── 生成失敗時は履歴・ターンを動かさずエラーを返す（2026-11-08） ──────────────
+
+def test_generation_failure_returns_error_without_touching_history():
+    """以前は "(generation failed: …)" をそのキャラの発言として返し、_finalize_ai_turn が
+    履歴に入れてターンも進めていた（次ターンのLLM入力に混ざる・設計書8.1節のAI_ERRORと
+    食い違う）。例外時と同じエラー応答にする。"""
+    from def_kari.api.routes.session_turn_engine import _generate_ai_turn_reply
+
+    session = _base_session("_t30", ["a", "b"], turn=0)
+    failed = {"success": False, "result": None,
+              "attempts": [{"stage": "思考過程の除去", "raw": "<think>…", "errors": ["思考過程の途中で応答が終わっています"]}]}
+    with patch("def_kari.api.routes.session_turn_engine._player_agent.narrate", return_value=failed), \
+         patch("time.sleep"):
+        early, text, *_ = _generate_ai_turn_reply(
+            session, "a", {}, "", [], "", "mock", "", ["general"], ["general"],
+            session["name_map"], "", 0, False,
+        )
+    assert early is not None
+    assert "思考過程の途中" in early["error"]
+    assert text == ""
+    assert session["history"] == []
+    assert session["turn"] == 0
+
+
+# ── initiativeからの除去（投票追放の「人数を減らして続行」、2026-11-08） ───────────
+
+from def_kari.api.routes.session_turn_engine import _remove_from_initiative  # noqa: E402
+
+
+def test_remove_before_current_turn_keeps_same_speaker():
+    session = _base_session("_t40", ["a", "b", "c"], turn=2)
+    _remove_from_initiative(session, "a")
+    assert session["initiative"] == ["b", "c"]
+    assert session["initiative"][session["turn"]] == "c"
+    assert session["round"] == 1
+
+
+def test_remove_current_speaker_passes_turn_to_next():
+    session = _base_session("_t41", ["a", "b", "c"], turn=1)
+    session["action_count"] = 1
+    _remove_from_initiative(session, "b")
+    assert session["initiative"][session["turn"]] == "c"
+    assert session["action_count"] == 0
+    assert session["round"] == 1
+
+
+def test_remove_current_last_speaker_wraps_to_next_round():
+    """以前はturnをlen-1に詰めており、直前のキャラ（b）にもう一度手番が回っていた。"""
+    session = _base_session("_t42", ["a", "b", "c"], turn=2)
+    _remove_from_initiative(session, "c")
+    assert session["turn"] == 0
+    assert session["round"] == 2
+
+
+def test_remove_completes_round_when_everyone_left_has_spoken():
+    session = _base_session("_t43", ["a", "b", "c"], turn=2)
+    session["_round_spoken"] = ["a", "b"]
+    assert _remove_from_initiative(session, "c") is True
+    assert session["_round_seq"] == 1
+    assert session["_round_spoken"] == []
+
+
+def test_remove_drops_expelled_from_spoken_without_completing_round():
+    session = _base_session("_t44", ["a", "b", "c"], turn=2)
+    session["_round_spoken"] = ["a"]
+    assert _remove_from_initiative(session, "a") is False
+    assert session["_round_spoken"] == []
+    assert session.get("_round_seq", 0) == 0
+
+
+def test_remove_shifts_designated_return_turn_and_drops_designation_of_expelled():
+    session = _base_session("_t45", ["a", "b", "c", "d"], turn=3)
+    session["_designated_return_turn"] = 2
+    session["designated_next"] = "a"
+    session["designated_return_turn"] = 3
+    _remove_from_initiative(session, "a")
+    assert session["_designated_return_turn"] == 1  # 戻り先は同じキャラ（c）のまま
+    assert session["initiative"][session["_designated_return_turn"]] == "c"
+    assert "designated_next" not in session
+    assert "designated_return_turn" not in session
+
+
+def test_remove_last_remaining_character():
+    session = _base_session("_t46", ["a"], turn=0)
+    assert _remove_from_initiative(session, "a") is False
+    assert session["initiative"] == []
+    assert session["turn"] == 0
+
+
+def test_designated_character_skip_returns_to_designation_origin():
+    """aがcを指名（戻り先はb）し、cが発言力マイナスで自動skipされた場合、発言して終えた
+    場合と同じくbへ戻ること。以前はturn+1で次ラウンドへ進み、bが飛ばされていた
+    （レビュー指摘 2026-11-08）。"""
+    session = _base_session("_t50", ["a", "b", "c"], turn=1)
+    session["designated_next"] = "c"
+    session["designated_return_turn"] = 1
+    session["counters"]["c"] = -1
+    session["_round_spoken"] = ["a"]
+    early, _ = _resolve_turn_start(session, SessionNextRequest(session_id="_t50"))
+    assert early["skipped"] is True
+    assert session["turn"] == 1
+    assert session["initiative"][session["turn"]] == "b"
+    assert session["round"] == 1
+    assert "_designated_return_turn" not in session
+    assert early["round_completed"] is False
+    assert sorted(session["_round_spoken"]) == ["a", "c"]
+
+
+def test_remove_designated_current_speaker_returns_to_designation_origin():
+    """aがcを指名（戻り先はb）し、cの手番中にcを外した場合、bへ戻ること。以前はdへ
+    進み、戻り先が残ったままのためdがそのラウンドで2回発言していた（レビュー指摘 2026-11-08）。"""
+    session = _base_session("_t47", ["a", "b", "c", "d"], turn=2)
+    session["_designated_return_turn"] = 1
+    _remove_from_initiative(session, "c")
+    assert session["initiative"][session["turn"]] == "b"
+    assert "_designated_return_turn" not in session
+    assert session["round"] == 1
+
+
+def test_remove_bumps_skip_gen_so_inflight_ai_turn_does_not_overwrite():
+    """除去前のturnを持ったまま走っているAIターンが、補正を上書きしないこと。"""
+    session = _base_session("_t48", ["a", "b", "c"], turn=2)
+    session["_skip_gen"] = 0
+    _remove_from_initiative(session, "a")
+    assert session["_skip_gen"] == 1
+    # 除去前に始まっていたAIターン（skip_gen_before=0）の確定は、turnを書き換えない
+    _finalize(session, "c", turn=2, skip_gen_before=0)
+    session["action_count"] = 1
+    _finalize(session, "c", turn=2, skip_gen_before=0)
+    assert session["initiative"][session["turn"]] == "c"
+
+
+# ── AIターンのタスク起動の窓口（2026-11-08、7箇所を_ensure_ai_turns_runningへ集約） ──
+
+from def_kari.api.routes.session_turn_engine import _ensure_ai_turns_running  # noqa: E402
+
+
+class _FakeTask:
+    def __init__(self, done=False):
+        self._done = done
+        self.cancelled = False
+
+    def done(self):
+        return self._done
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def _ensure(session, **kw):
+    # create_taskを差し替えるので_run_ai_turnsは実行されない。AsyncMockだと未awaitの警告が出るため同期のMockにする
+    with patch("def_kari.api.routes.session_turn_engine._run_ai_turns", new_callable=MagicMock) as mock_run, \
+         patch("def_kari.api.routes.session_turn_engine.asyncio.create_task", side_effect=lambda coro: ("new_task", coro)):
+        _ensure_ai_turns_running(session["id"], session, **kw)
+    return mock_run
+
+
+def test_ensure_ai_turns_starts_when_no_task():
+    session = _base_session("_t60", ["a"])
+    mock_run = _ensure(session)
+    mock_run.assert_called_once_with("_t60")
+    assert session["ai_task"][0] == "new_task"
+
+
+def test_ensure_ai_turns_does_not_double_start_running_task():
+    session = _base_session("_t61", ["a"])
+    running = _FakeTask(done=False)
+    session["ai_task"] = running
+    mock_run = _ensure(session)
+    mock_run.assert_not_called()
+    assert session["ai_task"] is running and not running.cancelled
+
+
+def test_ensure_ai_turns_restart_cancels_running_task():
+    session = _base_session("_t62", ["a"])
+    running = _FakeTask(done=False)
+    session["ai_task"] = running
+    mock_run = _ensure(session, restart=True)
+    assert running.cancelled
+    mock_run.assert_called_once_with("_t62")
+
+
+def test_ensure_ai_turns_unpause_only_when_asked():
+    session = _base_session("_t63", ["a"])
+    session["ai_paused"] = True
+    _ensure(session)
+    assert session["ai_paused"] is True  # 発言・skipの後の起動は一時停止を解除しない
+    session["ai_task"] = None
+    _ensure(session, unpause=True)
+    assert session["ai_paused"] is False
