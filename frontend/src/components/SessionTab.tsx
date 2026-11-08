@@ -744,7 +744,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       setAutoAdvance(enabled)
       autoAdvanceRef.current = enabled
       if (enabled) setAutoStopMsg(null)
-      else wasAutoAdvancingRef.current = false
+      else {
+        wasAutoAdvancingRef.current = false
+        // サーバーが生成エラーで自動進行を止めた（理由はサーバーが決めて送る。2026-11-08）
+        if (event.payload?.reason === 'ai_error') setAutoStopMsg(t('session.msg.autoStopError'))
+      }
     }
     if (event.type === 'HUMAN_ACTION') {
       const p = event.payload
@@ -896,11 +900,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         text: failedName ? t('session.msg.aiGenerationFailed', { name: failedName }) : t('session.msg.autoStopError'),
         emotion: '', tags: [],
       }])
-      if (autoAdvanceRef.current) {
-        setAutoStopMsg(t('session.msg.autoStopError'))
-        setAutoAdvance(false)
-        autoAdvanceRef.current = false
-      }
+      // 自動進行の停止と、その表示は AUTO_ADVANCE_CHANGED（reason: ai_error）で行う。
+      // ここで autoAdvanceRef を見ても、そのイベントが先に届いてオフになっているため。
     }
     if (event.type === 'SESSION_ENDED') {
       // ホストは自分で endSession() を呼んでいるのでスキップ。

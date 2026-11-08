@@ -228,6 +228,7 @@ from def_kari.api.routes.session_turn_engine import (
     _on_turn_progress_unblocked,
     _player_agent,
     _remove_from_initiative,
+    _set_designation,
     _run_ai_turns,
     ai_pause,
     ai_resume,

@@ -815,3 +815,100 @@ def test_ensure_ai_turns_unpause_only_when_asked():
     session["ai_task"] = None
     _ensure(session, unpause=True)
     assert session["ai_paused"] is False
+
+
+# ── 指名の戻り先（2026-11-08、_set_designation へ集約） ──────────────────────
+# 以前はAIの指名が designated_next だけを書き、戻り先を記録していなかった。指名された
+# キャラが話し終えると「そのキャラの次」へ進み、initiative の最後のキャラが指名されると、
+# 間の全員を飛ばしてラウンドが終わっていた（E2E trpg_skip_designate で発覚）。
+
+def _ai_designate(session, turn, target):
+    current = session["initiative"][turn]
+    with patch(
+        "def_kari.api.routes.session_turn_engine._ai_action_select",
+        return_value={"action": "designate", "target_name": target},
+    ):
+        return _resolve_ai_action(
+            session, SessionNextRequest(session_id=session["id"]), current, turn,
+            session["counters"], session["initiative"], session["name_map"], current,
+            "mock", "", {}, "ja", 0,
+        )
+
+
+def test_ai_designate_records_return_turn_like_human_designate():
+    session = _base_session("_t40", ["a", "b", "c", "d"], turn=0, round_=2)
+    session["trpg_mode"] = True
+    session["counters"]["a"] = 1
+    early, action, target_name = _ai_designate(session, turn=0, target="d")
+    assert early is None and action["action"] == "designate" and target_name == "d"
+    assert session["counters"]["a"] == 0
+    assert session["designated_next"] == "d"
+    assert session["designated_return_turn"] == 1  # 指名した a の次（b）
+
+
+def test_ai_designate_of_last_char_returns_to_designators_next_in_same_round():
+    """[a, b, c, d] で a が d を指名 → d が話し終えたら b に戻り、ラウンドは終わらない。"""
+    session = _base_session("_t41", ["a", "b", "c", "d"], turn=0, round_=2)
+    session["trpg_mode"] = True
+    session["actions_per_turn"] = 1
+    session["counters"]["a"] = 1
+    session["human_char_ids"] = ["a", "b", "c", "d"]  # _resolve_turn_start でAIターンを走らせない
+    _ai_designate(session, turn=0, target="d")
+    _finalize(session, "a", 0, text="a speaks")      # 指名した a の発言でターンを終える
+    _resolve_turn_start(session, SessionNextRequest(session_id="_t41"))  # 指名先へ飛ぶ
+    assert session["turn"] == 3
+    _finalize(session, "d", 3, text="d speaks")
+    assert session["turn"] == 1  # 以前は 4 → 次のラウンドの 0 へ（b・c が飛ばされていた）
+    assert session["round"] == 2
+    assert set(session.get("_round_spoken", [])) == {"a", "d"}
+
+
+def test_chained_designation_keeps_first_return_turn():
+    """[a,b,c,d,e] で a→d、指名された d がさらに e を指名 → e の後は b に戻る（2026-11-08レビュー指摘）。
+
+    以前は d の手番で「いまの手番の次」（e）を戻り先に書き直し、e がもう一度話し、b・c が飛ばされていた。
+    """
+    session = _base_session("_t42", ["a", "b", "c", "d", "e"], turn=0, round_=2)
+    session["trpg_mode"] = True
+    session["actions_per_turn"] = 1
+    session["counters"].update({"a": 1, "d": 1})
+    session["human_char_ids"] = ["a", "b", "c", "d", "e"]  # _resolve_turn_start でAIターンを走らせない
+    _ai_designate(session, turn=0, target="d")
+    _finalize(session, "a", 0, text="a speaks")
+    _resolve_turn_start(session, SessionNextRequest(session_id="_t42"))
+    assert session["turn"] == 3
+    _ai_designate(session, turn=3, target="e")
+    assert session["designated_return_turn"] == 1  # 最初の指名の戻り先（a の次＝b）を引き継ぐ
+    _finalize(session, "d", 3, text="d speaks")
+    _resolve_turn_start(session, SessionNextRequest(session_id="_t42"))
+    assert session["turn"] == 4
+    _finalize(session, "e", 4, text="e speaks")
+    assert session["turn"] == 1
+    assert session["round"] == 2
+
+
+def test_designated_player_send_returns_to_designators_next():
+    """指名されたプレイヤーが発言したら、指名した人の次へ戻り、戻り先を残さない（2026-11-08レビュー指摘）。
+
+    以前は「発言完」だけ戻り先を見ず、プレイヤーの次へ進んでいた。残った戻り先は、後の別の手番の
+    終わりで使われ、手番が飛んだり同じ人に2回回ったりしていた。AIの指名でも戻り先を記録するように
+    したため、AIがプレイヤーを指名するたびに起きるようになっていた。
+    """
+    sid, host_token, tokens = _start_session_with_three_humans()
+    try:
+        sess = _sessions[sid]
+        # a が c を指名し、c の手番に飛んだ状態（_resolve_turn_start が戻り先を退避した後）
+        sess["turn"] = 2
+        sess["_designated_return_turn"] = 1
+        sess["_round_spoken"] = ["char_a"]
+        resp = client.post(
+            f"/api/session/{sid}/human_turn",
+            json={"action": "send", "text": "指名されたので話します", "expected_round_seq": 0},
+            headers=_auth(tokens["char_c"]),
+        )
+        assert resp.status_code == 200
+        assert sess["turn"] == 1  # 以前は 3 → 次のラウンドの 0（b が飛ばされていた）
+        assert sess["round"] == 1
+        assert "_designated_return_turn" not in sess
+    finally:
+        _sessions.pop(sid, None)

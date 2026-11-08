@@ -445,9 +445,9 @@ def designate_next(session_id: str, req: DesignateRequest, _auth: dict = Depends
             raise HTTPException(409, "Not enough speech power to designate")
         counters[current_char_id] = counters[current_char_id] - 1
 
-    # 指名発言後に戻るべきターン位置を保存（指名キャラの次）
-    session["designated_next"] = req.target_id
-    session["designated_return_turn"] = (current_turn + 1) % len(initiative) if initiative else 0
+    # 指名と、指名発言後に戻るべきターン位置（指名した人の次）。AIの指名と同じ窓口を使う
+    from def_kari.api.routes.session import _set_designation
+    _set_designation(session, req.target_id)
     _autosave(session_id)
     name_map = session.get("name_map", {})
     # _get_current_speakerはturn_engine（session.py側、まだ未抽出）に依存するため、

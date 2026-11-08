@@ -247,6 +247,30 @@ def _remove_from_initiative(session: dict, char_id: str) -> bool:
     return _complete_round_if_all_spoken(session) if session.get("_round_spoken") else False
 
 
+def _set_designation(session: dict, target_id: str) -> None:
+    """次の発言者を指名する唯一の窓口。指名されたキャラが話し終えたら、指名した時点の
+    手番の次（指名した人の次）へ戻る。
+
+    以前は人間の指名（POST /designate）とAIの指名（_resolve_ai_action の designate）が、
+    それぞれ designated_next を書いていた。戻り先（designated_return_turn）を書いていたのは
+    人間の側だけで、AIが指名すると、指名されたキャラの次へ進んでいた。指名されたのが
+    initiative の最後のキャラなら、間の全員を飛ばしてラウンドが終わり、そのラウンドの
+    キーパーの語りも出ていなかった（2026-11-08、E2E の trpg_skip_designate で発覚）。
+
+    指名された人がさらに指名した（指名が続いた）ときは、最初の指名の戻り先を引き継ぐ。
+    以前は「いまの手番の次」で書き直していたため、[a,b,c,d,e] で a→d、d→e と続くと、
+    e の後に e 自身へ戻り（d の手番の次）、b・c が飛ばされていた（2026-11-08レビュー指摘）。
+    """
+    initiative = session.get("initiative", [])
+    current_turn = session.get("turn", 0)
+    inherited = session.get("_designated_return_turn")
+    session["designated_next"] = target_id
+    if inherited is not None:
+        session["designated_return_turn"] = inherited
+    else:
+        session["designated_return_turn"] = (current_turn + 1) % len(initiative) if initiative else 0
+
+
 def _normalize_round_turn(session: dict) -> None:
     """session["turn"]が既に書き込まれた（境界超過の可能性がある）値のとき、その場で
     round繰り上げ・turnのmodulo正規化を行う共有ヘルパー(2026-09-19)。
@@ -517,10 +541,14 @@ async def _run_ai_turns(session_id: str) -> None:
         if result.get("discarded"):
             return
         if result.get("error"):
-            # 生成エラー時は自動進行を止め、全タブに状態を同期する
+            # 生成エラー時は自動進行を止め、全タブに状態を同期する。止めた理由も一緒に送る。
+            # 以前はフロントが AI_ERROR の側で「自動進行中だったら停止の表示を出す」と判定して
+            # いたが、先に届くこのイベントで自動進行がオフになった後なので、表示が一度も
+            # 出ていなかった（2026-11-08、E2E で発覚）。止めるかを決めるのはサーバーなので、
+            # 理由もサーバーから届ける。
             if session.get("auto_advance"):
                 session["auto_advance"] = False
-                _game_event_bus.emit(session_id, "AUTO_ADVANCE_CHANGED", {"enabled": False})
+                _game_event_bus.emit(session_id, "AUTO_ADVANCE_CHANGED", {"enabled": False, "reason": "ai_error"})
             _game_event_bus.emit(session_id, "AI_ERROR", {
                 "error": result["error"],
                 "character_id": result.get("character_id", ""),
@@ -1013,7 +1041,7 @@ def _resolve_ai_action(
         _cur = counters.get(current_char_id, 0)
         if _target_id and _target_id != current_char_id and _cur >= 1:
             counters[current_char_id] = _cur - 1
-            session["designated_next"] = _target_id
+            _set_designation(session, _target_id)
             designated_target_name = _target_name
         else:
             ai_action["action"] = "none"
@@ -1780,7 +1808,14 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         }
     else:  # "send"
         # 人間プレイヤーは「積む→発言完」が1ターン完了とみなす（actions_per_turn に関わらず即時進行）
-        _advance_turn(session, turn + 1)
+        # 指名で割り込んだ手番なら、AIの手番の終わり・スキップと同じく、指名前の戻り先へ返す。
+        # 以前はここだけ戻り先を見ず、指名した人の次ではなくプレイヤーの次へ進み、戻り先が
+        # 後まで残って、別の手番の終わりで使われていた（2026-11-08レビュー指摘）。
+        return_turn = session.pop("_designated_return_turn", None)
+        if return_turn is not None and initiative:
+            _advance_turn(session, return_turn % len(initiative))
+        else:
+            _advance_turn(session, turn + 1)
         session["action_count"] = 0
         round_completed = _mark_spoken_and_check_round_complete(session, current_char_id)
         _autosave(session_id)

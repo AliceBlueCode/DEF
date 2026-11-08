@@ -724,6 +724,9 @@ async def test_run_ai_turns_error_clears_auto_advance():
 
     types = [e[1] for e in emitted if len(e) > 1]
     assert types == ["AUTO_ADVANCE_CHANGED", "AI_ERROR"], f"got: {types}"
+    # 止めた理由を載せる。フロントはこれで「生成エラーで自動進行を停止しました」を出す
+    # （AI_ERROR の側で判定すると、先に届くこのイベントでオフになった後で、表示が出なかった）。
+    assert emitted[0][2] == {"enabled": False, "reason": "ai_error"}
     assert _sessions[sid]["auto_advance"] is False
     del _sessions[sid]
 
