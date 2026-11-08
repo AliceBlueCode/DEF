@@ -1,5 +1,54 @@
 # CHANGELOG
 
+## v4.2.0 — 2026-11-08
+
+### ⚠ アップグレード手順（必須）
+このリリースから **Python 3.13以上** が必要です（Node.js は 22.12以上）。
+Python 3.10 は 2026-10-31 でサポート終了しており、セキュリティ修正の入った
+Pillow 13 も Python 3.10 にはインストールできません。既存の環境はそのままでは
+起動しないため、venv を作り直してください。
+
+```bash
+python -m venv venv                              # Python 3.13 で実行
+venv/Scripts/pip install -r requirements.txt     # macOS/Linux: venv/bin/pip
+```
+
+- `start_def.bat` / `start_def_public.bat` は、リポジトリ直下の `venv/` から
+  起動するように変更（従来の `poc/venv/` は使わない）
+- 自動保存されたセッションのトークンは、JWTライブラリの入れ替え後もそのまま
+  検証できるため、進行中のセッションはアップグレード後も引き継がれる
+
+### セキュリティ
+- JWTライブラリを python-jose から PyJWT へ置き換え。python-jose には修正版の
+  ない脆弱性（アルゴリズム混同 PYSEC-2026-4298、依存する ecdsa の Minerva）が
+  ある。DEFは対称鍵HS256・アルゴリズム固定のため悪用できる状態ではなかったが、
+  上流に修正が無いため移行した
+- 不正なJWT（期限切れ・鍵違い・`alg=none`・改ざん・HS256以外）を拒否することを
+  確認するテスト `tests/test_jwt_security.py` を新設（JWTライブラリに依存しない
+  手組みのトークンで検証）
+- Pillow を 13 へ更新（41件のアドバイザリを解消）
+- pip-audit の除外指定を11件から1件（deep-translator の誤検知）に削減
+
+### バグ修正
+- セッションAPIのボディサイズ上限ミドルウェアが、Content-Length の無い
+  （chunked）リクエストで本文を空にしてしまう不具合を修正。starlette 1.x で
+  内部APIの差し替えが効かなくなっていたため、仕様どおりの純粋なASGI
+  ミドルウェアとして書き直した（512KB超は413）
+- キャラクター画像のアップロードで、画像として読めないファイルが500エラーに
+  なっていた不具合を修正。キャラクターのディレクトリを作る前に、400で拒否する
+- `/api/settings` 等が返すバージョン番号が 4.0.2 のまま更新されていなかった
+  不具合を修正
+
+### 依存関係
+- fastapi の `<0.96` 固定を解除（fastapi 0.162 / Pydantic 2 / starlette 1.9 /
+  anyio 4.15）。Pydantic v1 形式の `@validator` を `@field_validator` へ移行
+- テスト用HTTPクライアントを httpx から httpx2 へ移行
+- CI（pytest・e2e・pip-audit）の Python を 3.11 から 3.13 へ。pip-audit は
+  自身のワークフローファイルが変わったときも実行するように変更
+- そのほか Python/npm の依存を更新（詳細はコミット履歴参照）
+
+---
+
 ## v4.1.0 — 2026-09-19
 
 ### 新機能
