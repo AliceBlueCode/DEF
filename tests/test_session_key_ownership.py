@@ -27,6 +27,7 @@ PKG = ROOT / "def_kari"
 
 _R = "def_kari/api/routes/"
 TURN_ENGINE = _R + "session_turn_engine.py"
+TURN_STATE = _R + "session_turn_state.py"
 LOBBY = _R + "session_lobby.py"
 VOTING = _R + "session_voting.py"
 PERSISTENCE = _R + "session_persistence.py"
@@ -36,13 +37,15 @@ GAMEPLAY = _R + "session_gameplay.py"
 
 # キー → 書き換えてよいモジュール
 OWNERS: dict[str, set[str]] = {
-    # 手番の状態: 手番エンジンだけ（Step 2 で session_turn_state.py へ移す予定）
-    **{k: {TURN_ENGINE} for k in (
+    # 手番の状態: 純粋な状態遷移（session_turn_state.py）と、進行の制御（手番エンジン）だけ。
+    # 手番エンジンに残っているのは、AIの手番の始まりと終わり（_resolve_turn_start・
+    # _finalize_ai_turn）・やり直し・強制スキップ・人間の発言の処理（Step 2 の A、2026-11-09）
+    **{k: {TURN_STATE, TURN_ENGINE} for k in (
         "turn", "round", "_round_seq", "_round_spoken", "action_count",
         "designated_next", "designated_return_turn", "_designated_return_turn", "_skip_gen",
     )},
     # 手番の順: 開始前の準備（参加・AIの追加と削除）はロビー、進行中の除外は手番エンジン
-    "initiative": {TURN_ENGINE, LOBBY},
+    "initiative": {TURN_STATE, LOBBY},
     # 投票の決定待ち: 投票。起動時の復元は、決定待ちを捨てる（発言力を戻して通知を残す）ので例外
     "_pending_vote": {VOTING, PERSISTENCE},
     "_pending_expel_followup": {VOTING, PERSISTENCE},
