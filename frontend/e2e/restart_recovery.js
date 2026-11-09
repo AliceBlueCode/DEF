@@ -12,7 +12,8 @@
 // 実行: venv/Scripts/python scripts/e2e_local.py restart_recovery
 import { chromium } from 'playwright'
 import {
-  assert, createOnlineSession, joinAsPlayer, lobbyAddAi, mockReset, restartBackend, setToggle, startSession, waitUntil,
+  assert, createOnlineSession, getSessionAuth, joinAsPlayer, lobbyAddAi, mockReset, restartBackend, sessionApi, setToggle,
+  startSession, waitUntil,
 } from './helpers.js'
 
 const AIS = ['character_chatgpt_001', 'character_claude_001']
@@ -108,7 +109,14 @@ async function reopenAndSpeak(host, guest, line) {
     await reopenAndSpeak(host, guest, 'E2E: 再起動の後の発言2')
     const t = await bodyText(host)
     assert(count(t, EXPEL_DROPPED) === 1, 'D-4: the "expel dropped by restart" notice appears once')
-    assert(t.includes(`🎭${GUEST_NAME}[`), 'D-4: the target stays in the initiative')
+    // 「対象が残っているか」はサーバーの状態で確かめる。画面の手番の順の表示は、再読み込みの
+    // 直後はまだ整っていないことがあり、すぐ読むと落ちる（2026-11-09、CI で一度だけ発生）。
+    const { charId: guestCharId } = await getSessionAuth(guest)
+    const { body } = await sessionApi(host, '', { method: 'GET' })
+    assert(body.session.initiative.includes(guestCharId), 'D-4: the target stays in the initiative (server state)')
+    await waitUntil(async () => (await bodyText(host)).includes(`🎭${GUEST_NAME}[`),
+      { timeout: 15000, message: 'target shown in the initiative on the host tab' })
+    assert(true, 'D-4: the target is shown in the initiative on the host tab')
 
     console.log('restart_recovery.js: all assertions passed')
   } finally {
