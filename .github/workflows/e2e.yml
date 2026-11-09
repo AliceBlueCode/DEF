@@ -1,7 +1,12 @@
 name: e2e
 
 on:
+  # 機能ブランチ（基本設計書10章のブランチ戦略: main から feature/xxx を切る）でも流し、
+  # main へ入れる前に「CI全項目success」を確かめられるようにする（2026-11-09、v5.0 の
+  # feature/multi-rulebook を切ったのに合わせて追加）。
   push:
+    branches: [main, "feature/**"]
+  pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
