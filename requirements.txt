@@ -9,7 +9,7 @@
 # Web framework (pydantic v2 / starlette 1.x)
 fastapi>=0.162.0
 uvicorn[standard]>=0.54.0
-python-multipart>=0.0.32
+python-multipart>=0.0.33
 
 # Authentication (JWT: online-session invite codes, host/player tokens)
 # python-jose was replaced: it had an unfixed algorithm-confusion advisory
