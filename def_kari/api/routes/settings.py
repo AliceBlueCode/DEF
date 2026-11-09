@@ -77,16 +77,10 @@ async def regenerate_jwt_secret_endpoint():
     regenerate_jwt_secret()
 
     from def_kari.api.routes.session import _sessions
+    from def_kari.api.routes.session_ws import _close_all_ws_connections
     disconnected = 0
     for sess in list(_sessions.values()):
-        connections = sess.get("ws_connections", {})
-        for ws in list(connections.values()):
-            try:
-                await ws.close(code=1008)
-                disconnected += 1
-            except Exception:
-                pass
-        connections.clear()
+        disconnected += await _close_all_ws_connections(sess, code=1008)
     return {"status": "ok", "disconnected_connections": disconnected}
 
 

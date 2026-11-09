@@ -24,7 +24,7 @@ from def_kari.safety.character_audit import audit_character_json
 from def_kari.safety.filters import character_rating_exceeds_invite
 from def_kari.safety.content_filter import contains_blocked_content
 
-from def_kari.api.routes.session_state import router, _sessions, _MAX_SESSIONS, _ws_send_locks
+from def_kari.api.routes.session_state import router, _sessions, _MAX_SESSIONS
 from def_kari.api.routes.session_auth import (
     require_host,
     issue_player_jwt,
@@ -634,13 +634,8 @@ async def leave_session(session_id: str, authorization: str = Header(...)):
         p for p in sess.get("joined_participants", [])
         if p.get("participant_id") != participant_id
     ]
-    ws = sess.get("ws_connections", {}).pop(token, None)
-    _ws_send_locks.pop(token, None)
-    if ws:
-        try:
-            await ws.close(code=1000)
-        except Exception:
-            pass
+    from def_kari.api.routes.session_ws import _close_ws_connection
+    await _close_ws_connection(sess, token)
     revoke_token(token)
     # 8.30対策: playersからのトークン除去をautosaveへ即座に反映する。以前はここで
     # autosaveしておらず、退室直後にプロセスがクラッシュ/再起動すると、起動時復元

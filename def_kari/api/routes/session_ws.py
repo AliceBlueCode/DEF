@@ -50,6 +50,52 @@ def _release_ws_pending_auth_slot(client_ip: str) -> None:
         _ws_pending_auth_total["n"] -= 1
 
 
+# ── 接続の登録と取り外し（ws_connections の持ち主はこのモジュール） ─────────────
+# 以前は、認証・退室・追放・セッション終了・JWTの再生成・WSの切断・送信失敗の各所が、
+# それぞれ ws_connections を直接書き換えており、外し方が場所ごとに違っていた（送信ロックを
+# 消すか、ソケットを閉じるか）。JWTの再生成は送信ロックを消し忘れていた（2026-11-09、
+# セッション進行のリファクタリング Step 1 で洗い出し）。ここに集め、各所はこれを呼ぶ。
+
+def _register_ws_connection(sess: dict, token: str, ws: WebSocket) -> None:
+    """認証が済んだ接続を登録する。"""
+    sess.setdefault("ws_connections", {})[token] = ws
+
+
+def _forget_ws_connection(sess: dict | None, token: str) -> WebSocket | None:
+    """接続を外す（閉じない）。外した接続を返す。切断済み・送信失敗・トークンの失効で使う。
+
+    自動保存から復元した直後のセッションは ws_connections を持たないので .get() で扱う。
+    """
+    _ws_send_locks.pop(token, None)
+    if not sess:
+        return None
+    return sess.get("ws_connections", {}).pop(token, None)
+
+
+async def _close_ws_connection(sess: dict | None, token: str, code: int = 1000) -> None:
+    """接続を外して閉じる（退室・追放）。"""
+    ws = _forget_ws_connection(sess, token)
+    if ws:
+        try:
+            await ws.close(code=code)
+        except Exception:
+            pass
+
+
+async def _close_all_ws_connections(sess: dict, code: int = 1000) -> int:
+    """セッションのすべての接続を閉じて外す（セッション終了・JWTの再生成）。閉じた数を返す。"""
+    closed = 0
+    for token in list(sess.get("ws_connections", {}).keys()):
+        ws = _forget_ws_connection(sess, token)
+        if ws:
+            try:
+                await ws.close(code=code)
+                closed += 1
+            except Exception:
+                pass
+    return closed
+
+
 async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) -> None:
     """送信失敗時に ws_connections から除去する。create_task 経由で呼ぶ。
 
@@ -60,10 +106,7 @@ async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) ->
         try:
             await ws.send_json(event)
         except Exception:
-            sess = _sessions.get(session_id)
-            if sess:
-                sess["ws_connections"].pop(token, None)
-            _ws_send_locks.pop(token, None)
+            _forget_ws_connection(_sessions.get(session_id), token)
 
 
 def _session_tokens(sess: dict) -> set[str]:

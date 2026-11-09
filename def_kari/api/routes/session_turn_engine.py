@@ -92,6 +92,8 @@ from def_kari.api.routes.session_ws import (
     _try_acquire_ws_pending_auth_slot,
     _release_ws_pending_auth_slot,
     _safe_send,
+    _register_ws_connection,
+    _forget_ws_connection,
 )
 
 # session_auth.pyへ抽出済み（session.py分割・第二段階）。
@@ -595,13 +597,8 @@ async def _end_session(session_id: str) -> None:
             tasks_to_cancel.append(t)
     if tasks_to_cancel:
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
-    for ws in list(session.get("ws_connections", {}).values()):
-        try:
-            await ws.close(code=1000)
-        except Exception:
-            pass
-    # 復元直後のセッションは ws_connections キーを持たない可能性があるため .get() を使う
-    session.get("ws_connections", {}).clear()
+    from def_kari.api.routes.session_ws import _close_all_ws_connections
+    await _close_all_ws_connections(session)
     for token in list(session.get("players", {}).keys()):
         _ws_send_locks.pop(token, None)
     # 招待コードのグローバルレジストリからも削除
@@ -1907,7 +1904,7 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
             pass
         return
 
-    sess.setdefault("ws_connections", {})[raw_token] = ws
+    _register_ws_connection(sess, raw_token, ws)
     _cancel_idle_shutdown(session_id)
 
     # 接続してきたタブが、どのビルドのフロントで、いつ読み込まれたページかを記録する。
@@ -1987,10 +1984,9 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         pass
     finally:
         keepalive_task.cancel()
-        _ws_send_locks.pop(raw_token, None)
         sess = _sessions.get(session_id)
+        _forget_ws_connection(sess, raw_token)
         if sess:
-            sess["ws_connections"].pop(raw_token, None)
             # /leave で既に除去済み（players からも消えている）なら通知しない。
             # 参加者データは保持したまま切断のみを通知する（退室とは異なり再接続可能）
             if raw_token in sess.get("players", {}):

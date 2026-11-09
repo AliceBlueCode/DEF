@@ -23,7 +23,7 @@ from def_kari.safety.audit_log import record_generation_event
 from def_kari.safety.content_filter import contains_blocked_content
 from def_kari.settings import load_settings
 
-from def_kari.api.routes.session_state import router, _sessions, _ws_send_locks
+from def_kari.api.routes.session_state import router, _sessions
 from def_kari.api.routes.session_auth import (
     require_keeper,
     require_player,
@@ -492,13 +492,8 @@ async def _remove_expelled_participant(session_id: str, session: dict, target_id
         p for p in session.get("joined_participants", [])
         if p.get("participant_id") != expelled_participant_id
     ]
-    expelled_ws = session.get("ws_connections", {}).pop(expelled_token, None)
-    _ws_send_locks.pop(expelled_token, None)
-    if expelled_ws:
-        try:
-            await expelled_ws.close(code=1000)
-        except Exception:
-            pass
+    from def_kari.api.routes.session_ws import _close_ws_connection
+    await _close_ws_connection(session, expelled_token)
     revoke_token(expelled_token)
     return expelled_participant_id
 

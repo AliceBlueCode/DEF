@@ -202,7 +202,8 @@ def revoke_token(token: str) -> None:
             # autosaveから復元された直後のセッションは ws_connections キーを
             # 持たない（_session_for_json でシリアライズ時に除外されるため）。
             # 直接アクセスだとKeyErrorになるため .get() を使う。
-            sess.get("ws_connections", {}).pop(token, None)
+            from def_kari.api.routes.session_ws import _forget_ws_connection
+            _forget_ws_connection(sess, token)
     except Exception:
         pass
 
