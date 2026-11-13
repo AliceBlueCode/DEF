@@ -103,7 +103,10 @@ def test_ws_connection_within_limit_still_authenticates_normally(monkeypatch):
     with client.websocket_connect(f"/api/session/{sid}/ws") as ws:
         ws.send_json({"type": "auth", "token": token})
         ws.send_json({"type": "pong"})
+        # 接続したタブには、先に参加者の一覧（PARTICIPANTS_SNAPSHOT、2026-11-13）が直接届く
         received = ws.receive_json()
+        if received.get("type") == "PARTICIPANTS_SNAPSHOT":
+            received = ws.receive_json()
         assert received.get("type") == "PLAYER_RECONNECTED"
 
 

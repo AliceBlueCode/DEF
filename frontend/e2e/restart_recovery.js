@@ -109,8 +109,11 @@ async function reopenAndSpeak(host, guest, line) {
     await reopenAndSpeak(host, guest, 'E2E: 再起動の後の発言2')
     const t = await bodyText(host)
     assert(count(t, EXPEL_DROPPED) === 1, 'D-4: the "expel dropped by restart" notice appears once')
-    // 「対象が残っているか」はサーバーの状態で確かめる。画面の手番の順の表示は、再読み込みの
-    // 直後はまだ整っていないことがあり、すぐ読むと落ちる（2026-11-09、CI で一度だけ発生）。
+    // 「対象が残っているか」はサーバーの状態で確かめ、画面の表示は待って確かめる。
+    // 画面で `🎭名前[` にならず `🎭⚡名前[`（切断中）のまま残る失敗が、2026-11-09 と 11-13 に CI で出た。
+    // 原因は、ホストのタブが GET で参加者を取ってから WS につなぐまでの間にゲストが接続し直し、
+    // PLAYER_RECONNECTED を取りこぼすこと。WS の接続のときにサーバーが参加者の一覧を送り直す
+    // （PARTICIPANTS_SNAPSHOT、2026-11-13）ようにして直した。待っても表示されないなら、それは不具合。
     const { charId: guestCharId } = await getSessionAuth(guest)
     const { body } = await sessionApi(host, '', { method: 'GET' })
     assert(body.session.initiative.includes(guestCharId), 'D-4: the target stays in the initiative (server state)')

@@ -134,7 +134,10 @@ def test_ws_observer_role_closes_4001():
         ws.send_json({"type": "pong"})
         # 接続が閉じられていないことをPLAYER_RECONNECTEDイベント受信で確認する
         # （8.30対策前は例外なくsend_jsonできる＝接続維持、という弱い確認だった）
+        # 接続したタブには、先に参加者の一覧（PARTICIPANTS_SNAPSHOT、2026-11-13）が直接届く
         received = ws.receive_json()
+        if received.get("type") == "PARTICIPANTS_SNAPSHOT":
+            received = ws.receive_json()
         assert received.get("type") == "PLAYER_RECONNECTED"
 
 

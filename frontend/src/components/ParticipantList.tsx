@@ -10,6 +10,24 @@ export type Participant = {
   disconnectTimeoutSec?: number  // 切断中のみ。設計書§3.7「○○が切断中、N秒後にスキップ」の表示用
 }
 
+/** サーバーが返す参加者の一覧（GET の participants、WS の PARTICIPANTS_SNAPSHOT）を、画面の一覧に変える。
+ *  切断中のままの参加者は、前に受け取ったスキップまでの秒数を引き継ぐ。 */
+export function participantsFromServer(prev: Participant[], list: any[]): Participant[] {
+  return list.map((p: any) => {
+    const pid = p.participant_id || p.character_id
+    const old = prev.find(x => x.participant_id === pid)
+    return {
+      participant_id: pid,
+      char_id: p.character_id || '',
+      display_name: p.display_name || '',
+      role: p.role || 'player',
+      connected: !!p.connected,
+      claimed_char_id: p.claimed_char_id || '',
+      disconnectTimeoutSec: p.connected ? undefined : old?.disconnectTimeoutSec,
+    }
+  })
+}
+
 type Props = {
   participants: Participant[]
 }

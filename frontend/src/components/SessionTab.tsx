@@ -4,7 +4,7 @@ import InvitePanel from './InvitePanel'
 import InviteCodeDisplay from './InviteCodeDisplay'
 import JoinDialog from './JoinDialog'
 import { type JoinResult } from './useJoinFlow'
-import ParticipantList from './ParticipantList'
+import ParticipantList, { participantsFromServer } from './ParticipantList'
 import {
   type Character,
   type SessionMessage,
@@ -583,19 +583,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           // プレイヤーのキャラの判定まで振り、判定が二重になっていた（2026-11-08、レビューで指摘）。
           // WSの接続はこの取得の後なので、以降の変化はイベントで追いつく。
           if (res.ok && !cancelled && Array.isArray(data.participants)) {
-            setParticipants(prev => data.participants.map((p: any) => {
-              const pid = p.participant_id || p.character_id
-              const old = prev.find(x => x.participant_id === pid)
-              return {
-                participant_id: pid,
-                char_id: p.character_id || '',
-                display_name: p.display_name || '',
-                role: p.role || 'player',
-                connected: !!p.connected,
-                claimed_char_id: p.claimed_char_id || '',
-                disconnectTimeoutSec: p.connected ? undefined : old?.disconnectTimeoutSec,
-              }
-            }))
+            setParticipants(prev => participantsFromServer(prev, data.participants))
           }
           // 再読み込みで復帰したプレイヤーは、自分のキャラシートを読み込み直す（参加の瞬間にしか
           // 読み込んでおらず、再読み込みの後は「振る」ボタンが消えていた。2026-11-08）
@@ -1051,6 +1039,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       setParticipants(prev =>
         prev.map(x => x.participant_id === pid ? { ...x, connected: true, disconnectTimeoutSec: undefined } : x)
       )
+    }
+    // WS につないだ直後に、サーバーがこのタブにだけ送る参加者の一覧。読み込みの GET と WS の
+    // 接続の間に起きた接続・切断（取りこぼした PLAYER_RECONNECTED など）を、ここで埋める（2026-11-13）。
+    if (event.type === 'PARTICIPANTS_SNAPSHOT' && Array.isArray(event.payload?.participants)) {
+      setParticipants(prev => participantsFromServer(prev, event.payload.participants))
     }
     if (event.type === 'LOBBY_UPDATE') {
       if (event.payload?.initiative) {

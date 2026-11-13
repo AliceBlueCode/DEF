@@ -1635,6 +1635,18 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         if _rc_char_id:
             _cancel_disconnect_skip(session_id, _rc_char_id)
 
+    # 接続してきたこのタブにだけ、参加者の一覧と接続の状況を送り直す。タブは読み込みのときに
+    # GET で一覧を取ってから WS につなぐので、その間に他の参加者が接続し直すと、
+    # PLAYER_RECONNECTED を取りこぼし、その参加者が「切断中」のまま残っていた（キーパーの
+    # タブでは「AIに引き継ぐ」が出て、プレイヤーのキャラの判定まで振りうる）。WS に登録した
+    # 後に送るので、以降の変化はイベントで追いつく（2026-11-13、e2e restart_recovery D-4 で発覚）。
+    # 中身は GET の participants と同じ（トークンと game_sheet_id は含まない）。
+    from def_kari.api.routes.session_gameplay import _participants_snapshot
+    await _safe_send(session_id, raw_token, ws, {
+        "type": "PARTICIPANTS_SNAPSHOT",
+        "payload": {"participants": _participants_snapshot(sess)},
+    })
+
     # 接続時に現在の状態を送信: 人間ターン待ちなら WAITING_FOR_HUMAN を再送する
     # （ブラウザ変更・リロード・遅延参加でイベントを見逃したタブ向け）
     if not sess.get("lobby_active"):
