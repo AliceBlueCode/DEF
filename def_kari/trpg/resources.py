@@ -93,6 +93,18 @@ def load_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
     return data
 
 
+def rulebook_unavailable_reason(rulebook_id: str) -> str | None:
+    """ルールブックのファイルはあるのに、その `rule_system` が登録されていない（プラグインが
+    読み込まれていない）とき、その理由を返す。それ以外（無い・読める）は None（B-002）。"""
+    if not is_safe_id(rulebook_id):
+        return None
+    data = load_resource(rulebook_id, RULEBOOK_DIRS)
+    if data and not registry.is_known(data):
+        return (f"rulebook {rulebook_id!r} needs the rule system {registry.rule_system_of(data)!r}, "
+                f"which is not available (its plugin is not loaded)")
+    return None
+
+
 def load_scenario(scenario_id: str, public_only: bool = False) -> dict:
     return load_resource(scenario_id, PUBLIC_SCENARIO_DIRS if public_only else SCENARIO_DIRS)
 

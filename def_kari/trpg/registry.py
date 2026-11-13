@@ -34,13 +34,21 @@ _BUILTIN_LOADED = False
 
 
 def _ensure_builtin() -> None:
-    """DEF の本体に入っているルールシステムを登録する（最初に使うときに1回だけ）。"""
+    """DEF の本体のルールシステムと、プラグインのルールシステムを登録する（最初に使うときに1回だけ。
+    DEF の起動のときに `load_all()` で呼ぶ）。プラグインは `TRPG_PLUGIN_PATHS` から読む（B-006）。"""
     global _BUILTIN_LOADED
     if _BUILTIN_LOADED:
         return
     _BUILTIN_LOADED = True
     from def_kari.trpg.systems.def_original import DefOriginal
     register(DefOriginal())
+    from def_kari.trpg import plugins
+    plugins.load_all(register, lambda sid: sid in _REGISTRY)
+
+
+def load_all() -> None:
+    """起動のときに呼ぶ。本体とプラグインのルールシステムを登録し、読み込めなかったものをログに残す。"""
+    _ensure_builtin()
 
 
 def register(system: RuleSystem) -> None:

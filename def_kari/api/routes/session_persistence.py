@@ -19,6 +19,7 @@ from def_kari.characters import load_profiles, get_character
 from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import DEFAULT_LLM_BACKEND
 from def_kari.gm.context_builder import load_trpg_scenario as _load_trpg_scenario
+from def_kari.trpg import resources as _trpg_resources
 from def_kari.settings import load_settings
 from def_kari.prompts import sp as _sp
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
@@ -327,6 +328,13 @@ def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
             return
         restored = json.loads(f.read_text(encoding="utf-8"))
         if isinstance(restored, dict) and restored.get("id"):
+            # ルールブックのルールシステムが使えない（プラグインが読み込まれていない）セッションは
+            # 戻さない。def_original として遊ばせない。ファイルは消さずに残すので、プラグインを
+            # 入れ直せば次の起動で戻る（B-002、基本設計書 11.6）。
+            _unavailable = _trpg_resources.rulebook_unavailable_reason(restored.get("trpg_rulebook", ""))
+            if _unavailable:
+                _log.warning("[autosave] session %s not restored: %s", str(restored["id"])[:8], _unavailable)
+                return
             # 投票中・追放の決定待ちのまま保存されていたら捨てる。確定や選択のUIはキーパーの
             # タブの状態にしか無く、再起動後には出せない。残すとターンの進行が止まったまま
             # 二度と進まなくなる（2026-11-08。投票の発言は履歴に残っている）。
@@ -424,6 +432,10 @@ def load_session(req: SessionLoadRequest):
     if data is None:
         return {"error": "File not found"}
     meta = data.get("metadata", {})
+    # ルールブックのルールシステムが使えないセッションは読み込まず、何が足りないかを返す（B-002）
+    _unavailable = _trpg_resources.rulebook_unavailable_reason(meta.get("trpg_rulebook", ""))
+    if _unavailable:
+        return {"error": _unavailable}
     new_id = secrets.token_urlsafe(16)
     session = {
         "id": new_id,

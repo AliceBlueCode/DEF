@@ -1191,6 +1191,17 @@ async def ai_resume(session_id: str, _auth: dict = Depends(require_keeper)):
     return {"status": "ok"}
 
 
+def _pause_for_plugin_error(session: dict, info: dict) -> None:
+    """プラグインの口が失敗した卓の進行を止める（マルチルールブック基盤 B-027、基本設計書 11.6）。
+
+    差し込み口は `plugin_hooks.call(..., on_failure=_pause_for_plugin_error)` で渡す。`ai_paused` の
+    持ち主はこのモジュールなので、止める処理をここに置く。再開はホストの操作だけで、手番の口を
+    持つ卓では DEF の手番の処理ではなくプラグインに回す（基本設計書 11.4）。
+    """
+    session["ai_paused"] = True
+    session["plugin_error"] = info
+
+
 @router.post("/{session_id}/ai_pause")
 async def ai_pause(session_id: str, _auth: dict = Depends(require_keeper)):
     """自動進行を一時停止する（現在生成中のターンが完了してから止まる）。"""

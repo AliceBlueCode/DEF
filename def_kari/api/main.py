@@ -89,6 +89,10 @@ async def lifespan(app: FastAPI):
     import asyncio as _asyncio
     from def_kari.api.routes.session import set_main_loop as _set_session_loop
     _set_session_loop(_asyncio.get_running_loop())
+    # TRPG のルールシステム（本体と、TRPG_PLUGIN_PATHS のプラグイン）を起動のときに1回だけ登録する
+    # （B-006）。読み込めなかったプラグインは理由をログに残し、起動は続ける（B-027）。
+    from def_kari.trpg import registry as _trpg_registry
+    _trpg_registry.load_all()
     threading.Thread(target=_auto_start, daemon=True).start()
     from def_kari.backends import voicevox_memory_watchdog_loop
     threading.Thread(target=voicevox_memory_watchdog_loop, daemon=True).start()
