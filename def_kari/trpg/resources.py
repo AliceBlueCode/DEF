@@ -7,6 +7,7 @@
 このモジュールは、集める前の挙動をそのまま引き継ぐ。挙動は `tests/characterization/` が固定している:
 
 - 置き場所は public → private の順。
+- どの読み方でも、パスを解決した後に置き場所の内側にある普通のファイルだけを読む（`safe_file`、B-012）。
 - ID を指定した読み込み（`load_rulebook` など）は、先に見つかった方を使う。ファイル名が ID。
 - 一覧（`all_rulebooks` など）は、JSON の `id`（無ければファイル名）を ID とし、後から読んだ方で
   上書きする。同じ ID が public と private の両方にあると、ID を指定した読み込みとは勝つ方が逆になる。
@@ -48,21 +49,35 @@ def is_safe_id(resource_id: str) -> bool:
     return bool(resource_id) and bool(SAFE_ID_RE.match(resource_id))
 
 
+def safe_file(d: Path, name: str) -> Path | None:
+    """置き場所 `d` の中のファイル `name` のパスを、安全なときだけ返す（B-012）。
+
+    パスを解決した後（シンボリックリンクをたどった後）も `d` の内側にあり、普通のファイルで
+    あるときだけ、解決した後のパスを返す。それ以外は None。読み込み・一覧・個別の取得・保存先の
+    検索は、すべてこの関数を通す（2026-11-13 まで、一覧と個別の取得は確かめずに読んでおり、
+    置き場所の中のシンボリックリンクから外のファイルを読めた。一次レビューの指摘）。
+    """
+    try:
+        base = d.resolve()
+        candidate = (d / name).resolve()
+        if not candidate.is_relative_to(base):
+            if (d / name).exists() or (d / name).is_symlink():
+                _log.warning("[trpg] %s points outside %s; ignored", d / name, d)
+            return None
+        return candidate if candidate.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
 def load_resource(resource_id: str, dirs: list[Path]) -> dict:
     """`dirs` を順に探し、最初に読めた `{resource_id}.json` を返す。無ければ空の dict。"""
     if not is_safe_id(resource_id):
         return {}
     for d in dirs:
-        base = d.resolve()
-        candidate = (d / f"{resource_id}.json").resolve()
-        try:
-            if not candidate.is_relative_to(base):
-                continue
-        except ValueError:
-            continue
-        if candidate.exists():
+        path = safe_file(d, f"{resource_id}.json")
+        if path is not None:
             try:
-                return json.loads(candidate.read_text(encoding="utf-8"))
+                return json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
     return {}
@@ -89,8 +104,11 @@ def _load_all(dirs: list[Path]) -> dict:
         if d.is_dir():
             for f in sorted(d.iterdir()):
                 if f.suffix == ".json" and f.name != ".gitkeep":
+                    path = safe_file(d, f.name)
+                    if path is None:
+                        continue
                     try:
-                        data = json.loads(f.read_text(encoding="utf-8"))
+                        data = json.loads(path.read_text(encoding="utf-8"))
                         found[data.get("id", f.stem)] = data
                     except (json.JSONDecodeError, OSError):
                         pass
@@ -107,10 +125,12 @@ def all_scenarios() -> dict:
 
 
 def _find_file(resource_id: str, dirs: list[Path]) -> Path | None:
-    """`{resource_id}.json` がある最初の置き場所のパス。ID の確かめは呼ぶ側で済ませておく。"""
+    """`{resource_id}.json` がある最初の置き場所の、安全なパス（`safe_file`）。無ければ None。"""
+    if not is_safe_id(resource_id):
+        return None
     for d in dirs:
-        path = d / f"{resource_id}.json"
-        if path.exists():
+        path = safe_file(d, f"{resource_id}.json")
+        if path is not None:
             return path
     return None
 

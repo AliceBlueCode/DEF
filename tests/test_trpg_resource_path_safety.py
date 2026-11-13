@@ -101,3 +101,62 @@ def test_load_trpg_scenario_public_only_excludes_private_dir(tmp_path, monkeypat
 
     assert context_builder.load_trpg_scenario("hidden_npc", public_only=True) == {}
     assert context_builder.load_trpg_scenario("hidden_npc", public_only=False)["npcs"][0]["id"] == "n1"
+
+
+# ── シンボリックリンクで置き場所の外を指すファイル（B-012、2026-11-13 の一次レビューの指摘） ──
+# 以前は、ID を指定した読み込みだけが「解決した後のパスが置き場所の内側か」を確かめていて、
+# 一覧（all_rulebooks）と個別の取得（get_rulebook）と保存先の検索は、リンクをたどって外を読めた。
+# Windows では権限が無いとシンボリックリンクを作れないので、作れない環境では飛ばす（CI の Linux で確かめる）。
+
+import os
+
+import pytest
+
+
+def _link_outside(tmp_path, monkeypatch):
+    from def_kari.trpg import resources as res
+    public_dir = tmp_path / "public" / "trpg_rules"
+    public_dir.mkdir(parents=True)
+    outside = tmp_path / "outside_secret.json"
+    outside.write_text('{"label": "outside secret"}', encoding="utf-8")
+    try:
+        os.symlink(outside, public_dir / "leak.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    monkeypatch.setattr(res, "RULEBOOK_DIRS", [public_dir])
+    monkeypatch.setattr(res, "PUBLIC_RULEBOOK_DIRS", [public_dir])
+    return public_dir
+
+
+def test_symlink_outside_is_not_loaded_by_id(tmp_path, monkeypatch):
+    _link_outside(tmp_path, monkeypatch)
+    assert resources.load_rulebook("leak") == {}
+
+
+def test_symlink_outside_is_not_listed(tmp_path, monkeypatch):
+    _link_outside(tmp_path, monkeypatch)
+    assert "leak" not in resources.all_rulebooks()
+    assert all(b.get("label") != "outside secret" for b in resources.all_rulebooks().values())
+
+
+def test_symlink_outside_is_not_returned_by_get(tmp_path, monkeypatch):
+    from def_kari.api.routes import trpg as trpg_routes
+    _link_outside(tmp_path, monkeypatch)
+    assert trpg_routes.get_rulebook("leak") == {"error": "Rulebook 'leak' not found"}
+
+
+def test_symlink_outside_is_not_written_through(tmp_path, monkeypatch):
+    """保存は、外を指すリンクをたどって外のファイルを書き換えない。"""
+    from def_kari.api.routes import trpg as trpg_routes
+    public_dir = _link_outside(tmp_path, monkeypatch)
+    content = '{"rule_system_name": "x", "dice_system": "1d6", "judgment": {"success_condition": "roll_lte_skill"}}'
+    trpg_routes.save_rulebook("leak", trpg_routes.SaveRulebookRequest(content=content))
+    assert (tmp_path / "outside_secret.json").read_text(encoding="utf-8") == '{"label": "outside secret"}'
+    assert not (public_dir / "leak.json").is_symlink()
+
+
+def test_safe_file_rejects_directories(tmp_path):
+    from def_kari.trpg import resources as res
+    (tmp_path / "dir.json").mkdir()
+    assert res.safe_file(tmp_path, "dir.json") is None
+    assert res.safe_file(tmp_path, "missing.json") is None

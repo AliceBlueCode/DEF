@@ -55,6 +55,7 @@ def test_broken_json_falls_through_to_next_dir(rulebook_dirs):
 
 
 def test_session_loader_uses_file_name_list_uses_id_field(rulebook_dirs):
+    """C-002: A章でわざと変える挙動（B-029 で、一覧もファイル名を ID にする）。"""
     public, _ = rulebook_dirs
     _write(public / "trpg_rules", "foo", {"id": "bar"})
     assert cb.load_trpg_rulebook("foo") == {"id": "bar"}
