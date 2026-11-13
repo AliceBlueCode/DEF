@@ -7,6 +7,7 @@
 from pathlib import Path
 
 from def_kari.gm import context_builder
+from def_kari.trpg import resources
 
 
 def _setup_dirs(tmp_path, monkeypatch):
@@ -17,8 +18,8 @@ def _setup_dirs(tmp_path, monkeypatch):
     (public_dir / "sample.json").write_text('{"label": "public rulebook"}', encoding="utf-8")
     (private_dir / "secret.json").write_text('{"label": "private rulebook"}', encoding="utf-8")
     dirs = [public_dir, private_dir]
-    monkeypatch.setattr(context_builder, "_TRPG_RULEBOOK_DIRS", dirs)
-    monkeypatch.setattr(context_builder, "_PUBLIC_TRPG_RULEBOOK_DIRS", [public_dir])
+    monkeypatch.setattr(resources, "RULEBOOK_DIRS", dirs)
+    monkeypatch.setattr(resources, "PUBLIC_RULEBOOK_DIRS", [public_dir])
     return public_dir, private_dir, dirs
 
 
@@ -76,8 +77,8 @@ def test_load_trpg_scenario_rejects_traversal_id(tmp_path, monkeypatch):
     (private_dir / "hidden_npc.json").write_text(
         '{"npcs": [{"id": "n1", "knowledge": ["gm-only secret"]}]}', encoding="utf-8"
     )
-    monkeypatch.setattr(context_builder, "_TRPG_SCENARIO_DIRS", [public_dir, private_dir])
-    monkeypatch.setattr(context_builder, "_PUBLIC_TRPG_SCENARIO_DIRS", [public_dir])
+    monkeypatch.setattr(resources, "SCENARIO_DIRS", [public_dir, private_dir])
+    monkeypatch.setattr(resources, "PUBLIC_SCENARIO_DIRS", [public_dir])
 
     assert context_builder.load_trpg_scenario("../private/trpg_scenarios/hidden_npc") == {}
     # 正規のIDなら引き続き読める（従来通り）
@@ -95,8 +96,8 @@ def test_load_trpg_scenario_public_only_excludes_private_dir(tmp_path, monkeypat
     (private_dir / "hidden_npc.json").write_text(
         '{"npcs": [{"id": "n1", "knowledge": ["gm-only secret"]}]}', encoding="utf-8"
     )
-    monkeypatch.setattr(context_builder, "_TRPG_SCENARIO_DIRS", [public_dir, private_dir])
-    monkeypatch.setattr(context_builder, "_PUBLIC_TRPG_SCENARIO_DIRS", [public_dir])
+    monkeypatch.setattr(resources, "SCENARIO_DIRS", [public_dir, private_dir])
+    monkeypatch.setattr(resources, "PUBLIC_SCENARIO_DIRS", [public_dir])
 
     assert context_builder.load_trpg_scenario("hidden_npc", public_only=True) == {}
     assert context_builder.load_trpg_scenario("hidden_npc", public_only=False)["npcs"][0]["id"] == "n1"

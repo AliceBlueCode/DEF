@@ -4,8 +4,8 @@
 挙動を、そのまま記録する。基盤の作り直し（A章）の後も、1件も変えずに通ることを条件にする。
 わざと変える挙動（C-002 の一覧）のテストは、docstring を「C-002: A章でわざと変える挙動」で始める。
 
-読み込み先の差し替え（`_set_dirs`）だけは、基盤で読み込みを1か所にまとめる（B-010）ときに
-中身を書き換える。差し替える先が変わるだけで、各テストの期待値は変えない。
+読み込み先の差し替え（`_set_dirs`）だけは、基盤で読み込みを1か所にまとめた（B-010、2026-11-13）ときに
+中身を書き換えた。差し替える先が変わっただけで、各テストの期待値は変えていない。
 """
 
 from pathlib import Path
@@ -19,20 +19,15 @@ from char_helpers import FIXTURE_ROOT
 def _set_dirs(monkeypatch, public: Path, private: Path) -> None:
     """ルールブックとシナリオの読み込み先を、public と private の2か所に向ける。
 
-    今の DEF は、`api/routes/trpg.py` と `gm/context_builder.py` の2か所に読み込み先を持つ
-    （要求仕様 B-010 で1か所にまとめる予定）。両方を同じ置き場に向ける。
+    読み込み先は `def_kari/trpg/resources.py` の1か所にある（B-010。2026-11-13 までは
+    `api/routes/trpg.py` と `gm/context_builder.py` の2か所にあり、両方を差し替えていた）。
     """
-    from def_kari.api.routes import trpg as trpg_routes
-    from def_kari.gm import context_builder as cb
+    from def_kari.trpg import resources
 
-    rules = [public / "trpg_rules", private / "trpg_rules"]
-    scenarios = [public / "trpg_scenarios", private / "trpg_scenarios"]
-    monkeypatch.setattr(trpg_routes, "_RULEBOOK_DIRS", rules)
-    monkeypatch.setattr(trpg_routes, "_SCENARIO_DIRS", scenarios)
-    monkeypatch.setattr(cb, "_TRPG_RULEBOOK_DIRS", rules)
-    monkeypatch.setattr(cb, "_PUBLIC_TRPG_RULEBOOK_DIRS", [public / "trpg_rules"])
-    monkeypatch.setattr(cb, "_TRPG_SCENARIO_DIRS", scenarios)
-    monkeypatch.setattr(cb, "_PUBLIC_TRPG_SCENARIO_DIRS", [public / "trpg_scenarios"])
+    monkeypatch.setattr(resources, "RULEBOOK_DIRS", [public / "trpg_rules", private / "trpg_rules"])
+    monkeypatch.setattr(resources, "PUBLIC_RULEBOOK_DIRS", [public / "trpg_rules"])
+    monkeypatch.setattr(resources, "SCENARIO_DIRS", [public / "trpg_scenarios", private / "trpg_scenarios"])
+    monkeypatch.setattr(resources, "PUBLIC_SCENARIO_DIRS", [public / "trpg_scenarios"])
 
 
 @pytest.fixture

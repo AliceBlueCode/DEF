@@ -4,53 +4,18 @@ GM / Player / NPC それぞれに渡す情報を構築する責務を持つ。
 session.py から抽出した純粋関数群。
 """
 
-import json
-import re
-from pathlib import Path
-
-_BASE = Path(__file__).parent.parent.parent
-_TRPG_RULEBOOK_DIRS = [
-    _BASE / "data" / "public" / "trpg_rules",
-    _BASE / "data" / "private" / "trpg_rules",
-]
-_PUBLIC_TRPG_RULEBOOK_DIRS = [_BASE / "data" / "public" / "trpg_rules"]
-_TRPG_SCENARIO_DIRS = [
-    _BASE / "data" / "public" / "trpg_scenarios",
-    _BASE / "data" / "private" / "trpg_scenarios",
-]
-_PUBLIC_TRPG_SCENARIO_DIRS = [_BASE / "data" / "public" / "trpg_scenarios"]
-# 8.26対策: rulebook_id/scenario_idはPOST /api/session/start等クライアント入力を
-# そのままファイル名に使うため、IDのallowlist（characters_common._SAFE_ID_RE・
-# trpg.py._SAFE_ID_REと同型）＋resolve後のディレクトリ包含チェックの二重で
-# パストラバーサル・絶対パス注入を防ぐ。
-_SAFE_RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+from def_kari.trpg import resources as _trpg_resources
 
 
-def _load_trpg_resource(resource_id: str, dirs: list[Path]) -> dict:
-    if not resource_id or not _SAFE_RESOURCE_ID_RE.match(resource_id):
-        return {}
-    for d in dirs:
-        base = d.resolve()
-        candidate = (d / f"{resource_id}.json").resolve()
-        try:
-            if not candidate.is_relative_to(base):
-                continue
-        except ValueError:
-            continue
-        if candidate.exists():
-            try:
-                return json.loads(candidate.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-    return {}
-
+# ルールブックとシナリオの置き場所と読み込みは def_kari/trpg/resources.py にまとめた（B-010）。
+# セッションの各モジュールと gm_agent は、ここの名前で import している。
 
 def load_trpg_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
-    return _load_trpg_resource(rulebook_id, _PUBLIC_TRPG_RULEBOOK_DIRS if public_only else _TRPG_RULEBOOK_DIRS)
+    return _trpg_resources.load_rulebook(rulebook_id, public_only=public_only)
 
 
 def load_trpg_scenario(scenario_id: str, public_only: bool = False) -> dict:
-    return _load_trpg_resource(scenario_id, _PUBLIC_TRPG_SCENARIO_DIRS if public_only else _TRPG_SCENARIO_DIRS)
+    return _trpg_resources.load_scenario(scenario_id, public_only=public_only)
 
 
 def build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str) -> str:

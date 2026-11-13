@@ -2,41 +2,20 @@
 
 import json
 import os
-import re
-from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from def_kari.trpg import resources
 from def_kari.trpg.rule_engine import roll_dice, judge, opposed_check, validate_rulebook
 
 router = APIRouter()
 
-_BASE = Path(__file__).parent.parent.parent.parent
-_RULEBOOK_DIRS = [
-    _BASE / "data" / "public" / "trpg_rules",
-    _BASE / "data" / "private" / "trpg_rules",
-]
-_SCENARIO_DIRS = [
-    _BASE / "data" / "public" / "trpg_scenarios",
-    _BASE / "data" / "private" / "trpg_scenarios",
-]
-_SAFE_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
+# ルールブックとシナリオの置き場所と読み込みは def_kari/trpg/resources.py にまとめた（B-010）。
 
 
 def _load_rulebooks() -> dict:
-    books = {}
-    for d in _RULEBOOK_DIRS:
-        if d.is_dir():
-            for f in sorted(d.iterdir()):
-                if f.suffix == ".json" and f.name != ".gitkeep":
-                    try:
-                        data = json.loads(f.read_text(encoding="utf-8"))
-                        bid = data.get("id", f.stem)
-                        books[bid] = data
-                    except (json.JSONDecodeError, OSError):
-                        pass
-    return books
+    return resources.all_rulebooks()
 
 
 @router.get("/rulebooks")
@@ -59,15 +38,14 @@ def list_rulebooks():
 
 @router.get("/rulebooks/{rulebook_id}")
 def get_rulebook(rulebook_id: str):
-    if not _SAFE_ID_RE.match(rulebook_id):
+    if not resources.is_safe_id(rulebook_id):
         return {"error": "Invalid rulebook ID"}
-    for d in _RULEBOOK_DIRS:
-        path = d / f"{rulebook_id}.json"
-        if path.exists():
-            try:
-                return {"content": path.read_text(encoding="utf-8"), "id": rulebook_id}
-            except OSError as e:
-                return {"error": str(e)}
+    path = resources.find_rulebook_file(rulebook_id)
+    if path is not None:
+        try:
+            return {"content": path.read_text(encoding="utf-8"), "id": rulebook_id}
+        except OSError as e:
+            return {"error": str(e)}
     return {"error": f"Rulebook '{rulebook_id}' not found"}
 
 
@@ -77,7 +55,7 @@ class SaveRulebookRequest(BaseModel):
 
 @router.put("/rulebooks/{rulebook_id}")
 def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
-    if not _SAFE_ID_RE.match(rulebook_id):
+    if not resources.is_safe_id(rulebook_id):
         return {"error": "Invalid rulebook ID"}
     try:
         data = json.loads(req.content)
@@ -87,15 +65,9 @@ def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
     if errors:
         return {"error": "Validation failed", "details": errors}
 
-    target = None
-    for d in _RULEBOOK_DIRS:
-        path = d / f"{rulebook_id}.json"
-        if path.exists():
-            target = path
-            break
+    target = resources.find_rulebook_file(rulebook_id)
     if target is None:
-        _RULEBOOK_DIRS[0].mkdir(parents=True, exist_ok=True)
-        target = _RULEBOOK_DIRS[0] / f"{rulebook_id}.json"
+        target = resources.new_rulebook_file(rulebook_id)
 
     tmp = str(target) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -107,18 +79,7 @@ def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
 # ── シナリオ ──────────────────────────────────────────────────────
 
 def _load_scenarios() -> dict:
-    scenarios = {}
-    for d in _SCENARIO_DIRS:
-        if d.is_dir():
-            for f in sorted(d.iterdir()):
-                if f.suffix == ".json" and f.name != ".gitkeep":
-                    try:
-                        data = json.loads(f.read_text(encoding="utf-8"))
-                        sid = data.get("id", f.stem)
-                        scenarios[sid] = data
-                    except (json.JSONDecodeError, OSError):
-                        pass
-    return scenarios
+    return resources.all_scenarios()
 
 
 @router.get("/scenarios")
@@ -139,15 +100,14 @@ def list_scenarios():
 
 @router.get("/scenarios/{scenario_id}")
 def get_scenario(scenario_id: str):
-    if not _SAFE_ID_RE.match(scenario_id):
+    if not resources.is_safe_id(scenario_id):
         return {"error": "Invalid scenario ID"}
-    for d in _SCENARIO_DIRS:
-        path = d / f"{scenario_id}.json"
-        if path.exists():
-            try:
-                return {"content": path.read_text(encoding="utf-8"), "id": scenario_id}
-            except OSError as e:
-                return {"error": str(e)}
+    path = resources.find_scenario_file(scenario_id)
+    if path is not None:
+        try:
+            return {"content": path.read_text(encoding="utf-8"), "id": scenario_id}
+        except OSError as e:
+            return {"error": str(e)}
     return {"error": f"Scenario '{scenario_id}' not found"}
 
 
