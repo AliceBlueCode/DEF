@@ -290,8 +290,10 @@ def resolve_tts_speaker_id(character_id: str, tts_backend: str, profiles: dict |
 
 def apply_name_reading(text: str, character: dict) -> str:
     """TTS合成前にキャラクター名をカナ読みに置換する(VOICEVOX誤読対策)。
-    フルネーム→名→姓の順で置換。family_name_kana/given_name_kanaがあれば新形式、
-    なければfamily_name/given_nameをカナとして扱う（旧形式との後方互換）。"""
+    フルネーム→名→姓の順で置換。正式な書き方は、family_name/given_name に表記（漢字等）、
+    family_name_kana/given_name_kana に読み（2026-11-10 決定、キャラクターデータ仕様）。
+    *_kana が無いキャラは、family_name/given_name を読みとして扱う（表記がカタカナだけのキャラは
+    *_kana を省略してよい。古い形式ではなく、省略形として今後も読む）。"""
     if not text:
         return text or ""
     reading = character.get("name_reading")
