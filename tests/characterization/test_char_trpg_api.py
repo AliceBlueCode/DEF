@@ -170,7 +170,8 @@ def test_get_rulebook_missing(use_fixture_rulebooks):
 
 
 def test_save_new_rulebook_goes_to_public(rulebook_dirs):
-    """新しいルールブックは、読み込み先の1つ目（public）に保存される。"""
+    """C-002: A章でわざと変える挙動（B-028 で、git で管理していない置き場に保存する）。
+    今は、新しいルールブックは読み込み先の1つ目（public）に保存される。"""
     public, private = rulebook_dirs
     content = json.dumps({"rule_system_name": "x", "dice_system": "1d6",
                           "judgment": {"success_condition": "roll_lte_skill"}})
