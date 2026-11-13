@@ -1,0 +1,11 @@
+{
+  "rulebooks": [
+    {
+      "id": "def_original",
+      "label": "DEF(仮)ルール",
+      "rule_system_name": "DEF(仮)TRPGシステム",
+      "dice_system": "1d100",
+      "private": false
+    }
+  ]
+}

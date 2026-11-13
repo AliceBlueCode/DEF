@@ -1,0 +1,5 @@
+[TRPG Rulebook: DEF(仮)TRPGシステム]
+World: DEFキャラクターが生きる現代〜近未来の世界
+Dice system: 1d100
+Judgment: roll ≤ skill value = success
+Golden rule: キーパー判断はすべてのルールより優先される
