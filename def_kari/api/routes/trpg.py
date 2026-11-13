@@ -27,7 +27,7 @@ def list_rulebooks():
                 "id": bid,
                 "label": b.get("label", bid),
                 "rule_system_name": b.get("rule_system_name", ""),
-                "dice_system": b.get("dice_system", "1d100"),
+                "dice_system": registry.for_rulebook(b).dice_notation(b),
                 "private": False,
             }
             for bid, b in books.items()

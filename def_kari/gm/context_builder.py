@@ -19,67 +19,14 @@ def load_trpg_scenario(scenario_id: str, public_only: bool = False) -> dict:
 
 
 def build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str) -> str:
-    """TRPGモード時のルールブック・シナリオをシステムプロンプト用テキストに展開する。"""
-    _is_ja = user_language == "ja"
-    parts = []
+    """TRPGモード時のルールブック・シナリオをシステムプロンプト用テキストに展開する。
 
-    system_name = rulebook.get("rule_system_name", "")
-    world = rulebook.get("world_setting", "")
-    dice_sys = rulebook.get("dice_system", "1d100")
-    judgment = rulebook.get("judgment", {})
-    golden = rulebook.get("golden_rule", "")
-
-    if _is_ja:
-        parts.append(f"【TRPGルールブック: {system_name}】")
-        if world:
-            parts.append(f"世界観: {world}")
-        parts.append(f"ダイスシステム: {dice_sys}")
-        cond = judgment.get("success_condition", "roll_lte_skill")
-        cond_label = {
-            "roll_lte_skill": "ダイス目 ≤ スキル値で成功",
-            "roll_gte_skill": "ダイス目 ≥ スキル値で成功",
-        }.get(cond, cond)
-        parts.append(f"判定: {cond_label}")
-        if golden:
-            parts.append(f"ゴールデンルール: {golden}")
-    else:
-        parts.append(f"[TRPG Rulebook: {system_name}]")
-        if world:
-            parts.append(f"World: {world}")
-        parts.append(f"Dice system: {dice_sys}")
-        cond = judgment.get("success_condition", "roll_lte_skill")
-        cond_label = {
-            "roll_lte_skill": "roll ≤ skill value = success",
-            "roll_gte_skill": "roll ≥ skill value = success",
-        }.get(cond, cond)
-        parts.append(f"Judgment: {cond_label}")
-        if golden:
-            parts.append(f"Golden rule: {golden}")
-
-    if scenario:
-        title = scenario.get("title", "")
-        synopsis = scenario.get("synopsis", "")
-        current_scene = scenario.get("scenes", [{}])[0] if scenario.get("scenes") else {}
-        scene_title = current_scene.get("title", "")
-        scene_desc = current_scene.get("description", "")
-        if _is_ja:
-            parts.append(f"\n【シナリオ: {title}】")
-            if synopsis:
-                parts.append(f"概要: {synopsis}")
-            if scene_title:
-                parts.append(f"現在の場面: {scene_title}")
-            if scene_desc:
-                parts.append(scene_desc)
-        else:
-            parts.append(f"\n[Scenario: {title}]")
-            if synopsis:
-                parts.append(f"Synopsis: {synopsis}")
-            if scene_title:
-                parts.append(f"Current scene: {scene_title}")
-            if scene_desc:
-                parts.append(scene_desc)
-
-    return "\n".join(parts)
+    中身はルールブックのルールシステムが組み立てる（B-003）。def_original の組み立ては
+    `def_kari/trpg/systems/def_original.py` にある（B-030 で移した）。
+    """
+    from def_kari.trpg import registry as _registry
+    system = _registry.for_rulebook(rulebook) or _registry.get(_registry.DEFAULT_RULE_SYSTEM)
+    return system.build_rule_context(rulebook, scenario, user_language)
 
 
 def build_session_context(

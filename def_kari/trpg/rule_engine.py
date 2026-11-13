@@ -117,7 +117,12 @@ def judge(roll_total: int, skill_value: int, rulebook: dict) -> dict:
 
 
 def _get_dice_sides(rulebook: dict) -> int:
-    notation = rulebook.get("dice_system", "1d100")
+    # dice_system が無いルールブックは、そのルールシステムの既定のダイスの表記を使う（B-030）
+    notation = rulebook.get("dice_system")
+    if not notation:
+        from def_kari.trpg import registry
+        system = registry.for_rulebook(rulebook) or registry.get(registry.DEFAULT_RULE_SYSTEM)
+        notation = system.dice_notation(rulebook)
     m = _DICE_RE.match(notation)
     return int(m.group(2)) if m else 100
 

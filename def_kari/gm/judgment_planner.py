@@ -22,38 +22,13 @@ from def_kari.characters import resolve_char_game_sheet
 from def_kari.llm.backend import LLM_BACKENDS
 from def_kari.models.registry import get_quirks
 
-# DEF 定義スキルのホワイトリスト
-_DEF_ALLOWED_SKILLS: frozenset[str] = frozenset({
-    "察知", "調査", "医学", "博学", "推理", "解読", "記憶", "操縦",
-    "説得", "欺瞞", "威圧", "魅了", "意志力", "共感", "煽動", "危機察知",
-    "回避", "格闘", "射撃", "隠密", "運動", "耐久", "治療", "運転",
-    "社交", "情報収集", "調達", "偽装", "生存", "追跡", "潜入", "製作",
-    "思考", "情動", "身体", "環境",
-})
-
-# CoC / 他システム由来の誤りを DEF スキルに補正するマップ
-_SKILL_CORRECTION_MAP: dict[str, str] = {
-    "目星": "察知", "聞き耳": "察知", "斥候": "察知", "観察": "察知",
-    "心理学": "共感", "精神分析": "共感",
-    "説得力": "説得", "交渉": "説得", "弁論": "説得",
-    "機械修理": "製作", "機械工作": "製作", "電気修理": "製作",
-    "製造": "製作", "工作": "製作",
-    "忍び歩き": "隠密", "潜伏": "隠密",
-    "水泳": "運動", "跳躍": "運動", "登攀": "運動", "登山": "運動",
-    "図書館": "調査", "図書館使用": "調査", "文献調査": "調査",
-    "応急手当": "治療", "医療": "医学", "外科": "医学",
-    "ナビゲート": "操縦", "操縦技術": "操縦", "航法": "操縦",
-    "追跡術": "追跡", "尾行": "追跡",
-    "変装": "偽装",
-    "天文学": "博学", "歴史": "博学", "地質学": "博学", "考古学": "博学",
-    "射撃技術": "射撃", "狙撃": "射撃",
-    "格闘技": "格闘", "武道": "格闘", "近接": "格闘",
-    "ハッキング": "解読", "コンピュータ": "解読", "電子機器": "解読",
-    "回避技術": "回避",
-    "サバイバル": "生存",
-    "隠蔽": "隠密",
-    "威圧力": "威圧",
-}
+# def_original の技能の一覧と補正の表は、def_original の実装にある（B-030）。この名前は、
+# 以前からの呼び出し（tests/characterization を含む）のために残している。
+from def_kari.trpg.systems.def_original import (  # noqa: E402
+    ALLOWED_SKILLS as _DEF_ALLOWED_SKILLS,
+    SKILL_CORRECTION_MAP as _SKILL_CORRECTION_MAP,
+)
+from def_kari.trpg import registry as _registry  # noqa: E402
 
 _DAMAGE_ON_MAP = {"失敗": "failure", "ファンブル": "fumble", "常時": "any"}
 
@@ -103,6 +78,8 @@ def plan_judgments(
     profiles: dict,
     scenario: dict | None,
     user_lang: str = "ja",
+    rule_system=None,
+    rulebook: dict | None = None,
 ) -> list[dict]:
     """判定要否を決定し、検証済みの`judgments`リストを返す。
 
@@ -119,6 +96,13 @@ def plan_judgments(
         scenario: シナリオdict(current_scene_index参照用、無ければNone)
         user_lang: "ja" | "en"
     """
+    # 判定の要否を LLM に決めさせるのは def_original の仕組み。それを持たないルールシステムの卓では
+    # 何もしない（B-031。判定はそのルールシステムが自分で決める）。指定が無ければ既定のルールシステム。
+    system = rule_system if rule_system is not None else _registry.get(_registry.DEFAULT_RULE_SYSTEM)
+    if not callable(getattr(system, "judgment_system_prompt", None)):
+        return []
+    rulebook = rulebook or {}
+    corrections = getattr(system, "skill_corrections", {})
     is_ja = user_lang == "ja"
     rev_map = {v: k for k, v in name_map.items()}
 
@@ -152,18 +136,19 @@ def plan_judgments(
 
     def _valid_stats_for_char(cid: str) -> frozenset[str]:
         sheet_id = char_game_sheets.get(cid, "")
+        allowed = system.allowed_skills(rulebook)
         if not sheet_id:
-            return _DEF_ALLOWED_SKILLS
+            return allowed
         sheet = resolve_char_game_sheet(cid, sheet_id, profiles, session)
         char_skills = frozenset(sheet.get("skills", {}).keys())
         char_stats = frozenset(sheet.get("stats", {}).keys())
-        return _DEF_ALLOWED_SKILLS | char_skills | char_stats
+        return allowed | char_skills | char_stats
 
     def _normalize_stat(stat: str, cid: str) -> str | None:
         valid = _valid_stats_for_char(cid)
         if stat in valid:
             return stat
-        corrected = _SKILL_CORRECTION_MAP.get(stat)
+        corrected = corrections.get(stat)
         if corrected and corrected in valid:
             return corrected
         return None
@@ -215,7 +200,7 @@ def plan_judgments(
                     extra.append(_make_entry(cid, cname, j["stat"], j.get("damage_on", "")))
         return list(judgments) + extra
 
-    pairs = _decide_check_pairs(backend_id, model_name, messages, name_map, is_ja)
+    pairs = _decide_check_pairs(backend_id, model_name, messages, name_map, is_ja, system=system)
 
     judgments = _resolve_judgments_from_pairs(pairs)
 
@@ -241,33 +226,19 @@ def _decide_check_pairs(
     messages: list[dict],
     name_map: dict,
     is_ja: bool,
+    system=None,
 ) -> list[tuple[str, str]]:
     """(character_name, skill)ペアの生の一覧を返す(バリデーション前)。
     tool-calling対応モデルならtool-calling経由、非対応ならJSON-modeプロンプト
     経由で判定する。呼び出し・解析いずれかで失敗したら空リスト(判定無し扱い、
     fail-open——ナレーション自体は判定無しでも継続できるため)。"""
+    system = system if system is not None else _registry.get(_registry.DEFAULT_RULE_SYSTEM)
     backend = LLM_BACKENDS.get(backend_id, {})
     char_names_str = ", ".join(name_map.values())
 
     if backend.get("chat_with_tools") and get_quirks(model_name).get("tool_calling_capable"):
         try:
-            _tool_sys = (
-                "あなたはTRPGの判定要否決定システムです。直近の会話を読み、"
-                "探索者がスキルを使った・使うべき場面があればpropose_checksを呼び出してください。"
-                f"\n探索者（このリストの名前のみ使用）：{char_names_str}"
-                "\n使用できるスキル名（これ以外は絶対禁止）："
-                "察知・調査・医学・博学・推理・解読・記憶・操縦・説得・欺瞞・威圧・魅了・意志力・共感・煽動・危機察知・"
-                "回避・格闘・射撃・隠密・運動・耐久・治療・運転・社交・情報収集・調達・偽装・生存・追跡・潜入・製作、"
-                "またはステータス名（思考・情動・身体・環境）"
-            ) if is_ja else (
-                "You are a TRPG judgment-necessity decider. Read the recent conversation and call "
-                "propose_checks if any investigator's action calls for a skill check right now."
-                f"\nInvestigators (use only these names): {char_names_str}"
-                "\nOnly these exact skill names allowed: "
-                "察知,調査,医学,博学,推理,解読,記憶,操縦,説得,欺瞞,威圧,魅了,意志力,共感,煽動,危機察知,"
-                "回避,格闘,射撃,隠密,運動,耐久,治療,運転,社交,情報収集,調達,偽装,生存,追跡,潜入,製作,"
-                "or stat names: 思考,情動,身体,環境"
-            )
+            _tool_sys = system.judgment_system_prompt("tools", is_ja, char_names_str)
             result = backend["chat_with_tools"](
                 [{"role": "system", "content": _tool_sys}, *messages],
                 model_name, [_PROPOSE_CHECKS_TOOL], options={"num_predict": 200},
@@ -293,35 +264,7 @@ def _decide_check_pairs(
             return []
 
     try:
-        sys_prompt = (
-            "あなたはTRPGの判定要否決定システムです。直近の会話を読み、"
-            "探索者がスキルを使った・使うべき場面があれば対象キャラ名とスキル名をJSONで返してください。"
-            "「探索者たち」のようにまとめて書かれている場合は、場面に最も関わっているキャラを1〜2名選んでください。"
-            f"\n探索者（このリストの名前のみ使用）：{char_names_str}"
-            "\n使用できるスキル名（これ以外は絶対禁止・機械工作などCoCの技能名も禁止）："
-            "察知・調査・医学・博学・推理・解読・記憶・操縦・説得・欺瞞・威圧・魅了・意志力・共感・煽動・危機察知・"
-            "回避・格闘・射撃・隠密・運動・耐久・治療・運転・社交・情報収集・調達・偽装・生存・追跡・潜入・製作、"
-            "またはステータス名（思考・情動・身体・環境）"
-            "\nスキル目安：人の言動・感情を読む→共感、物や場所を観察する→察知、危険や気配を感じる→危機察知、説得・交渉→説得、機器操作→操縦、修理・製作→製作、走る・跳ぶ→運動"
-            "\nなければ {\"judgments\":[]} を返してください。"
-            "\n必ずJSONのみ返してください（コードブロック不要）。"
-            "\n形式：{\"judgments\":[{\"character\":\"キャラ名\",\"skill\":\"スキル名\"}]}"
-        ) if is_ja else (
-            "You are a TRPG judgment-necessity decider. Read the recent conversation and return JSON listing "
-            "any skill checks that should occur right now. "
-            "If 'investigators' is used collectively, pick 1-2 most relevant characters."
-            f"\nInvestigators (use only these names): {char_names_str}"
-            "\nOnly these exact skill names allowed (no inventing names like 機械工作 etc.): "
-            "察知,調査,医学,博学,推理,解読,記憶,操縦,説得,欺瞞,威圧,魅了,意志力,共感,煽動,危機察知,"
-            "回避,格闘,射撃,隠密,運動,耐久,治療,運転,社交,情報収集,調達,偽装,生存,追跡,潜入,製作,"
-            "or stat names: 思考,情動,身体,環境"
-            "\nSkill guide: reading emotions/people→共感, observing objects/places→察知, "
-            "sensing danger/presence→危機察知, persuading→説得, operating machinery→操縦, crafting/repairing→製作, "
-            "running/jumping→運動, avoiding danger→回避"
-            "\nIf none needed, return {\"judgments\":[]}."
-            "\nReturn JSON only, no code blocks."
-            "\nFormat: {\"judgments\":[{\"character\":\"name\",\"skill\":\"skill\"}]}"
-        )
+        sys_prompt = system.judgment_system_prompt("json", is_ja, char_names_str)
         chat_fn = LLM_BACKENDS[backend_id]["chat"]
         raw = chat_fn(
             [{"role": "system", "content": sys_prompt}, *messages],
