@@ -6,8 +6,8 @@ import os
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from def_kari.trpg import resources
-from def_kari.trpg.rule_engine import roll_dice, judge, opposed_check, validate_rulebook
+from def_kari.trpg import registry, resources
+from def_kari.trpg.rule_engine import roll_dice, opposed_check
 
 router = APIRouter()
 
@@ -61,7 +61,11 @@ def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
         data = json.loads(req.content)
     except json.JSONDecodeError as e:
         return {"error": f"Invalid JSON: {e}"}
-    errors = validate_rulebook(data)
+    # 検証はルールブックのルールシステムに任せる（B-003）。知らないルールシステムは保存しない（B-002）。
+    system = registry.for_rulebook(data) if isinstance(data, dict) else registry.get(registry.DEFAULT_RULE_SYSTEM)
+    if system is None:
+        return {"error": "Validation failed", "details": [f"unknown rule_system: {registry.rule_system_of(data)!r}"]}
+    errors = system.validate_rulebook(data)
     if errors:
         return {"error": "Validation failed", "details": errors}
 
@@ -142,22 +146,12 @@ def compute_dice_judgment(
     if skill_value > 0 and rulebook_id:
         books = _load_rulebooks()
         rulebook = books.get(rulebook_id, {})
-        if rulebook:
-            if is_skill:
-                # 技能値配分済みの場合は roll_lte_skill として扱う
-                from copy import deepcopy
-                rb_override = deepcopy(rulebook)
-                rb_override.setdefault("judgment", {})["success_condition"] = "roll_lte_skill"
-                judgment = judge(result["total"], skill_value, rb_override)
-            elif is_stat:
-                # 能力値生判定: untrained_success_condition（例: roll_lte_stat_x5）を使用
-                from copy import deepcopy
-                rb_override = deepcopy(rulebook)
-                uc = rulebook.get("judgment", {}).get("untrained_success_condition", "roll_lte_stat_x5")
-                rb_override.setdefault("judgment", {})["success_condition"] = uc
-                judgment = judge(result["total"], skill_value, rb_override)
-            else:
-                judgment = judge(result["total"], skill_value, rulebook)
+        system = registry.for_rulebook(rulebook) if rulebook else None
+        if system is not None:
+            # 判定はルールブックのルールシステムに任せる（B-003）。def_original は、技能値を直接
+            # 使う判定（is_skill）と能力値の生の判定（is_stat）で、判定の型を差し替える。
+            judgment = system.general_check(result["total"], skill_value, rulebook,
+                                            is_skill=is_skill, is_stat=is_stat)
 
     return {"result": result, "judgment": judgment}
 

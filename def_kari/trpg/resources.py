@@ -17,8 +17,13 @@
 """
 
 import json
+import logging
 import re
 from pathlib import Path
+
+from def_kari.trpg import registry
+
+_log = logging.getLogger("def.trpg")
 
 _BASE = Path(__file__).parent.parent.parent
 
@@ -64,7 +69,13 @@ def load_resource(resource_id: str, dirs: list[Path]) -> dict:
 
 
 def load_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
-    return load_resource(rulebook_id, PUBLIC_RULEBOOK_DIRS if public_only else RULEBOOK_DIRS)
+    """ルールブックを読む。登録されていない `rule_system` のものは読まない（空の dict。B-002）。"""
+    data = load_resource(rulebook_id, PUBLIC_RULEBOOK_DIRS if public_only else RULEBOOK_DIRS)
+    if data and not registry.is_known(data):
+        _log.warning("[trpg] rulebook %s uses an unknown rule_system %r; not loaded",
+                     rulebook_id, registry.rule_system_of(data))
+        return {}
+    return data
 
 
 def load_scenario(scenario_id: str, public_only: bool = False) -> dict:
@@ -87,7 +98,8 @@ def _load_all(dirs: list[Path]) -> dict:
 
 
 def all_rulebooks() -> dict:
-    return _load_all(RULEBOOK_DIRS)
+    """一覧に出すルールブック。登録されていない `rule_system` のものは除く（B-002）。"""
+    return {k: v for k, v in _load_all(RULEBOOK_DIRS).items() if registry.is_known(v)}
 
 
 def all_scenarios() -> dict:
