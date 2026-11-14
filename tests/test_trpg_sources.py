@@ -91,13 +91,17 @@ def test_missing_repo_folder_is_ignored(local, no_plugins, monkeypatch, tmp_path
     assert t.list_rulebooks() == {"rulebooks": []}
 
 
-def test_public_only_does_not_read_external_yet(local, no_plugins, monkeypatch, tmp_path):
-    """オンラインの卓で外部のまとまりを読むのは、manifest の online_sessions を確かめる手順4b から。"""
-    repo = tmp_path / "single"
-    _w(repo / "manifest.json", {"online_sessions": True})
-    _w(repo / "rulebooks" / "rb1.json", {"label": "from repo"})
-    _repos(monkeypatch, repo)
-    assert resources.load_rulebook("rb1", public_only=True) == {}
+def test_public_only_reads_only_external_sources_that_allow_online(local, no_plugins, monkeypatch, tmp_path):
+    """オンラインの卓・公開のポートでは、manifest で online_sessions をはっきり許した外部のまとまりだけを
+    読む（B-013）。manifest の無いまとまりは読まない。"""
+    yes, no = tmp_path / "yes", tmp_path / "no"
+    _w(yes / "manifest.json", {"online_sessions": True})
+    _w(yes / "rulebooks" / "rb_yes.json", {"label": "yes"})
+    _w(no / "rulebooks" / "rb_no.json", {"label": "no"})
+    _repos(monkeypatch, yes, no)
+    assert resources.load_rulebook("rb_yes", public_only=True) == {"label": "yes"}
+    assert resources.load_rulebook("rb_no", public_only=True) == {}
+    assert resources.load_rulebook("rb_no") == {"label": "no"}
 
 
 def test_id_is_the_file_name(local, no_plugins, caplog):
@@ -202,3 +206,70 @@ def test_plugin_manifest_can_allow(grid_plugin):
     _w(grid_plugin / "manifest.json", {"external_services_allowed": True, "online_sessions": False})
     got = resources.table_permissions("grid_book")
     assert (got["external_services_allowed"], got["online_sessions"]) == (True, False)
+
+
+# ── オンラインの卓（B-022）: 作成・ロビーの設定・参加で確かめる ───────────────
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from def_kari.api.main import app  # noqa: E402
+from def_kari.api.routes.session_state import _sessions  # noqa: E402
+
+
+@pytest.fixture
+def online_books(local, no_plugins, monkeypatch, tmp_path):
+    """オンラインを許すルールブック（ok_book）と、許さないルールブック（closed_book）。"""
+    ok, closed = tmp_path / "ok", tmp_path / "closed"
+    _w(ok / "manifest.json", {"online_sessions": True})
+    _w(ok / "rulebooks" / "ok_book.json", {"rule_system_name": "x", "dice_system": "1d100",
+                                            "judgment": {"success_condition": "roll_lte_skill"}})
+    _w(closed / "manifest.json", {"online_sessions": False})
+    _w(closed / "rulebooks" / "closed_book.json", {"rule_system_name": "y", "dice_system": "1d100",
+                                                    "judgment": {"success_condition": "roll_lte_skill"}})
+    _repos(monkeypatch, ok, closed)
+
+
+def test_online_refusal(online_books):
+    assert resources.online_refusal("ok_book") is None
+    assert "cannot be used in online sessions" in resources.online_refusal("closed_book")
+    assert resources.online_refusal("", "") is None
+
+
+def _start(client, rulebook):
+    return client.post("/api/session/start", json={
+        "character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": rulebook})
+
+
+def test_online_start_is_refused_for_a_closed_rulebook(online_books):
+    with TestClient(app) as client:
+        r = _start(client, "closed_book")
+        assert r.status_code == 403
+        ok = _start(client, "ok_book")
+        assert ok.status_code == 200
+        _sessions.pop(ok.json()["session_id"], None)
+
+
+def test_lobby_settings_cannot_switch_to_a_closed_rulebook(online_books):
+    with TestClient(app) as client:
+        body = _start(client, "ok_book").json()
+        sid, host = body["session_id"], body["host_token"]
+        try:
+            r = client.patch(f"/api/session/{sid}/lobby/settings", json={"trpg_rulebook": "closed_book", "topic": "t"},
+                             headers={"Authorization": f"Bearer {host}"})
+            assert r.status_code == 403
+            assert _sessions[sid]["trpg_rulebook"] == "ok_book"
+            assert _sessions[sid].get("topic", "") != "t"  # 途中まで変わった状態を残さない
+        finally:
+            _sessions.pop(sid, None)
+
+
+def test_join_is_refused_when_the_rulebook_no_longer_allows_online(online_books, tmp_path):
+    with TestClient(app) as client:
+        body = _start(client, "ok_book").json()
+        sid, code = body["session_id"], body["invite_code"]
+        try:
+            _w(tmp_path / "ok" / "manifest.json", {"online_sessions": False})  # 作った後に manifest が変わった
+            r = client.post("/api/session/join", json={"invite_code": code})
+            assert r.status_code == 403
+        finally:
+            _sessions.pop(sid, None)

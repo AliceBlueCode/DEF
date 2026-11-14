@@ -163,9 +163,16 @@ def _local_sources(public_only: bool) -> list[Source]:
 
 
 def sources(public_only: bool = False) -> list[Source]:
-    """探す順のまとまり。`public_only` は今は `data/public` だけ（B-013 で広げる）。"""
+    """探す順のまとまり。
+
+    `public_only`（オンラインの卓・公開のポートからの読み込み）では、manifest で `online_sessions` を
+    はっきり許した外部のまとまりと、DEF に同梱の `data/public` だけを読む（B-013）。manifest の無い
+    外部のまとまりは読まない。卓として使ってよいかは、さらに `online_refusal()` で確かめる（B-022）。
+    """
     if public_only:
-        return _local_sources(True)
+        allowed = [s for s in _external_sources()
+                   if not s.manifest_error and (s.manifest or {}).get("online_sessions") is True]
+        return allowed + _local_sources(True)
     return _external_sources() + _local_sources(False)
 
 
@@ -308,6 +315,17 @@ def _allowed(source: Source | None, key: str, rule_system: str) -> bool:
     if manifest is not None and key in manifest:
         return bool(manifest[key])
     return rule_system == registry.DEFAULT_RULE_SYSTEM
+
+
+def online_refusal(rulebook_id: str, scenario_id: str = "") -> str | None:
+    """このルールブック・シナリオの卓をオンラインで開けないとき、その理由（B-022）。開けるなら None。"""
+    if not rulebook_id and not scenario_id:
+        return None
+    perms = table_permissions(rulebook_id, scenario_id)
+    if perms["online_sessions"]:
+        return None
+    return (f"rulebook {rulebook_id!r}" + (f" / scenario {scenario_id!r}" if scenario_id else "")
+            + " cannot be used in online sessions (not allowed by its manifest)")
 
 
 def table_permissions(rulebook_id: str, scenario_id: str = "") -> dict:

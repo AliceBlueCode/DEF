@@ -204,6 +204,12 @@ def start_session(req: SessionStartRequest, request: Request):
         for cid, bid in req.char_backends.items()
         if cid in req.character_ids and bid in LLM_BACKENDS
     }
+    # オンラインの卓では、manifest がオンラインを許すルールブック・シナリオだけ使える（B-022）
+    if req.online_mode and req.trpg_mode:
+        from def_kari.trpg import resources as _trpg_resources
+        _refusal = _trpg_resources.online_refusal(req.trpg_rulebook, req.trpg_scenario)
+        if _refusal:
+            raise HTTPException(403, _refusal)
     _skill_pool_init = 0
     if req.trpg_mode and req.trpg_rulebook:
         _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req)
@@ -400,6 +406,14 @@ def join_session(req: JoinRequest, request: Request):
         raise HTTPException(409, "Invite code already used")
 
     session_rating = invite_info.get("rating", "SFW")
+
+    # オンラインの卓のルールブック・シナリオが、今もオンラインを許しているか（B-022）。自動保存から
+    # 戻った卓や、作った後に manifest が変わった場合に備えて、参加のたびに確かめる。
+    if sess.get("online_mode") and (sess.get("trpg_rulebook") or sess.get("trpg_scenario")):
+        from def_kari.trpg import resources as _trpg_resources
+        _refusal = _trpg_resources.online_refusal(sess.get("trpg_rulebook", ""), sess.get("trpg_scenario", ""))
+        if _refusal:
+            raise HTTPException(403, _refusal)
 
     char_id = ""
     role = "observer"
@@ -891,6 +905,15 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, request: Requ
     if not sess.get("lobby_active"):
         raise HTTPException(409, "Session already started")
     _public_req = _is_public_request(request)  # 8.28対策: /startと同じ理由
+    # オンラインの卓で、オンラインを許さないルールブック・シナリオに変えさせない（B-022）。
+    # 何も変える前に確かめる（途中まで変わった状態を残さない）。
+    if sess.get("online_mode") and (req.trpg_rulebook is not None or req.trpg_scenario is not None):
+        from def_kari.trpg import resources as _trpg_resources
+        _new_rb = req.trpg_rulebook if req.trpg_rulebook is not None else sess.get("trpg_rulebook", "")
+        _new_sc = req.trpg_scenario if req.trpg_scenario is not None else sess.get("trpg_scenario", "")
+        _refusal = _trpg_resources.online_refusal(_new_rb, _new_sc)
+        if _refusal:
+            raise HTTPException(403, _refusal)
     if req.topic is not None:
         sess["topic"] = req.topic
     if req.rule_set is not None:
