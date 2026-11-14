@@ -24,6 +24,9 @@ def _set_dirs(monkeypatch, public: Path, private: Path) -> None:
     """
     from def_kari.trpg import resources
 
+    # 外部の置き場所（プラグインのデータ、TRPG_RULEBOOK_REPO_PATHS。B-011）は見ない。開発機の .env の
+    # 設定で、固定したい挙動が変わらないようにするため（2026-11-14、手順4a で足した）。
+    monkeypatch.setattr(resources, "_external_sources", lambda: [])
     monkeypatch.setattr(resources, "RULEBOOK_DIRS", [public / "trpg_rules", private / "trpg_rules"])
     monkeypatch.setattr(resources, "PUBLIC_RULEBOOK_DIRS", [public / "trpg_rules"])
     monkeypatch.setattr(resources, "SCENARIO_DIRS", [public / "trpg_scenarios", private / "trpg_scenarios"])

@@ -69,6 +69,10 @@ def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
     if errors:
         return {"error": "Validation failed", "details": errors}
 
+    # 外部のリポジトリやプラグインのルールブックは、ここから書き換えない（そのリポジトリで直す）
+    source = resources.rulebook_source(rulebook_id)
+    if source is not None and source.kind != "local":
+        return {"error": f"Rulebook '{rulebook_id}' comes from {source.label}; edit it there"}
     target = resources.find_rulebook_file(rulebook_id)
     if target is None:
         target = resources.new_rulebook_file(rulebook_id)

@@ -29,11 +29,13 @@ def test_same_id_session_loader_prefers_public(rulebook_dirs):
 
 
 def test_same_id_list_prefers_private(rulebook_dirs):
-    """C-002: A章でわざと変える挙動（B-011）。一覧は後から読んだ private で上書きされる。"""
+    """C-002: A章でわざと変えた挙動（B-011、2026-11-14）。以前の一覧は、後から読んだ private で
+    上書きしていて、ID を指定した読み込み（public が勝つ）と逆だった。今は一覧も先に見つかった
+    public を使い、重なりを警告に残す。"""
     public, private = rulebook_dirs
     _write(public / "trpg_rules", "dup", {"label": "public"})
     _write(private / "trpg_rules", "dup", {"label": "private"})
-    assert [b["label"] for b in t.list_rulebooks()["rulebooks"]] == ["private"]
+    assert [b["label"] for b in t.list_rulebooks()["rulebooks"]] == ["public"]
 
 
 def test_public_only_ignores_private(rulebook_dirs):
@@ -55,12 +57,13 @@ def test_broken_json_falls_through_to_next_dir(rulebook_dirs):
 
 
 def test_session_loader_uses_file_name_list_uses_id_field(rulebook_dirs):
-    """C-002: A章でわざと変える挙動（B-029 で、一覧もファイル名を ID にする）。"""
+    """C-002: A章でわざと変えた挙動（B-029、2026-11-14）。以前の一覧は JSON の `id` を ID にしていて、
+    一覧に出た ID では取得できなかった。今は一覧もファイル名を ID にし、食い違いは警告に残す。"""
     public, _ = rulebook_dirs
     _write(public / "trpg_rules", "foo", {"id": "bar"})
     assert cb.load_trpg_rulebook("foo") == {"id": "bar"}
     assert cb.load_trpg_rulebook("bar") == {}
-    assert [b["id"] for b in t.list_rulebooks()["rulebooks"]] == ["bar"]
+    assert [b["id"] for b in t.list_rulebooks()["rulebooks"]] == ["foo"]
 
 
 @pytest.mark.parametrize("bad", ["", "../x", "a/b", "a\\b", "C:/x", "/etc/passwd", "x.json", "a b"])
