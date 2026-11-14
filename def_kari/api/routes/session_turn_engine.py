@@ -1099,10 +1099,19 @@ def next_turn(req: SessionNextRequest):
     if early_result is not None:
         return early_result
 
-    session_ctx, user_text, _is_dead = _build_turn_prompt_context(
-        session, current_char_id, char, initiative, name_map, profiles,
-        speaker_name, topic, rules, action_count, other_names, _user_lang,
-    )
+    from def_kari.trpg import registry as _rs_registry
+    try:
+        session_ctx, user_text, _is_dead = _build_turn_prompt_context(
+            session, current_char_id, char, initiative, name_map, profiles,
+            speaker_name, topic, rules, action_count, other_names, _user_lang,
+        )
+    except _rs_registry.RuleSystemError as e:
+        # ルールシステム（プラグイン）の失敗は、卓を止めて知らせる（B-027）
+        _pause_for_plugin_error(session, {"capability": "rule", "method": "build_rule_context", "error": str(e)})
+        return {"error": str(e), "character_id": current_char_id,
+                "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})",
+                "emotion": "neutral", "round": session["round"], "turn": turn,
+                "counters": dict(session.get("counters", {}))}
 
     early_result, text, emotion, tags, image_prompt_en = _generate_ai_turn_reply(
         session, current_char_id, char, user_text, history, model, backend_id,

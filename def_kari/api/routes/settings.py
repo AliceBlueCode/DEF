@@ -531,6 +531,9 @@ def add_compatible_backend(req: CompatibleBackendRequest):
     existing = {b["name"] for b in list_backends()}
     if req.name in existing:
         return {"error": f"'{req.name}' は既に存在します"}
+    from def_kari.compatible_backends_store import reserved_names
+    if req.name in reserved_names():
+        return {"error": f"'{req.name}' は本体のバックエンドと同じ名前なので使えません"}
     save_backend(req.name, req.base_url, req.model, req.extra_headers,
                  req.capabilities, req.label, req.api_key, req.local)
     _reload_compatible_backends()

@@ -40,6 +40,36 @@ def _save_keys(keys: dict) -> None:
     _KEY_PATH.write_text(json.dumps(keys, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# 本体のバックエンドの名前。互換バックエンドにはこの名前を付けられない（付けると本体の登録を上書きし、
+# 印が無くても手元とみなされていた。実装レビュー2の🔴2）。外部 API のサービス（data/llm_services.json）も含む。
+_BUILTIN_NAMES = frozenset({
+    "textgen_webui", "ollama",                                                 # LLM
+    "voicevox", "irodori", "gemini_tts", "kokoro", "openai_tts", "grok_tts",   # TTS
+    "a1111", "civitai", "huggingface", "comfyui", "openai",                    # T2I
+})
+
+
+def reserved_names() -> frozenset:
+    names = set(_BUILTIN_NAMES)
+    services = _DATA_DIR / "llm_services.json"
+    try:
+        data = json.loads(services.read_text(encoding="utf-8")) if services.exists() else {}
+        items = data.get("services", data) if isinstance(data, dict) else data
+        if isinstance(items, dict):
+            names.update(items.keys())
+        elif isinstance(items, list):
+            names.update(s.get("id", "") for s in items if isinstance(s, dict))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    names.discard("")
+    return frozenset(names)
+
+
+def has_backend(name: str) -> bool:
+    """互換バックエンドの定義に `name` があるか。"""
+    return name in _load_defs()
+
+
 def list_backends() -> list[dict]:
     """一覧を返す。APIキーはマスク済み。"""
     defs = _load_defs()
@@ -109,11 +139,20 @@ def is_local_backend(name: str) -> bool:
 
 
 def all_backends_with_keys() -> list[dict]:
-    """backend.py の動的登録用。APIキーを含む全エントリを返す。"""
+    """backend.py の動的登録用。APIキーを含む全エントリを返す。
+
+    本体のバックエンドと同じ名前の互換バックエンドは、登録させない（警告を出して飛ばす）。以前に保存された
+    ものが本体の登録を上書きしないようにするため。登録の6か所（起動・設定の変更の、LLM・TTS・T2I）は、
+    すべてこの関数を通る。
+    """
     defs = _load_defs()
     keys = _load_keys()
+    reserved = reserved_names()
     result = []
     for name, entry in defs.items():
+        if name in reserved:
+            print(f"[compatible] {name!r} has the same name as a built-in backend; not registered")
+            continue
         result.append({
             "name": name,
             "base_url": entry.get("base_url", ""),

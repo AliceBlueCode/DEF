@@ -135,7 +135,7 @@ class DefOriginal:
         """ダメージ表を振る（`POST /api/trpg/damage`。以前は API に直書きされていた。B-030）。
 
         ダメージ表は `damage_mechanics.damage_table.entries`（出目 → 能力値と増減）。項目に
-        `result`（例: 「即死」）があれば、その出目は致命の結果で、`"result": "fatal"` と、表示用の
+        `result`（例: 「即死」）があり `stat` が無ければ、その出目は致命の結果で、`"result": "fatal"` と、表示用の
         言葉 `label`（ルールブックのデータの `result` の値）を返す。画面はこの言葉をそのまま出す。
         """
         result = rule_engine.roll_dice(self.dice_notation(rulebook))
@@ -144,7 +144,9 @@ class DefOriginal:
         entry = next((e for e in entries if e.get("roll") == roll_val), None)
         if not entry:
             return {"error": "Entry not found", "roll": roll_val}
-        if entry.get("result"):
+        # 致命の結果は「result があり stat の無い項目」（ルールブックの書き方の決まり。実装レビュー2の🟢）。
+        # result があっても stat のある項目は、能力値の増減として扱う
+        if entry.get("result") and not entry.get("stat"):
             return {
                 "roll": roll_val,
                 "result": "fatal",

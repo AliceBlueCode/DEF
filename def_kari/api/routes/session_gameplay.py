@@ -181,6 +181,10 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
         )
         if result.get("error"):
             _log.error("[keeper] error: %s", result["error"])
+            if result.get("rule_system_error"):
+                # ルールシステム（プラグイン）の失敗は、卓を止めて知らせる（B-027）
+                from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+                _pause_for_plugin_error(session, {"capability": "rule", "method": "gm", "error": result["error"]})
             return {"error": result["error"]}
         _judgments = result.get("judgments", [])
         _log.info("[keeper] Round %d | %d chars | %d judgments | text: %.60s",
@@ -302,6 +306,12 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
                 _pause_for_plugin_error(session, {"capability": "rule", "method": "general_check", "error": _unavailable})
                 return {"error": _unavailable}
         _rb = _trpg_resources.load_rulebook(rulebook_id) if rulebook_id else {}
+        if session.get("trpg_rulebook") and not _rb:
+            # 卓のルールブックが読めない（消えた・壊れた）なら、既定の表記で黙って振らず、止めて知らせる
+            _why = f"rulebook {rulebook_id!r} of this table cannot be read"
+            from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+            _pause_for_plugin_error(session, {"capability": "rule", "method": "dice_notation", "error": _why})
+            return {"error": _why}
         if _rb and _system is None:
             _system = _trpg_registry.for_rulebook(_rb)
         try:

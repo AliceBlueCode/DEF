@@ -331,33 +331,48 @@ def _allowed(source: Source | None, key: str, rule_system: str) -> bool:
     return rule_system == registry.DEFAULT_RULE_SYSTEM
 
 
-def online_refusal(rulebook_id: str, scenario_id: str = "") -> str | None:
+def online_refusal(rulebook_id: str, scenario_id: str = "", rule_system: str | None = None) -> str | None:
     """このルールブック・シナリオの卓をオンラインで開けないとき、その理由（B-022）。開けるなら None。"""
     if not rulebook_id and not scenario_id:
         return None
-    perms = table_permissions(rulebook_id, scenario_id)
+    perms = table_permissions(rulebook_id, scenario_id, rule_system)
+    if perms["missing"]:
+        return "cannot use in online sessions: " + "; ".join(perms["missing"])
     if perms["online_sessions"]:
         return None
     return (f"rulebook {rulebook_id!r}" + (f" / scenario {scenario_id!r}" if scenario_id else "")
             + " cannot be used in online sessions (not allowed by its manifest)")
 
 
-def table_permissions(rulebook_id: str, scenario_id: str = "") -> dict:
+def table_permissions(rulebook_id: str, scenario_id: str = "", rule_system: str | None = None) -> dict:
     """卓が外部のサービスに送ってよいか・オンラインで使ってよいか（B-020）。
 
     卓が使うもの（ルールブック、シナリオ、そのルールブックのルールシステムを登録したプラグイン）の
     manifest の、すべてが許すときだけ許す。クレジット（B-023）も集めて返す。
+
+    - `rule_system` には、卓を作ったときに固定した値（`trpg_rule_system`）を渡す。渡せばルールブックの
+      中身より優先し、ルールブックが読めなくてもプラグインの manifest を見る（B-002）。
+    - 指定したルールブック・シナリオが読めない（無い、壊れている）ときは、許さない（閉じる側。B-021。
+      実装レビュー2の🔴1。以前は「ルールブックの無い卓」と同じに扱い、送ってよいと判断していた）。
+      理由は `missing` に入る。
     """
     rulebook, _, rb_source = _locate(rulebook_id, "rules") if rulebook_id else ({}, None, None)
-    rule_system = registry.rule_system_of(rulebook)
+    missing = []
+    if rulebook_id and rb_source is None:
+        missing.append(f"rulebook {rulebook_id!r} cannot be read")
+    rule_system = rule_system or registry.rule_system_of(rulebook)
     involved: list[Source | None] = [rb_source]
     if scenario_id:
-        involved.append(_locate(scenario_id, "scenarios")[2])
+        sc_source = _locate(scenario_id, "scenarios")[2]
+        if sc_source is None:
+            missing.append(f"scenario {scenario_id!r} cannot be read")
+        involved.append(sc_source)
     if rule_system != registry.DEFAULT_RULE_SYSTEM:
         plugin_src = next((s for s in _external_sources()
                            if s.kind == "plugin" and rule_system in s.plugin_rule_systems), None)
         involved.append(plugin_src)
-    result = {key: all(_allowed(s, key, rule_system) for s in involved) for key in _PERMISSION_KEYS}
+    result = {key: (not missing) and all(_allowed(s, key, rule_system) for s in involved) for key in _PERMISSION_KEYS}
+    result["missing"] = missing
     credits = []
     for s in involved:
         c = (s.manifest or {}).get("credit", "") if s is not None else ""

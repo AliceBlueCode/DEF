@@ -123,15 +123,19 @@ class RuleSystemError(ValueError):
 
 # 本体の拡張: 片方のルールにしか無い、口ではない機能（B-004）。名前で探すのは、ここに書いたものだけ。
 #   damage_roll(rulebook) -> dict: ダメージ表を振る（def_original の `/api/trpg/damage`）
-RULE_EXTENSIONS = frozenset({"damage_roll"})
+#   judgment_system_prompt(route, is_ja, names) -> str: 判定の要否を LLM に決めさせるプロンプト（judgment_planner）
+#   skill_corrections: dict: 他のシステムの技能名を直す表（judgment_planner。関数ではなく値）
+RULE_EXTENSIONS = frozenset({"damage_roll", "judgment_system_prompt", "skill_corrections"})
 
 
 def extension(system: "RuleSystem | None", name: str):
     """本体の拡張 `name` の関数。持っていなければ None。"""
     if name not in RULE_EXTENSIONS:
         raise ValueError(f"unknown rule extension: {name!r}")
-    fn = getattr(system, name, None) if system is not None else None
-    return fn if callable(fn) else None
+    value = getattr(system, name, None) if system is not None else None
+    if name == "skill_corrections":
+        return value if isinstance(value, dict) else None
+    return value if callable(value) else None
 
 
 def call_rule(system: "RuleSystem", method: str, *args, **kwargs):

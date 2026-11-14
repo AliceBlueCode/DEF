@@ -99,10 +99,10 @@ def plan_judgments(
     # 判定の要否を LLM に決めさせるのは def_original の仕組み。それを持たないルールシステムの卓では
     # 何もしない（B-031。判定はそのルールシステムが自分で決める）。指定が無ければ既定のルールシステム。
     system = rule_system if rule_system is not None else _registry.get(_registry.DEFAULT_RULE_SYSTEM)
-    if not callable(getattr(system, "judgment_system_prompt", None)):
+    if _registry.extension(system, "judgment_system_prompt") is None:
         return []
     rulebook = rulebook or {}
-    corrections = getattr(system, "skill_corrections", {})
+    corrections = _registry.extension(system, "skill_corrections") or {}
     is_ja = user_lang == "ja"
     rev_map = {v: k for k, v in name_map.items()}
 
@@ -136,10 +136,8 @@ def plan_judgments(
 
     def _valid_stats_for_char(cid: str) -> frozenset[str]:
         sheet_id = char_game_sheets.get(cid, "")
-        try:
-            allowed = _registry.call_rule(system, "allowed_skills", rulebook)
-        except _registry.RuleSystemError:
-            allowed = frozenset()  # 判定にしない（閉じる側）
+        # 失敗は RuleSystemError のまま、GM の語り（gm_agent.narrate）が受けて卓を止める（B-027）
+        allowed = _registry.call_rule(system, "allowed_skills", rulebook)
         if not sheet_id:
             return allowed
         sheet = resolve_char_game_sheet(cid, sheet_id, profiles, session)
@@ -241,7 +239,7 @@ def _decide_check_pairs(
 
     if backend.get("chat_with_tools") and get_quirks(model_name).get("tool_calling_capable"):
         try:
-            _tool_sys = system.judgment_system_prompt("tools", is_ja, char_names_str)
+            _tool_sys = _registry.call_rule(system, "judgment_system_prompt", "tools", is_ja, char_names_str)
             result = backend["chat_with_tools"](
                 [{"role": "system", "content": _tool_sys}, *messages],
                 model_name, [_PROPOSE_CHECKS_TOOL], options={"num_predict": 200},
@@ -267,7 +265,7 @@ def _decide_check_pairs(
             return []
 
     try:
-        sys_prompt = system.judgment_system_prompt("json", is_ja, char_names_str)
+        sys_prompt = _registry.call_rule(system, "judgment_system_prompt", "json", is_ja, char_names_str)
         chat_fn = LLM_BACKENDS[backend_id]["chat"]
         raw = chat_fn(
             [{"role": "system", "content": sys_prompt}, *messages],

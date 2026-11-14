@@ -91,7 +91,12 @@ class GMAgent:
                 or ("あなたはTRPGのゲームマスター（キーパー）です。" if _is_ja else "You are the Game Master (Keeper) of this TRPG session.")
             )
 
-        trpg_ctx = build_for_gm(rulebook, scenario or None, session, user_lang)
+        from def_kari.trpg import registry as _rs_registry
+        try:
+            trpg_ctx = build_for_gm(rulebook, scenario or None, session, user_lang)
+        except _rs_registry.RuleSystemError as e:
+            # ルールシステムの失敗: 語らずにエラーを返す。卓を止めるのは呼ぶ側（B-027）
+            return {"text": "", "judgments": [], "error": str(e), "rule_system_error": True}
         if trpg_ctx:
             system_parts.append(trpg_ctx)
 
@@ -151,11 +156,14 @@ class GMAgent:
         _table_system, _unavailable = _trpg_hooks.resolve_for_session(session)
         if _unavailable:
             return {"text": "", "judgments": [], "error": _unavailable}
-        judgments = plan_judgments(
-            session, backend_id, _loaded_model, _history_messages,
-            name_map, char_game_sheets, _profiles, scenario, user_lang,
-            rule_system=_table_system or _trpg_registry.for_rulebook(rulebook), rulebook=rulebook,
-        )
+        try:
+            judgments = plan_judgments(
+                session, backend_id, _loaded_model, _history_messages,
+                name_map, char_game_sheets, _profiles, scenario, user_lang,
+                rule_system=_table_system or _trpg_registry.for_rulebook(rulebook), rulebook=rulebook,
+            )
+        except _trpg_registry.RuleSystemError as e:
+            return {"text": "", "judgments": [], "error": str(e), "rule_system_error": True}
 
         if char_lines:
             header = "【探索者】" if _is_ja else "[Investigators]"

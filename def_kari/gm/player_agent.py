@@ -179,8 +179,10 @@ class PlayerAgent:
         """
         if not goals or not any(goals.values()):
             return ""
+        # 確かめた（_generate_ai_turn_reply）後で、別のバックエンドに切り替えない（外部への送信の確かめを
+        # 通らずに送ってしまうため。実装レビュー2の🟢）。無ければ行動の意図は作らない
         if backend_id not in LLM_BACKENDS:
-            backend_id = DEFAULT_LLM_BACKEND
+            return ""
         chat_fn = LLM_BACKENDS[backend_id].get("chat")
         if not chat_fn:
             return ""

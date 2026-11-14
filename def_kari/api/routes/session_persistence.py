@@ -55,8 +55,22 @@ _VISITORS_MAX_FILES = 5000  # 新規ディレクトリ作成時のみ判定。�
 _SAFE_FILENAME_RE = re.compile(r'^[A-Za-z0-9_\-]+\.json$')
 
 
+def _table_keeps_content_inside(session: dict) -> bool:
+    """外部への送信を許さない卓か（ルールブック・シナリオ・プラグインの manifest。B-021）。"""
+    if not (session.get("trpg_rulebook") or session.get("trpg_scenario")):
+        return False
+    perms = _trpg_resources.table_permissions(session.get("trpg_rulebook", ""), session.get("trpg_scenario", ""),
+                                              session.get("trpg_rule_system") or None)
+    return not perms["external_services_allowed"]
+
+
 def _save_session_episodic(session_id: str, session: dict) -> None:
     """セッション終了時に各キャラクターの episodic memory を書き込む。"""
+    # 外部への送信を許さない卓の中身は、キャラの記憶に書かない。記憶は後の別の卓で読まれ、外部の LLM に
+    # 送られうるため（B-021・B-025。実装レビュー2の🟡2、2026-11-14 決定）
+    if _table_keeps_content_inside(session):
+        _log.info("[memory] session %s: not saved (this table does not allow sending outside)", str(session_id)[:8])
+        return
     try:
         from def_kari.gm.memory import save_episodic
     except ImportError:

@@ -29,17 +29,66 @@ class ExternalServiceRefused(RuntimeError):
     """manifest が外部への送信を許さない卓で、外部のバックエンドを使おうとした。"""
 
 
-def is_local(kind: str, backend_id: str) -> bool:
-    if backend_id in LOCAL_BACKENDS.get(kind, frozenset()):
-        return True
+# 本体の手元のバックエンドの向け先（def_kari/backends.py と同じ環境変数と既定値）
+_LOCAL_URL_ENV = {
+    "textgen_webui": ("TEXTGEN_WEBUI_URL", "http://127.0.0.1:5000/v1"),
+    "ollama": ("OLLAMA_URL", "http://localhost:11434"),
+    "voicevox": ("VOICEVOX_URL", "http://127.0.0.1:50021"),
+    "irodori": ("IRODORI_TTS_URL", "http://127.0.0.1:8088"),
+    "kokoro": ("KOKORO_TTS_URL", "http://127.0.0.1:8766"),
+    "a1111": ("A1111_URL", "http://localhost:7860"),
+    "comfyui": ("COMFYUI_URL", "http://127.0.0.1:8188"),
+}
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+
+def _points_to_this_machine(backend_id: str) -> bool:
+    import os
+    from urllib.parse import urlparse
+    env, default = _LOCAL_URL_ENV.get(backend_id, ("", ""))
+    url = os.environ.get(env, default) if env else ""
+    host = (urlparse(url).hostname or "").lower()
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+
+
+def _is_ollama_cloud_model(model: str) -> bool:
+    """Ollama のクラウドのモデル（手元の Ollama を経由して、外のサーバーで動く）。名前が -cloud で終わる。"""
+    m = (model or "").lower()
+    return m.endswith("-cloud") or m.endswith(":cloud")
+
+
+def is_local(kind: str, backend_id: str, model: str = "") -> bool:
+    """このバックエンドが、この機械の中だけで動くか（B-021）。
+
+    - 互換バックエンドの定義に同じ名前があれば、その「手元」の印を先に見る（実装レビュー2の🔴2。
+      以前は名前が本体と同じなら、印が無くても手元とみなしていた）。
+    - 本体の手元のバックエンドは、向け先の URL がこの機械（ループバック）のときだけ手元とする（🟡1）。
+      LAN の別の機械も外部として扱う。
+    - Ollama のクラウドのモデルは、向け先が手元でも外部として扱う。
+    """
     try:
-        from def_kari.compatible_backends_store import is_local_backend
-        return is_local_backend(backend_id)
+        from def_kari.compatible_backends_store import has_backend, is_local_backend
+        if has_backend(backend_id):
+            return is_local_backend(backend_id)
     except Exception:
         return False
+    if backend_id not in LOCAL_BACKENDS.get(kind, frozenset()):
+        return False
+    if not _points_to_this_machine(backend_id):
+        return False
+    if backend_id == "ollama":
+        if not model:
+            try:
+                from def_kari.llm.backend import LLM_BACKENDS
+                model = LLM_BACKENDS.get("ollama", {}).get("default_model", "")
+            except Exception:
+                model = ""
+        if _is_ollama_cloud_model(model):
+            return False
+    return True
 
 
-def refusal(session: dict | None, kind: str, backend_id: str) -> str | None:
+def refusal(session: dict | None, kind: str, backend_id: str, model: str = "") -> str | None:
     """送ってはいけないなら、その理由。送ってよいなら None。"""
     if not isinstance(session, dict) or not backend_id:
         return None
@@ -47,11 +96,16 @@ def refusal(session: dict | None, kind: str, backend_id: str) -> str | None:
     scenario_id = session.get("trpg_scenario", "") or ""
     if not rulebook_id and not scenario_id:
         return None
-    if is_local(kind, backend_id):
+    if is_local(kind, backend_id, model):
         return None
     from def_kari.trpg import resources
-    if resources.table_permissions(rulebook_id, scenario_id)["external_services_allowed"]:
+    # 卓を作ったときに固定したルールシステムも渡す。ルールブックが読めなくても、閉じる側に倒れる（🔴1）
+    perms = resources.table_permissions(rulebook_id, scenario_id, session.get("trpg_rule_system") or None)
+    if perms["external_services_allowed"]:
         return None
+    if perms.get("missing"):
+        return (f"{kind} backend {backend_id!r} is an external service, and this table's rules cannot be "
+                f"checked ({'; '.join(perms['missing'])}), so nothing is sent outside")
     return (f"{kind} backend {backend_id!r} is an external service, and this table's rulebook does not "
             f"allow sending to external services")
 
@@ -78,17 +132,17 @@ def _notify(session: dict, kind: str, backend_id: str, reason: str) -> None:
         _log.warning("[trpg] could not notify the host: %s", e)
 
 
-def check(session: dict | None, kind: str, backend_id: str) -> None:
+def check(session: dict | None, kind: str, backend_id: str, model: str = "") -> None:
     """送ってはいけないなら、ホストに知らせて `ExternalServiceRefused` を出す。"""
-    reason = refusal(session, kind, backend_id)
+    reason = refusal(session, kind, backend_id, model)
     if reason:
         _notify(session, kind, backend_id, reason)
         raise ExternalServiceRefused(reason)
 
 
-def allowed(session: dict | None, kind: str, backend_id: str) -> bool:
+def allowed(session: dict | None, kind: str, backend_id: str, model: str = "") -> bool:
     """送ってよいか。いけないなら、ホストに知らせて False（読み上げ・挿絵のように、黙って飛ばす所用）。"""
-    reason = refusal(session, kind, backend_id)
+    reason = refusal(session, kind, backend_id, model)
     if reason:
         _notify(session, kind, backend_id, reason)
         return False
