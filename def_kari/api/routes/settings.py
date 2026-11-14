@@ -516,6 +516,7 @@ class CompatibleBackendRequest(BaseModel):
     capabilities: list[str] = ["llm"]
     label: str = ""
     api_key: str | None = None
+    local: bool = False  # 手元で動いている（外部に送らない）。印が無ければ外部として扱う（B-021）
 
 
 @router.get("/compatible-backends")
@@ -531,7 +532,7 @@ def add_compatible_backend(req: CompatibleBackendRequest):
     if req.name in existing:
         return {"error": f"'{req.name}' は既に存在します"}
     save_backend(req.name, req.base_url, req.model, req.extra_headers,
-                 req.capabilities, req.label, req.api_key)
+                 req.capabilities, req.label, req.api_key, req.local)
     _reload_compatible_backends()
     return {"status": "ok"}
 
@@ -540,7 +541,7 @@ def add_compatible_backend(req: CompatibleBackendRequest):
 def update_compatible_backend(name: str, req: CompatibleBackendRequest):
     from def_kari.compatible_backends_store import save_backend
     save_backend(name, req.base_url, req.model, req.extra_headers,
-                 req.capabilities, req.label, req.api_key)
+                 req.capabilities, req.label, req.api_key, req.local)
     _reload_compatible_backends()
     return {"status": "ok"}
 

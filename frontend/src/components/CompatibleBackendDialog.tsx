@@ -9,6 +9,7 @@ type Backend = {
   capabilities: string[]
   label: string
   has_key: boolean
+  local?: boolean
 }
 
 type Props = {
@@ -27,6 +28,7 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
   const [model, setModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [capabilities, setCapabilities] = useState<string[]>(['llm'])
+  const [isLocal, setIsLocal] = useState(false)
   const [extraHeadersText, setExtraHeadersText] = useState('{}')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -38,6 +40,7 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
       setBaseUrl(editing.base_url)
       setModel(editing.model)
       setCapabilities(editing.capabilities)
+      setIsLocal(!!editing.local)
       setExtraHeadersText(JSON.stringify(editing.extra_headers || {}, null, 2))
       setApiKey('')
     }
@@ -80,6 +83,7 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
       extra_headers: headers,
       capabilities,
       api_key: apiKey || null,
+      local: isLocal,
     }
     const url = isNew
       ? '/api/settings/compatible-backends'
@@ -156,6 +160,13 @@ export default function CompatibleBackendDialog({ editing, onClose, onSaved }: P
               />
             </div>
           ))}
+
+          <div className="profile-section-title">{t('compatibleBackend.localTitle')}</div>
+          <div className="profile-row">
+            <label>{t('compatibleBackend.localLabel')}</label>
+            <input type="checkbox" checked={isLocal} onChange={e => setIsLocal(e.target.checked)} />
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>{t('compatibleBackend.localHint')}</div>
 
           <div className="profile-section-title">{t('compatibleBackend.extraHeadersTitle')}</div>
           <textarea

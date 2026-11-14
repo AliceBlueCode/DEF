@@ -665,7 +665,9 @@ def _resolve_ai_action(
     """
     ai_action: dict = {"action": "none"}
     designated_target_name = ""
-    if session.get("trpg_mode") and session["round"] >= 2:
+    from def_kari.llm import backend_guard as _backend_guard
+    # 外部への送信を許さない卓では、外部の LLM で行動を選ばない（B-021。選ばなければ通常の発言）
+    if session.get("trpg_mode") and session["round"] >= 2 and _backend_guard.allowed(session, "llm", backend_id):
         ai_action = _ai_action_select(
             backend_id, model, char,
             current_char_id,
@@ -875,6 +877,13 @@ def _generate_ai_turn_reply(
         prev_emotion = ", ".join(prev_emotion)
 
     global _last_session_debug
+    # 外部への送信を許さない卓では、外部の LLM に送らない（B-021）。断ったら生成の失敗と同じ扱い
+    from def_kari.llm import backend_guard as _backend_guard
+    try:
+        _backend_guard.check(session, "llm", backend_id)
+    except _backend_guard.ExternalServiceRefused as e:
+        _last_session_debug = {"error": str(e), "success": False, "attempts": [], "character_id": current_char_id, "backend": backend_id, "topic": topic, "round": session["round"], "user_text": user_text}
+        return {"error": str(e), "character_id": current_char_id, "character_name": name_map.get(current_char_id, current_char_id), "text": f"(error: {e})", "emotion": "neutral", "round": session["round"], "turn": turn, "counters": dict(session.get("counters", {}))}, "", "neutral", [], ""
     from def_kari.resources.vram_lock import get_vram_lock
     vram_lock = get_vram_lock()
     if not vram_lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):

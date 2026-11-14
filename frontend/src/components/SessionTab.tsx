@@ -948,6 +948,16 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         })()
       }
     }
+    if (event.type === 'EXTERNAL_SERVICE_REFUSED') {
+      // ルールブックの manifest が外部への送信を許さない卓で、外部のバックエンドに送らなかった
+      // （B-021・B-025）。サーバーは gm_only で送るので、届くのはホストとGMのタブだけ。
+      const { kind, backend } = event.payload ?? {}
+      setMessages(prev => [...prev, {
+        character_id: '_keeper', character_name: '⚙ System',
+        text: t('session.msg.externalServiceRefused', { kind: kind ?? '', backend: backend ?? '' }),
+        emotion: '', tags: [],
+      }])
+    }
     if (event.type === 'CHARACTER_AUDIT_SKIPPED') {
       // 持ち込みキャラのLLM審査を実行できず通過扱いになったケース（S-4）。
       // ホスト/GMだけに見せる（参加者全員への表示は不要な内部情報のため）。

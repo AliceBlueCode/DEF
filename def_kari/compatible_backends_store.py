@@ -54,6 +54,8 @@ def list_backends() -> list[dict]:
             "capabilities": entry.get("capabilities", ["llm"]),
             "label": entry.get("label", name),
             "has_key": bool(keys.get(name)),
+            # 手元で動いている（外部に送らない）か。印が無ければ外部として扱う（B-021）
+            "local": entry.get("local") is True,
         })
     return result
 
@@ -71,7 +73,7 @@ def get_backend_for_runtime(name: str) -> dict | None:
 
 
 def save_backend(name: str, base_url: str, model: str, extra_headers: dict,
-                 capabilities: list[str], label: str, api_key: str | None) -> None:
+                 capabilities: list[str], label: str, api_key: str | None, local: bool = False) -> None:
     defs = _load_defs()
     defs[name] = {
         "base_url": base_url,
@@ -79,6 +81,7 @@ def save_backend(name: str, base_url: str, model: str, extra_headers: dict,
         "extra_headers": extra_headers,
         "capabilities": capabilities,
         "label": label or name,
+        "local": bool(local),
     }
     _save_defs(defs)
     if api_key is not None:
@@ -97,6 +100,12 @@ def delete_backend(name: str) -> bool:
     keys.pop(name, None)
     _save_keys(keys)
     return True
+
+
+def is_local_backend(name: str) -> bool:
+    """互換バックエンド `name` に「手元で動いている」の印があるか（B-021）。無い・知らない名前は False。"""
+    entry = _load_defs().get(name)
+    return isinstance(entry, dict) and entry.get("local") is True
 
 
 def all_backends_with_keys() -> list[dict]:

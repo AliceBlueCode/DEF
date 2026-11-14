@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from def_kari.characters import load_profiles, get_character
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
+from def_kari.llm import backend_guard as _backend_guard
 from def_kari.safety.filters import character_rating_exceeds_invite
 from def_kari.safety.audit_log import record_generation_event
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
@@ -270,6 +271,7 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
             backend_id = DEFAULT_LLM_BACKEND
 
         try:
+            _backend_guard.check(session, "llm", backend_id)  # 外部への送信を許さない卓（B-021）
             chat_fn = LLM_BACKENDS[backend_id]["chat"]
             model = _resolve_model(backend_id)
             messages = [
@@ -301,6 +303,11 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
         t2i_backend = req.t2i_backend or settings.get("t2i_backend", "")
         if not t2i_backend:
             return {"error": "T2Iバックエンドが未設定です"}
+        # 外部への送信を許さない卓では、外部の画像生成に送らない（B-025）
+        _t2i_refusal = _backend_guard.refusal(session, "t2i", t2i_backend)
+        if _t2i_refusal:
+            _backend_guard.allowed(session, "t2i", t2i_backend)  # ホストに知らせる
+            return {"error": _t2i_refusal}
         t2i_model = req.t2i_model or settings.get(f"t2i_model_{t2i_backend}") or None
         workflow = settings.get("comfyui_workflow", "default") if t2i_backend == "comfyui" else ""
         width = int(settings.get("session_t2i_width") or settings.get("t2i_width", 512))

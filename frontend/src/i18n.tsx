@@ -201,6 +201,7 @@ const ja: Record<string, string> = {
   'session.msg.keeperEndProposal': '🏁 Keeper がセッション終了を提案しています',
   'session.msg.keeperEndVoteText': 'Keeper のセッション終了提案: 全員の意見は？',
   'session.msg.fatalDamageLabel': '【{label}】{flavor}',
+  'session.msg.externalServiceRefused': '⚠ ルールの利用条件により、外部のサービス {backend}（{kind}）には送りませんでした。手元のバックエンドを選んでください。',
   'session.msg.damageLabel': '【ダメージ】{stat}{delta} (出目:{roll}) {flavor}',
 
   // Session — vote
@@ -585,6 +586,9 @@ const ja: Record<string, string> = {
   'compatibleBackend.modelPlaceholder': 'grok-4.5 など（省略可）',
   'compatibleBackend.apiKeyPlaceholder': '（設定済み・変更する場合のみ入力）',
   'compatibleBackend.capabilitiesTitle': '用途',
+  'compatibleBackend.localTitle': '外部への送信',
+  'compatibleBackend.localLabel': '手元で動いている（外部に送らない）',
+  'compatibleBackend.localHint': 'ルールの利用条件で外部への送信が禁じられたTRPGの卓では、この印のあるバックエンドだけを使えます。印が無ければ外部のサービスとして扱います。',
   'compatibleBackend.extraHeadersTitle': 'Extra Headers（JSON）',
   'compatibleBackend.errorHeadersInvalid': 'Extra Headers は有効なJSONで入力してください',
   'compatibleBackend.errorNameRequired': '名前は必須です',
@@ -894,6 +898,7 @@ const en: Record<string, string> = {
   'session.msg.keeperEndProposal': '🏁 Keeper is proposing to end the session',
   'session.msg.keeperEndVoteText': "Keeper's proposal to end the session: what does everyone think?",
   'session.msg.fatalDamageLabel': '[{label}] {flavor}',
+  'session.msg.externalServiceRefused': '⚠ Not sent to the external service {backend} ({kind}) because of the terms of use of the rules. Choose a backend that runs on this machine.',
   'session.msg.damageLabel': 'Damage: {stat}{delta} (roll: {roll}) {flavor}',
 
   // Session — vote
@@ -1278,6 +1283,9 @@ const en: Record<string, string> = {
   'compatibleBackend.modelPlaceholder': 'e.g. grok-4.5 (optional)',
   'compatibleBackend.apiKeyPlaceholder': '(already set — enter only to change)',
   'compatibleBackend.capabilitiesTitle': 'Capabilities',
+  'compatibleBackend.localTitle': 'Sending outside',
+  'compatibleBackend.localLabel': 'Runs on this machine (does not send outside)',
+  'compatibleBackend.localHint': 'On TRPG tables whose rules forbid sending to external services, only backends with this mark can be used. Without it, the backend is treated as an external service.',
   'compatibleBackend.extraHeadersTitle': 'Extra Headers (JSON)',
   'compatibleBackend.errorHeadersInvalid': 'Extra Headers must be valid JSON',
   'compatibleBackend.errorNameRequired': 'Name is required',

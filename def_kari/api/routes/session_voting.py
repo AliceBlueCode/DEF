@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from def_kari.characters import load_profiles, get_character
 from def_kari.llm.backend import LLM_BACKENDS, DEFAULT_LLM_BACKEND
 from def_kari.llm.client import generate_structured_reply
+from def_kari.llm import backend_guard as _backend_guard
 from def_kari.gm.context_builder import build_session_context as _build_session_context
 from def_kari.gm.events import game_event_bus as _game_event_bus
 from def_kari.safety.audit_log import record_generation_event
@@ -291,6 +292,9 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
         bid = char_backends.get(char_id) or default_backend
         if bid not in LLM_BACKENDS:
             bid = DEFAULT_LLM_BACKEND
+        # 外部への送信を許さない卓では、外部の LLM に弁明させない（B-021。弁明なしと同じ扱い）
+        if not _backend_guard.allowed(session, "llm", bid):
+            continue
         model = _resolve_model(bid)
 
         deliberation_prompt = _sp("deliberation_prompt", _v_lang).format(
@@ -602,6 +606,7 @@ def _resolve_vote_results(
             yes_word=_sp("yes_word", lang), no_word=_sp("no_word", lang),
         )
         try:
+            _backend_guard.check(session, "llm", bid)  # 断ったら下の except（判定できない票）に乗る（B-021）
             chat_fn = LLM_BACKENDS[bid]["chat"]
             messages = [
                 {"role": "system", "content": char.get("persona_description", "")},
@@ -634,6 +639,7 @@ def _resolve_vote_results(
                 yes_word=_sp("yes_word", lang), no_word=_sp("no_word", lang),
             )
             try:
+                _backend_guard.check(session, "llm", bid)  # 断ったら下の except に乗る（B-021）
                 chat_fn = LLM_BACKENDS[bid]["chat"]
                 keeper_msgs = [
                     {"role": "system", "content": _sp("keeper_system", lang) or "あなたはセッションのキーパー（GM・司会者）です。"},

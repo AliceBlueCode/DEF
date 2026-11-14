@@ -18,6 +18,7 @@ from pydantic import BaseModel, field_validator
 from def_kari.characters import load_profiles, get_character
 from def_kari.history.store import save_session_mode, list_session_mode_files
 from def_kari.llm.backend import DEFAULT_LLM_BACKEND
+from def_kari.llm import backend_guard as _backend_guard
 from def_kari.gm.context_builder import load_trpg_scenario as _load_trpg_scenario
 from def_kari.trpg import resources as _trpg_resources
 from def_kari.settings import load_settings
@@ -166,6 +167,9 @@ def _generate_visitor_images(session_id: str, char_id: str, character_json: dict
         settings = load_settings()
         backend = settings.get("t2i_backend", "")
         if not backend:
+            return
+        # 外部への送信を許さない卓では、外部の画像生成に送らない（B-025）
+        if not _backend_guard.allowed(_sessions.get(session_id), "t2i", backend):
             return
         model = settings.get(f"t2i_model_{backend}") or None
         char_dir = _VISITORS_DIR / char_id

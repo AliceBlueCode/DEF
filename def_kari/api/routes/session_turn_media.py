@@ -15,6 +15,8 @@ from pathlib import Path
 from def_kari.gm.events import game_event_bus as _game_event_bus
 from def_kari.settings import load_settings
 from def_kari.t2i.backend import generate_image as _generate_t2i_image
+from def_kari.llm import backend_guard as _backend_guard
+from def_kari.api.routes.session_state import _sessions
 
 _log = logging.getLogger("def.session")
 
@@ -60,6 +62,9 @@ def _generate_turn_image(session_id: str, result: dict) -> None:
         backend = settings.get("t2i_backend", "")
         if not backend:
             return
+        # 外部への送信を許さない卓では、外部の画像生成に送らない（B-025）
+        if not _backend_guard.allowed(_sessions.get(session_id), "t2i", backend):
+            return
         model = settings.get(f"t2i_model_{backend}") or None
         from def_kari.api.routes.session_turn_engine import _VRAM_LOCK_TIMEOUT_SECONDS
         from def_kari.resources.vram_lock import get_vram_lock
@@ -99,6 +104,9 @@ def _generate_turn_audio(session_id: str, result: dict) -> None:
         if not settings.get("tts_enabled", True):
             return
         tts_backend = settings.get("tts_backend", "")
+        # 外部への送信を許さない卓では、外部の読み上げに送らない（B-025）
+        if not _backend_guard.allowed(_sessions.get(session_id), "tts", tts_backend):
+            return
         url = _synthesize_turn_audio_sync(result.get("text", ""), result.get("character_id", ""), tts_backend)
         if not url:
             return
@@ -136,6 +144,9 @@ def _synthesize_and_notify_audio(session_id: str, text: str, character_id: str, 
     """
     try:
         tts_backend = load_settings().get("tts_backend", "")
+        # 外部への送信を許さない卓では、外部の読み上げに送らない（B-025）
+        if not _backend_guard.allowed(_sessions.get(session_id), "tts", tts_backend):
+            return
         url = _synthesize_turn_audio_sync(text, character_id, tts_backend)
         if not url:
             return

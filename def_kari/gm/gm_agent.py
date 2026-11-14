@@ -130,6 +130,12 @@ class GMAgent:
         # 自然に描写する」役割に限定する(judgment_planner.plan_judgments参照)。
         if backend_id not in LLM_BACKENDS:
             backend_id = DEFAULT_LLM_BACKEND
+        # 外部への送信を許さない卓では、外部の LLM に送らない（B-021。判定の要否もこの後で同じ LLM）
+        from def_kari.llm import backend_guard as _backend_guard
+        try:
+            _backend_guard.check(session, "llm", backend_id)
+        except _backend_guard.ExternalServiceRefused as e:
+            return {"text": "", "judgments": [], "error": str(e)}
         _loaded_model = ""
         if backend_id == "textgen_webui":
             from def_kari.llm.tgw_manager import get_loaded_model_name
