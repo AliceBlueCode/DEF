@@ -2,8 +2,8 @@ import { useRef, useState } from 'react'
 
 export type RuleOption = { id: string; label: string }
 export type DirectiveOption = { id: string; label: string; rating: string; recommended_for: number[] }
-export type RulebookOption = { id: string; label: string; dice_system: string }
-export type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string }
+export type RulebookOption = { id: string; label: string; dice_system: string; credits?: string[] }
+export type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string; credits?: string[] }
 
 type SavedSession = {
   filename: string

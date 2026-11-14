@@ -619,6 +619,18 @@ def get_session(session_id: str, _auth: dict = Depends(require_participant)):
     return result
 
 
+@router.get("/{session_id}/credits")
+def get_session_credits(session_id: str, _auth: dict = Depends(require_participant)):
+    """卓のクレジット（B-023）。セッションの画面に出す。参加者のタブは /api/trpg に届かないため、ここで返す。"""
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    from def_kari.trpg import resources as _trpg_resources
+    return {"credits": _trpg_resources.table_credits(
+        session.get("trpg_rulebook", "") or "", session.get("trpg_scenario", "") or "",
+        session.get("trpg_rule_system") or None)}
+
+
 def _participants_snapshot(session: dict) -> list[dict]:
     """参加者の一覧と、いまWSで接続しているかどうかを返す（再読み込みしたタブの復元用）。
 

@@ -36,6 +36,7 @@ def list_rulebooks():
                 "rule_system_name": b.get("rule_system_name", ""),
                 "dice_system": _safe_dice_notation(b),
                 "private": False,
+                "credits": resources.table_credits(bid),  # B-023
             }
             for bid, b in books.items()
             if bid != "blank_template"
@@ -110,6 +111,7 @@ def list_scenarios():
                 "label": s.get("title", sid),
                 "synopsis": s.get("synopsis", ""),
                 "rulebook_id": s.get("rulebook_id", ""),
+                "credits": resources.table_credits("", sid),  # B-023（シナリオのまとまりの分だけ）
             }
             for sid, s in scenarios.items()
         ]

@@ -331,6 +331,13 @@ def _allowed(source: Source | None, key: str, rule_system: str) -> bool:
     return rule_system == registry.DEFAULT_RULE_SYSTEM
 
 
+def table_credits(rulebook_id: str, scenario_id: str = "", rule_system: str | None = None) -> list[str]:
+    """卓が使うもの（ルールブック、シナリオ、ルールシステムを登録したプラグイン）の manifest の `credit`（B-023）。"""
+    if not rulebook_id and not scenario_id:
+        return []
+    return table_permissions(rulebook_id, scenario_id, rule_system)["credits"]
+
+
 def online_refusal(rulebook_id: str, scenario_id: str = "", rule_system: str | None = None) -> str | None:
     """このルールブック・シナリオの卓をオンラインで開けないとき、その理由（B-022）。開けるなら None。"""
     if not rulebook_id and not scenario_id:

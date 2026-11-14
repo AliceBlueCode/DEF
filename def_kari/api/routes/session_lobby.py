@@ -310,7 +310,8 @@ def _online_table_refusal(sess: dict) -> str | None:
     if not (sess.get("trpg_rulebook") or sess.get("trpg_scenario")):
         return None
     from def_kari.trpg import resources as _trpg_resources
-    return _trpg_resources.online_refusal(sess.get("trpg_rulebook", ""), sess.get("trpg_scenario", ""))
+    return _trpg_resources.online_refusal(sess.get("trpg_rulebook", ""), sess.get("trpg_scenario", ""),
+                                          sess.get("trpg_rule_system") or None)
 
 
 class InviteRequest(BaseModel):

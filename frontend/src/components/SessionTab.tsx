@@ -24,6 +24,7 @@ import { useCharBackendConfig } from './useCharBackendConfig'
 import { useAiAssignWizard } from './useAiAssignWizard'
 import { useLobbySession } from './useLobbySession'
 import { useParticipants } from './useParticipants'
+import { TrpgCredits, mergeCredits } from './TrpgCredits'
 
 type Props = {
   characters: Character[]
@@ -341,6 +342,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   const patchLobbySettings = (body: Record<string, string | number>) => _patchLobbySettings(body, sessionIdRef, hostTokenRef)
 
   // JWT を自動付与する fetch ラッパー（hostTokenRef = 自タブのトークン）
+  // 卓のクレジット（B-023）。選ぶ画面は選んでいるルールブック・シナリオから、セッションの画面はサーバーから
+  const selectedTableCredits = mergeCredits(
+    rulebookOptions.find(r => r.id === selectedRulebook)?.credits,
+    selectedScenario ? scenarioOptions.find(s => s.id === selectedScenario)?.credits : undefined,
+  )
+  const [sessionCredits, setSessionCredits] = useState<string[]>([])
   const authFetch = (path: string, init: RequestInit = {}) =>
     fetch(path, {
       ...init,
@@ -349,6 +356,17 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         ...(hostTokenRef.current ? { 'Authorization': `Bearer ${hostTokenRef.current}` } : {}),
       },
     })
+
+  useEffect(() => {
+    if (!sessionId || !trpgMode) { setSessionCredits([]); return }
+    let alive = true
+    authFetch(`/api/session/${sessionId}/credits`)
+      .then(r => r.json())
+      .then(d => { if (alive) setSessionCredits(Array.isArray(d.credits) ? d.credits : []) })
+      .catch(() => { if (alive) setSessionCredits([]) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, trpgMode, selectedRulebook, selectedScenario])
 
   // レスポンスをJSONパースし、data.errorの形にそろえて返す。
   // バックエンドは業務エラーを200+{error}、認証/権限/レート制限エラーをHTTPException(401/403/404/429等)+{detail}で
@@ -2570,6 +2588,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                         )}
                       </div>
                     )}
+                    <TrpgCredits credits={selectedTableCredits} />
                   </>
                 )}
 
@@ -3070,6 +3089,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             </div>
           )}
 
+          {trpgMode && selectedTableCredits.length > 0 && (
+            <div className="session-field">
+              <TrpgCredits credits={selectedTableCredits} />
+            </div>
+          )}
+
           {trpgMode && (
             <div className="session-field">
               <label className="session-label">{t('trpg.keeper.label')}</label>
@@ -3427,6 +3452,9 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           }
         </div>
       </div>
+      {trpgMode && sessionCredits.length > 0 && (
+        <div style={{ padding: '0 10px' }}><TrpgCredits credits={sessionCredits} compact /></div>
+      )}
 
       {isKeeperUi && auditWarnings.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 10px', background: 'rgba(231,76,60,0.12)', borderBottom: '1px solid var(--error-color, #e74c3c)' }}>
