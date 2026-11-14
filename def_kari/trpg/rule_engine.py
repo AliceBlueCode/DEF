@@ -205,7 +205,8 @@ def validate_rulebook(data: Any) -> list[str]:
             errors.append(f"invalid dice_system: {data['dice_system']!r} (expected e.g. '1d100')")
     if "judgment" in data and isinstance(data["judgment"], dict):
         sc = data["judgment"].get("success_condition", "")
-        valid_conditions = {"roll_lte_stat_x5", "roll_lte_skill", "roll_gte_skill", "roll_lte_target"}
+        # roll_lte_target は judge() に処理が無いので許さない（B-032。2026-11-14 まで許していた）
+        valid_conditions = {"roll_lte_stat_x5", "roll_lte_skill", "roll_gte_skill"}
         if sc not in valid_conditions:
             errors.append(f"unknown success_condition: {sc!r}")
     return errors

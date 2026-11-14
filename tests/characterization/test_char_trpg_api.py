@@ -93,10 +93,14 @@ def test_damage_entry(use_fixture_rulebooks, fixed_dice):
 
 
 def test_damage_instant_death_is_roll_14(use_fixture_rulebooks, fixed_dice):
+    """C-002: A章でわざと変えた挙動（B-030、2026-11-14）。以前の応答は `"result": "即死"` で、
+    API に言葉が直書きされていた。今は `"result": "fatal"` と、ルールブックのデータの言葉（label）を返す。
+    出目14だけが致命の結果、という表の中身は変わらない。"""
     entry = next(e for e in DEF_ORIGINAL["damage_mechanics"]["damage_table"]["entries"] if e["roll"] == 14)
     with fixed_dice(14):
         out = t.damage_roll(t.DamageRollRequest(rulebook_id="def_original"))
-    assert out == {"roll": 14, "result": "即死", "stat": None, "delta": None, "flavor": entry["flavor"]}
+    assert out == {"roll": 14, "result": "fatal", "label": entry["result"], "stat": None, "delta": None,
+                   "flavor": entry["flavor"]}
 
 
 def test_damage_always_rolls_1d100(use_fixture_rulebooks, fixed_dice):
@@ -109,10 +113,12 @@ def test_damage_always_rolls_1d100(use_fixture_rulebooks, fixed_dice):
 
 
 def test_damage_default_rulebook_is_def_original(use_fixture_rulebooks, fixed_dice):
-    """C-002: A章でわざと変える挙動（B-030 で API の既定の rulebook_id を外す）。"""
-    assert t.DamageRollRequest().rulebook_id == "def_original"
-    with fixed_dice(1):
-        assert t.damage_roll(t.DamageRollRequest())["result"] == "damage"
+    """C-002: A章でわざと変えた挙動（B-030、2026-11-14）。以前は rulebook_id の既定が "def_original"
+    だった。今は必須で、省くと検証で断り、空なら理由を返す。"""
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        t.DamageRollRequest()
+    assert t.damage_roll(t.DamageRollRequest(rulebook_id="")) == {"error": "rulebook_id is required"}
 
 
 def test_damage_unknown_rulebook(use_fixture_rulebooks, fixed_dice):
@@ -129,10 +135,14 @@ def test_opposed_endpoint(use_fixture_rulebooks):
 
 
 def test_opposed_default_rulebook_is_def_original(use_fixture_rulebooks):
-    """C-002: A章でわざと変える挙動（B-030 で API の既定の rulebook_id を外す）。"""
-    req = t.OpposedCheckRequest(attacker_roll=20, attacker_skill=50, defender_roll=30, defender_skill=50)
-    assert req.rulebook_id == "def_original"
-    assert t.opposed_check_endpoint(req)["winner"] == "attacker"
+    """C-002: A章でわざと変えた挙動（B-030、2026-11-14）。以前は rulebook_id の既定が "def_original"
+    だった。今は必須。"""
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        t.OpposedCheckRequest(attacker_roll=20, attacker_skill=50, defender_roll=30, defender_skill=50)
+    req = t.OpposedCheckRequest(attacker_roll=20, attacker_skill=50, defender_roll=30, defender_skill=50,
+                                rulebook_id="")
+    assert t.opposed_check_endpoint(req) == {"error": "rulebook_id is required"}
 
 
 def test_opposed_unknown_rulebook(use_fixture_rulebooks):

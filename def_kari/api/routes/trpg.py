@@ -178,38 +178,25 @@ def dice_roll(req: DiceRollRequest):
 class DamageRollRequest(BaseModel):
     session_id: str = ""
     character_id: str = ""
-    rulebook_id: str = "def_original"
+    # 必須（B-030）。以前は既定が "def_original" だった。どのルールブックを使うかは呼ぶ側が決める。
+    rulebook_id: str
+
+
+_RULEBOOK_ID_REQUIRED = {"error": "rulebook_id is required"}
 
 
 @router.post("/damage")
 def damage_roll(req: DamageRollRequest):
-    result = roll_dice("1d100")
-    roll_val = result["total"]
-
-    books = _load_rulebooks()
-    rulebook = books.get(req.rulebook_id, {})
-    entries = rulebook.get("damage_mechanics", {}).get("damage_table", {}).get("entries", [])
-
-    entry = next((e for e in entries if e.get("roll") == roll_val), None)
-    if not entry:
-        return {"error": "Entry not found", "roll": roll_val}
-
-    if entry.get("result") == "即死":
-        return {
-            "roll": roll_val,
-            "result": "即死",
-            "stat": None,
-            "delta": None,
-            "flavor": entry.get("flavor", ""),
-        }
-
-    return {
-        "roll": roll_val,
-        "result": "damage",
-        "stat": entry["stat"],
-        "delta": entry["delta"],
-        "flavor": entry.get("flavor", ""),
-    }
+    """ダメージ表を振る。ダメージ表はルールシステムの側の仕組みで、持たないルールシステムでは使えない
+    （B-004・B-030。def_original の実装は `DefOriginal.damage_roll`）。"""
+    if not req.rulebook_id:
+        return dict(_RULEBOOK_ID_REQUIRED)
+    rulebook = _load_rulebooks().get(req.rulebook_id, {})
+    system = registry.for_rulebook(rulebook)
+    roll_table = getattr(system, "damage_roll", None) if system is not None else None
+    if not callable(roll_table):
+        return {"error": "This rule system has no damage table"}
+    return roll_table(rulebook)
 
 
 class OpposedCheckRequest(BaseModel):
@@ -217,11 +204,14 @@ class OpposedCheckRequest(BaseModel):
     attacker_skill: int
     defender_roll: int
     defender_skill: int
-    rulebook_id: str = "def_original"
+    # 必須（B-030）。以前は既定が "def_original" だった。
+    rulebook_id: str
 
 
 @router.post("/opposed-check")
 def opposed_check_endpoint(req: OpposedCheckRequest):
+    if not req.rulebook_id:
+        return dict(_RULEBOOK_ID_REQUIRED)
     books = _load_rulebooks()
     rulebook = books.get(req.rulebook_id, {})
     if not rulebook:

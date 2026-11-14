@@ -1665,7 +1665,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          notation: '1d100',
+          // ダイスの表記はサーバーが卓のルールブックから決める（B-030）
           skill_value: j.stat_value,
           rulebook_id: selectedRulebook,
           character_id: j.character_id,
@@ -1704,7 +1704,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         }).catch(e => console.error('sync_stats failed:', e))
       }
 
-      if (d.result === '即死') {
+      if (d.result === 'fatal') {
         setCharSheetData(prev => {
           const sheet = prev[charId]
           if (!sheet?.stats) return prev
@@ -1717,7 +1717,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         setMessages(prev => [...prev, {
           character_id: charId,
           character_name: `💀 ${charName}`,
-          text: t('session.msg.instantDeathLabel', { flavor: d.flavor }),
+          text: t('session.msg.fatalDamageLabel', { label: d.label, flavor: d.flavor }),
           emotion: '', tags: [],
         }])
       } else {
@@ -1809,7 +1809,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       // character_id/stat_nameを送らないと、JUDGMENT_RESOLVEDブロードキャストが
       // 空のキャラ名で他タブに表示されてしまう（2026-09-08コードレビューで発覚）。
       const requestId = newDiceRequestId()
-      const body: any = { notation: '1d100', character_id: charId, stat_name: key, request_id: requestId }
+      // ダイスの表記はサーバーが卓のルールブックから決める（B-030）
+      const body: any = { character_id: charId, stat_name: key, request_id: requestId }
       if (resolvedVal) {
         body.skill_value = resolvedVal
         body.rulebook_id = selectedRulebook

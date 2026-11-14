@@ -240,7 +240,9 @@ _STAT_NAME_MAX_LEN = 40
 
 
 class SessionDiceRollRequest(BaseModel):
-    notation: str
+    # 卓のルールブックがあれば、その表記を使い、この値は使わない（B-030。以前は画面が '1d100' を
+    # 直書きして送っていた）。ルールブックの無い卓でだけ使う。
+    notation: str = ""
     skill_value: int = 0
     rulebook_id: str = ""
     character_id: str = ""
@@ -289,7 +291,14 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
         # 以前は申告どおりで、ルールブックを選ぶ画面を通らないプレイヤーのタブは空を送るため、
         # 判定（成功・失敗）が作られず合計だけになっていた（2026-11-08、実機確認で発覚）。
         rulebook_id = session.get("trpg_rulebook") or req.rulebook_id
-        computed = compute_dice_judgment(req.notation, req.skill_value, rulebook_id, req.is_skill, req.is_stat)
+        notation = req.notation
+        if rulebook_id:
+            from def_kari.trpg import registry as _trpg_registry, resources as _trpg_resources
+            _rb = _trpg_resources.load_rulebook(rulebook_id)
+            _system = _trpg_registry.for_rulebook(_rb) if _rb else None
+            if _system is not None:
+                notation = _system.dice_notation(_rb)
+        computed = compute_dice_judgment(notation, req.skill_value, rulebook_id, req.is_skill, req.is_stat)
     except ValueError as e:
         return {"error": str(e)}
     result = computed["result"]

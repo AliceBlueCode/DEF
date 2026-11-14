@@ -131,6 +131,36 @@ class DefOriginal:
             "\nFormat: {\"judgments\":[{\"character\":\"name\",\"skill\":\"skill\"}]}"
         )
 
+    def damage_roll(self, rulebook: dict) -> dict:
+        """ダメージ表を振る（`POST /api/trpg/damage`。以前は API に直書きされていた。B-030）。
+
+        ダメージ表は `damage_mechanics.damage_table.entries`（出目 → 能力値と増減）。項目に
+        `result`（例: 「即死」）があれば、その出目は致命の結果で、`"result": "fatal"` と、表示用の
+        言葉 `label`（ルールブックのデータの `result` の値）を返す。画面はこの言葉をそのまま出す。
+        """
+        result = rule_engine.roll_dice(self.dice_notation(rulebook))
+        roll_val = result["total"]
+        entries = rulebook.get("damage_mechanics", {}).get("damage_table", {}).get("entries", [])
+        entry = next((e for e in entries if e.get("roll") == roll_val), None)
+        if not entry:
+            return {"error": "Entry not found", "roll": roll_val}
+        if entry.get("result"):
+            return {
+                "roll": roll_val,
+                "result": "fatal",
+                "label": entry["result"],
+                "stat": None,
+                "delta": None,
+                "flavor": entry.get("flavor", ""),
+            }
+        return {
+            "roll": roll_val,
+            "result": "damage",
+            "stat": entry["stat"],
+            "delta": entry["delta"],
+            "flavor": entry.get("flavor", ""),
+        }
+
     def dice_notation(self, rulebook: dict) -> str:
         return rulebook.get("dice_system", "1d100")
 

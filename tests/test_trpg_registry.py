@@ -102,3 +102,40 @@ def test_validation_follows_rule_system(dirs, fake_system):
     assert bad == {"error": "Validation failed", "details": ["fake: not ok"]}
     good = t.save_rulebook("fk", t.SaveRulebookRequest(content=json.dumps({"rule_system": fake_system.id, "ok": True})))
     assert good == {"status": "ok", "id": "fk"}
+
+
+# ── セッションのダイスの表記は、卓のルールブックから決める（B-030） ─────────────
+
+def test_session_dice_uses_the_rulebook_notation(dirs, monkeypatch):
+    from unittest.mock import patch
+    from def_kari.api.routes.session_gameplay import SessionDiceRollRequest, session_dice_roll
+    from def_kari.api.routes.session_state import _sessions
+    _write(dirs, "d20book", {"rule_system_name": "x", "dice_system": "1d20",
+                             "judgment": {"success_condition": "roll_lte_skill"}})
+    sid = "_reg_dice"
+    _sessions[sid] = {"id": sid, "trpg_rulebook": "d20book", "history": [], "name_map": {},
+                      "human_char_ids": [], "players": {}}
+    seen = []
+    monkeypatch.setattr("def_kari.trpg.rule_engine.secrets.randbelow", lambda n: seen.append(n) or 0)
+    try:
+        with patch("def_kari.api.routes.session_gameplay._game_event_bus"), \
+                patch("def_kari.api.routes.session_gameplay._autosave"):
+            out = session_dice_roll(sid, SessionDiceRollRequest(notation="1d100", skill_value=5),
+                                    _auth={"jti": "h", "role": "host"})
+    finally:
+        _sessions.pop(sid, None)
+    assert seen == [20]  # 画面が送った 1d100 ではなく、ルールブックの 1d20
+    assert out["notation"] == "1d20"
+
+
+def test_session_dice_without_rulebook_needs_a_notation(monkeypatch):
+    from def_kari.api.routes.session_gameplay import SessionDiceRollRequest, session_dice_roll
+    from def_kari.api.routes.session_state import _sessions
+    sid = "_reg_dice_none"
+    _sessions[sid] = {"id": sid, "trpg_rulebook": "", "history": [], "name_map": {},
+                      "human_char_ids": [], "players": {}}
+    try:
+        out = session_dice_roll(sid, SessionDiceRollRequest(), _auth={"jti": "h", "role": "host"})
+    finally:
+        _sessions.pop(sid, None)
+    assert "error" in out

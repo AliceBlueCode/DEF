@@ -200,7 +200,7 @@ const ja: Record<string, string> = {
   'session.msg.sceneAdvancedNext': '【シーン進行】次のシーンへ',
   'session.msg.keeperEndProposal': '🏁 Keeper がセッション終了を提案しています',
   'session.msg.keeperEndVoteText': 'Keeper のセッション終了提案: 全員の意見は？',
-  'session.msg.instantDeathLabel': '【即死】{flavor}',
+  'session.msg.fatalDamageLabel': '【{label}】{flavor}',
   'session.msg.damageLabel': '【ダメージ】{stat}{delta} (出目:{roll}) {flavor}',
 
   // Session — vote
@@ -893,7 +893,7 @@ const en: Record<string, string> = {
   'session.msg.sceneAdvancedNext': 'Scene advanced: next scene',
   'session.msg.keeperEndProposal': '🏁 Keeper is proposing to end the session',
   'session.msg.keeperEndVoteText': "Keeper's proposal to end the session: what does everyone think?",
-  'session.msg.instantDeathLabel': 'Instant death: {flavor}',
+  'session.msg.fatalDamageLabel': '[{label}] {flavor}',
   'session.msg.damageLabel': 'Damage: {stat}{delta} (roll: {roll}) {flavor}',
 
   // Session — vote

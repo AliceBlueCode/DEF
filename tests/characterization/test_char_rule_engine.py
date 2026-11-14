@@ -201,6 +201,8 @@ def test_validate_empty_condition_is_unknown():
 
 
 def test_validate_accepts_roll_lte_target():
-    """C-002: A章でわざと変える挙動（B-032 で許す一覧から外す）。"""
+    """C-002: A章でわざと変えた挙動（B-032、2026-11-14）。以前は roll_lte_target を許していたが、
+    judge() に処理が無いので、許す一覧から外した。"""
     assert validate_rulebook({"rule_system_name": "x", "dice_system": "1d20",
-                              "judgment": {"success_condition": "roll_lte_target"}}) == []
+                              "judgment": {"success_condition": "roll_lte_target"}}) == [
+        "unknown success_condition: 'roll_lte_target'"]
