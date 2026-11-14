@@ -93,9 +93,13 @@ async def lifespan(app: FastAPI):
     # （B-006）。読み込めなかったプラグインは理由をログに残し、起動は続ける（B-027）。
     from def_kari.trpg import registry as _trpg_registry
     _trpg_registry.load_all()
-    threading.Thread(target=_auto_start, daemon=True).start()
-    from def_kari.backends import voicevox_memory_watchdog_loop
-    threading.Thread(target=voicevox_memory_watchdog_loop, daemon=True).start()
+    # テスト中（DEF_NO_BACKEND_AUTOSTART）は、本物のバックエンド（TGW・VOICEVOX・A1111 など）を起動しにいかず、
+    # VOICEVOX の見張りも動かさない。以前は TestClient を使うテストのたびに、開発機で本物の
+    # バックエンドを起動しにいっていた（2026-11-14 に気づいた）。
+    if os.environ.get("DEF_NO_BACKEND_AUTOSTART") != "1":
+        threading.Thread(target=_auto_start, daemon=True).start()
+        from def_kari.backends import voicevox_memory_watchdog_loop
+        threading.Thread(target=voicevox_memory_watchdog_loop, daemon=True).start()
     yield
 
 

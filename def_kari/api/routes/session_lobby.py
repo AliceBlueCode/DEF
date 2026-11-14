@@ -210,6 +210,10 @@ def start_session(req: SessionStartRequest, request: Request):
         _refusal = _trpg_resources.online_refusal(req.trpg_rulebook, req.trpg_scenario)
         if _refusal:
             raise HTTPException(403, _refusal)
+    _pin_rule_system, _pin_plugin_version = "", ""
+    if req.trpg_mode and req.trpg_rulebook:
+        from def_kari.trpg import registry as _trpg_registry, resources as _trpg_res
+        _pin_rule_system, _pin_plugin_version = _trpg_registry.pin_for(_trpg_res.load_rulebook(req.trpg_rulebook))
     _skill_pool_init = 0
     if req.trpg_mode and req.trpg_rulebook:
         _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req)
@@ -241,6 +245,9 @@ def start_session(req: SessionStartRequest, request: Request):
         "designated_next": None,
         "trpg_mode": req.trpg_mode,
         "trpg_rulebook": req.trpg_rulebook,
+        # 卓のルールシステムとプラグインの版を固定する（B-002。卓の途中でファイルが変わっても入れ替わらない）
+        "trpg_rule_system": _pin_rule_system,
+        "trpg_plugin_version": _pin_plugin_version,
         "trpg_scenario": req.trpg_scenario,
         "char_game_sheets": req.char_game_sheets,
         "current_scene_index": 0,
@@ -298,6 +305,14 @@ def start_session(req: SessionStartRequest, request: Request):
     }
 
 
+def _online_table_refusal(sess: dict) -> str | None:
+    """この卓に招待で人を入れてよくないとき、その理由（ルールブック・シナリオの manifest。B-022）。"""
+    if not (sess.get("trpg_rulebook") or sess.get("trpg_scenario")):
+        return None
+    from def_kari.trpg import resources as _trpg_resources
+    return _trpg_resources.online_refusal(sess.get("trpg_rulebook", ""), sess.get("trpg_scenario", ""))
+
+
 class InviteRequest(BaseModel):
     rating: str = "SFW"
 
@@ -308,6 +323,12 @@ def create_invite(session_id: str, req: InviteRequest, auth: dict = Depends(requ
     sess = _sessions.get(session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
+    # 招待で人が入る卓は、オフラインの卓（/load で読み込んだ卓を含む）でもオンラインの卓として扱う。
+    # 招待コードを出す前に、ルールブック・シナリオがオンラインを許すかを確かめる（B-013・B-022。
+    # 2026-11-14 まで確かめておらず、オンラインを許さないルールブックの卓に遠隔の参加者を入れられた）。
+    _refusal = _online_table_refusal(sess)
+    if _refusal:
+        raise HTTPException(403, _refusal)
     rating = req.rating if req.rating in _INVITE_RATINGS else "SFW"
     # 衝突を避けながら生成
     for _ in range(10):
@@ -407,13 +428,12 @@ def join_session(req: JoinRequest, request: Request):
 
     session_rating = invite_info.get("rating", "SFW")
 
-    # オンラインの卓のルールブック・シナリオが、今もオンラインを許しているか（B-022）。自動保存から
+    # 招待で入る卓のルールブック・シナリオが、今もオンラインを許しているか（B-013・B-022）。
+    # online_mode に関係なく確かめる（オフラインの卓でも招待コードを出せるため）。自動保存から
     # 戻った卓や、作った後に manifest が変わった場合に備えて、参加のたびに確かめる。
-    if sess.get("online_mode") and (sess.get("trpg_rulebook") or sess.get("trpg_scenario")):
-        from def_kari.trpg import resources as _trpg_resources
-        _refusal = _trpg_resources.online_refusal(sess.get("trpg_rulebook", ""), sess.get("trpg_scenario", ""))
-        if _refusal:
-            raise HTTPException(403, _refusal)
+    _refusal = _online_table_refusal(sess)
+    if _refusal:
+        raise HTTPException(403, _refusal)
 
     char_id = ""
     role = "observer"
@@ -927,6 +947,10 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, request: Requ
         sess["scene"] = _rule_data.get("scene", "")
     if req.trpg_rulebook is not None:
         sess["trpg_rulebook"] = req.trpg_rulebook
+        # ルールブックを変えたら、固定するルールシステムも変える（B-002）
+        from def_kari.trpg import registry as _trpg_registry, resources as _trpg_res
+        _pinned = _trpg_registry.pin_for(_trpg_res.load_rulebook(req.trpg_rulebook)) if req.trpg_rulebook else ("", "")
+        sess["trpg_rule_system"], sess["trpg_plugin_version"] = _pinned
         _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req) if req.trpg_rulebook else {}
         _pool = int(_rb.get("skill_point_pool", 0))
         # 開始前なので既存参加者の技能ポイントプールも新ルールブック値でリセットする

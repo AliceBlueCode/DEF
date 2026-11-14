@@ -273,3 +273,91 @@ def test_join_is_refused_when_the_rulebook_no_longer_allows_online(online_books,
             assert r.status_code == 403
         finally:
             _sessions.pop(sid, None)
+
+
+# ── フォルダのリンクで、まとまりの外を読まない（B-012。実装レビューの🔴1） ──────────
+# `rulebooks/` そのものが外を指すリンクだと、以前は外のフォルダ全体が「内側」になっていた。
+# Windows のジャンクションは権限なしで作れるので、Windows ではジャンクション、ほかではシンボリックリンクで確かめる。
+
+import os  # noqa: E402
+import subprocess  # noqa: E402
+
+
+def _dir_link(link: Path, target: Path) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt":
+        r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True)
+        if r.returncode == 0:
+            return
+    pytest.skip("directory links are not available here")
+
+
+@pytest.fixture
+def secret_outside(tmp_path):
+    secret = tmp_path / "outside_private"
+    _w(secret / "secret.json", {"label": "SECRET"})
+    return secret
+
+
+def _assert_not_readable(rid="secret"):
+    assert resources.load_rulebook(rid) == {}
+    assert resources.load_rulebook(rid, public_only=True) == {}
+    assert rid not in resources.all_rulebooks()
+    assert resources.find_rulebook_file(rid) is None
+    assert resources.rulebook_source(rid) is None
+
+
+def test_single_repo_rulebooks_folder_link_is_not_followed(local, no_plugins, monkeypatch, tmp_path, secret_outside):
+    repo = tmp_path / "evil_repo"
+    _w(repo / "manifest.json", {"online_sessions": True, "external_services_allowed": True})
+    _dir_link(repo / "rulebooks", secret_outside)
+    _repos(monkeypatch, repo)
+    _assert_not_readable()
+
+
+def test_aggregate_subfolder_rulebooks_link_is_not_followed(local, no_plugins, monkeypatch, tmp_path, secret_outside):
+    repo = tmp_path / "agg"
+    _w(repo / "pack" / "manifest.json", {"online_sessions": True})
+    _dir_link(repo / "pack" / "rulebooks", secret_outside)
+    _repos(monkeypatch, repo)
+    _assert_not_readable()
+
+
+def test_plugin_rulebooks_link_is_not_followed(grid_plugin, secret_outside):
+    shutil.rmtree(grid_plugin / "rulebooks")  # 普通のフォルダを消してから、同じ名前のリンクにする
+    _dir_link(grid_plugin / "rulebooks", secret_outside)
+    _assert_not_readable()
+    assert (secret_outside / "secret.json").exists()  # 外のファイルは残っている（読めなかっただけ）
+
+
+def test_invite_on_an_offline_table_is_refused_for_a_closed_rulebook(online_books):
+    """オフラインの卓でも、招待で人を入れるならオンラインの卓として確かめる（B-013・B-022。実装レビューの🔴2）。"""
+    with TestClient(app) as client:
+        r = client.post("/api/session/start", json={
+            "character_ids": [], "online_mode": False, "trpg_mode": True, "trpg_rulebook": "closed_book"})
+        assert r.status_code == 200  # オフラインの卓は作れる
+        sid, host = r.json()["session_id"], r.json()["host_token"]
+        try:
+            inv = client.post(f"/api/session/{sid}/invite", json={"rating": "SFW"},
+                              headers={"Authorization": f"Bearer {host}"})
+            assert inv.status_code == 403
+        finally:
+            _sessions.pop(sid, None)
+
+
+def test_join_an_offline_table_with_an_old_invite_is_refused(online_books, tmp_path):
+    with TestClient(app) as client:
+        r = client.post("/api/session/start", json={
+            "character_ids": [], "online_mode": False, "trpg_mode": True, "trpg_rulebook": "ok_book"})
+        sid, host = r.json()["session_id"], r.json()["host_token"]
+        try:
+            code = client.post(f"/api/session/{sid}/invite", json={"rating": "SFW"},
+                               headers={"Authorization": f"Bearer {host}"}).json()["invite_code"]
+            _w(tmp_path / "ok" / "manifest.json", {"online_sessions": False})
+            assert client.post("/api/session/join", json={"invite_code": code}).status_code == 403
+        finally:
+            _sessions.pop(sid, None)

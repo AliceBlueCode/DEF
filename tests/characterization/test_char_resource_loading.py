@@ -56,7 +56,7 @@ def test_broken_json_falls_through_to_next_dir(rulebook_dirs):
     assert [b["id"] for b in t.list_rulebooks()["rulebooks"]] == ["bk"]
 
 
-def test_session_loader_uses_file_name_list_uses_id_field(rulebook_dirs):
+def test_list_and_session_loader_both_use_the_file_name(rulebook_dirs):
     """C-002: A章でわざと変えた挙動（B-029、2026-11-14）。以前の一覧は JSON の `id` を ID にしていて、
     一覧に出た ID では取得できなかった。今は一覧もファイル名を ID にし、食い違いは警告に残す。"""
     public, _ = rulebook_dirs

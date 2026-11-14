@@ -57,20 +57,24 @@ def is_safe_id(resource_id: str) -> bool:
     return bool(resource_id) and bool(SAFE_ID_RE.match(resource_id))
 
 
-def safe_file(d: Path, name: str) -> Path | None:
+def safe_file(d: Path, name: str, root: Path | None = None) -> Path | None:
     """置き場所 `d` の中のファイル `name` のパスを、安全なときだけ返す（B-012）。
 
-    パスを解決した後（シンボリックリンクをたどった後）も `d` の内側にあり、普通のファイルで
-    あるときだけ、解決した後のパスを返す。それ以外は None。読み込み・一覧・個別の取得・保存先の
-    検索は、すべてこの関数を通す（2026-11-13 まで、一覧と個別の取得は確かめずに読んでおり、
-    置き場所の中のシンボリックリンクから外のファイルを読めた。一次レビューの指摘）。
+    パスを解決した後（シンボリックリンクやジャンクションをたどった後）も、基準のフォルダの内側にあり、
+    普通のファイルであるときだけ、解決した後のパスを返す。それ以外は None。基準は `root`（外部の
+    まとまりの根。リポジトリ、集約型のサブフォルダ、プラグインのフォルダ）で、無ければ `d`。
+    読み込み・一覧・個別の取得・保存先の検索は、すべてこの関数を通す。
+
+    - 2026-11-13: 一覧と個別の取得が確かめずに読んでいて、ファイルのリンクから外を読めた（一次レビュー）。
+    - 2026-11-14: 基準が `d` だったので、`rulebooks/` そのものが外を指すリンク（Windows のジャンクション
+      なら権限なしで作れる）だと、外のフォルダ全体が「内側」になっていた（実装レビューの🔴1）。
     """
     try:
-        base = d.resolve()
+        base = (root if root is not None else d).resolve()
         candidate = (d / name).resolve()
         if not candidate.is_relative_to(base):
             if (d / name).exists() or (d / name).is_symlink():
-                _log.warning("[trpg] %s points outside %s; ignored", d / name, d)
+                _log.warning("[trpg] %s points outside %s; ignored", d / name, root if root is not None else d)
             return None
         return candidate if candidate.is_file() else None
     except (OSError, ValueError):
@@ -112,6 +116,7 @@ class Source:
     manifest: dict | None      # manifest.json の中身。無い・壊れているなら None
     manifest_error: str = ""   # 壊れていたときの理由
     plugin_rule_systems: tuple = ()  # プラグインのまとまりなら、そのプラグインのルールシステム
+    root: Path | None = None   # 外部のまとまりの根。中のファイルは、この内側にあるものだけを読む（B-012）
 
 
 def _repo_sources(root: Path) -> list[Source]:
@@ -122,7 +127,7 @@ def _repo_sources(root: Path) -> list[Source]:
     if manifest is not None or err or (root / "rulebooks").is_dir() or (root / "scenarios").is_dir():
         if err:
             _log.warning("[trpg] %s: %s", root, err)
-        return [Source("repo", str(root), root / "rulebooks", root / "scenarios", manifest, err)]
+        return [Source("repo", str(root), root / "rulebooks", root / "scenarios", manifest, err, (), root)]
     found = []
     for sub in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
         if not is_safe_id(sub.name):
@@ -137,7 +142,7 @@ def _repo_sources(root: Path) -> list[Source]:
         m, e = read_manifest(sub)
         if e:
             _log.warning("[trpg] %s: %s", sub, e)
-        found.append(Source("repo", str(sub), sub / "rulebooks", sub / "scenarios", m, e))
+        found.append(Source("repo", str(sub), sub / "rulebooks", sub / "scenarios", m, e, (), sub))
     return found
 
 
@@ -149,7 +154,7 @@ def _external_sources() -> list[Source]:
     for p in plugins.loaded_plugins():
         m, e = read_manifest(p.path)
         sources.append(Source("plugin", f"plugin {p.plugin_id}", p.path / "rulebooks", p.path / "scenarios",
-                              m, e, tuple(p.rule_systems)))
+                              m, e, tuple(p.rule_systems), p.path))
     for raw in os.environ.get("TRPG_RULEBOOK_REPO_PATHS", "").split(";"):
         if raw.strip():
             sources.extend(_repo_sources(Path(raw.strip())))
@@ -178,12 +183,17 @@ def sources(public_only: bool = False) -> list[Source]:
 
 # ── 読み込み ─────────────────────────────────────────────────────
 
-def load_resource(resource_id: str, dirs: list[Path]) -> dict:
-    """`dirs` を順に探し、最初に読めた `{resource_id}.json` を返す。無ければ空の dict。"""
+def _as_place(d) -> tuple[Path, Path | None]:
+    return d if isinstance(d, tuple) else (d, None)
+
+
+def load_resource(resource_id: str, dirs: list) -> dict:
+    """`dirs`（フォルダ、または (フォルダ, 根)）を順に探し、最初に読めた `{resource_id}.json` を返す。"""
     if not is_safe_id(resource_id):
         return {}
     for d in dirs:
-        path = safe_file(d, f"{resource_id}.json")
+        folder, root = _as_place(d)
+        path = safe_file(folder, f"{resource_id}.json", root)
         if path is not None:
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -192,17 +202,32 @@ def load_resource(resource_id: str, dirs: list[Path]) -> dict:
     return {}
 
 
-def _rule_dirs(public_only: bool = False) -> list[Path]:
-    return [s.rules_dir for s in sources(public_only)]
+def _places(kind: str, public_only: bool = False) -> list[tuple[Path, Path | None, Source]]:
+    out = []
+    for src in sources(public_only):
+        out.append((src.rules_dir if kind == "rules" else src.scenarios_dir, src.root, src))
+    return out
 
 
-def _scenario_dirs(public_only: bool = False) -> list[Path]:
-    return [s.scenarios_dir for s in sources(public_only)]
+def _locate(resource_id: str, kind: str, public_only: bool = False) -> tuple[dict, Path | None, Source | None]:
+    """最初に読めた `{resource_id}.json` の (中身, パス, まとまり)。読み込み・取得・確かめは、すべて
+    この1つの探し方を使う（先のファイルが壊れていれば次を見る。確かめと読み込みで見るものがずれない）。"""
+    if not is_safe_id(resource_id):
+        return {}, None, None
+    for folder, root, src in _places(kind, public_only):
+        path = safe_file(folder, f"{resource_id}.json", root)
+        if path is None:
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8")), path, src
+        except (json.JSONDecodeError, OSError):
+            continue
+    return {}, None, None
 
 
 def load_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
     """ルールブックを読む。登録されていない `rule_system` のものは読まない（空の dict。B-002）。"""
-    data = load_resource(rulebook_id, _rule_dirs(public_only))
+    data = _locate(rulebook_id, "rules", public_only)[0]
     if data and not registry.is_known(data):
         _log.warning("[trpg] rulebook %s uses an unknown rule_system %r; not loaded",
                      rulebook_id, registry.rule_system_of(data))
@@ -213,9 +238,7 @@ def load_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
 def rulebook_unavailable_reason(rulebook_id: str) -> str | None:
     """ルールブックのファイルはあるのに、その `rule_system` が登録されていない（プラグインが
     読み込まれていない）とき、その理由を返す。それ以外（無い・読める）は None（B-002）。"""
-    if not is_safe_id(rulebook_id):
-        return None
-    data = load_resource(rulebook_id, _rule_dirs())
+    data = _locate(rulebook_id, "rules")[0]
     if data and not registry.is_known(data):
         return (f"rulebook {rulebook_id!r} needs the rule system {registry.rule_system_of(data)!r}, "
                 f"which is not available (its plugin is not loaded)")
@@ -223,24 +246,25 @@ def rulebook_unavailable_reason(rulebook_id: str) -> str | None:
 
 
 def load_scenario(scenario_id: str, public_only: bool = False) -> dict:
-    return load_resource(scenario_id, _scenario_dirs(public_only))
+    return _locate(scenario_id, "scenarios", public_only)[0]
 
 
-def _load_all(dirs: list[Path]) -> dict:
-    """`dirs` のすべての JSON を読み、ID（ファイル名）→ 中身 の dict を返す。
+def _load_all(places: list) -> dict:
+    """置き場所のすべての JSON を読み、ID（ファイル名）→ 中身 の dict を返す。
 
     同じ ID は先に見つかった方を使い、重なりを警告に残す（B-011）。JSON の `id` がファイル名と
     違えば警告を残し、ファイル名を ID にする（B-029）。読めないファイルは飛ばす。
     """
     found: dict = {}
     where: dict = {}
-    for d in dirs:
+    for place in places:
+        d, root = _as_place(place[:2] if isinstance(place, tuple) else place)
         if not d.is_dir():
             continue
         for f in sorted(d.iterdir()):
             if f.suffix != ".json" or f.name == ".gitkeep":
                 continue
-            path = safe_file(d, f.name)
+            path = safe_file(d, f.name, root)
             if path is None:
                 continue
             try:
@@ -260,45 +284,35 @@ def _load_all(dirs: list[Path]) -> dict:
 
 def all_rulebooks() -> dict:
     """一覧に出すルールブック。登録されていない `rule_system` のものは除く（B-002）。"""
-    return {k: v for k, v in _load_all(_rule_dirs()).items() if registry.is_known(v)}
+    return {k: v for k, v in _load_all(_places("rules")).items() if registry.is_known(v)}
 
 
 def all_scenarios() -> dict:
-    return _load_all(_scenario_dirs())
-
-
-def _find(resource_id: str, kind: str) -> tuple[Path, Source] | tuple[None, None]:
-    """`{resource_id}.json` がある最初のまとまりと、その安全なパス。kind は "rules" か "scenarios"。"""
-    if not is_safe_id(resource_id):
-        return None, None
-    for s in sources():
-        d = s.rules_dir if kind == "rules" else s.scenarios_dir
-        path = safe_file(d, f"{resource_id}.json")
-        if path is not None:
-            return path, s
-    return None, None
+    return _load_all(_places("scenarios"))
 
 
 def find_rulebook_file(rulebook_id: str) -> Path | None:
-    return _find(rulebook_id, "rules")[0]
+    return _locate(rulebook_id, "rules")[1]
 
 
 def find_scenario_file(scenario_id: str) -> Path | None:
-    return _find(scenario_id, "scenarios")[0]
+    return _locate(scenario_id, "scenarios")[1]
 
 
 def rulebook_source(rulebook_id: str) -> Source | None:
-    return _find(rulebook_id, "rules")[1]
+    return _locate(rulebook_id, "rules")[2]
 
 
 def scenario_source(scenario_id: str) -> Source | None:
-    return _find(scenario_id, "scenarios")[1]
+    return _locate(scenario_id, "scenarios")[2]
 
 
 def new_rulebook_file(rulebook_id: str) -> Path:
-    """新しく保存するルールブックのパス（置き場所の1つ目。無ければ作る）。"""
-    RULEBOOK_DIRS[0].mkdir(parents=True, exist_ok=True)
-    return RULEBOOK_DIRS[0] / f"{rulebook_id}.json"
+    """画面から新しく保存するルールブックのパス。git で管理していない置き場（data/private。
+    `RULEBOOK_DIRS` の最後）に置く（B-028。2026-11-14 までは data/public に保存していた）。"""
+    target_dir = RULEBOOK_DIRS[-1]
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir / f"{rulebook_id}.json"
 
 
 # ── 卓の許可（B-020） ───────────────────────────────────────────────
@@ -334,12 +348,11 @@ def table_permissions(rulebook_id: str, scenario_id: str = "") -> dict:
     卓が使うもの（ルールブック、シナリオ、そのルールブックのルールシステムを登録したプラグイン）の
     manifest の、すべてが許すときだけ許す。クレジット（B-023）も集めて返す。
     """
-    rb_source = rulebook_source(rulebook_id) if rulebook_id else None
-    rulebook = load_resource(rulebook_id, _rule_dirs()) if rulebook_id else {}
+    rulebook, _, rb_source = _locate(rulebook_id, "rules") if rulebook_id else ({}, None, None)
     rule_system = registry.rule_system_of(rulebook)
     involved: list[Source | None] = [rb_source]
     if scenario_id:
-        involved.append(scenario_source(scenario_id))
+        involved.append(_locate(scenario_id, "scenarios")[2])
     if rule_system != registry.DEFAULT_RULE_SYSTEM:
         plugin_src = next((s for s in _external_sources()
                            if s.kind == "plugin" and rule_system in s.plugin_rule_systems), None)

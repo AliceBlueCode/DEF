@@ -59,6 +59,10 @@ OWNERS: dict[str, set[str]] = {
     # AIの手番のタスクと自動進行: 手番エンジン。自動進行の切り替えのエンドポイントは gameplay
     "ai_task": {TURN_ENGINE},
     "ai_paused": {TURN_ENGINE, GAMEPLAY},
+    # 卓のルールシステムとプラグインの版の固定（B-002）: 卓の作成とロビーでのルールブックの変更（ロビー）、
+    # 保存と読み込み（persistence）だけ。ほかは固定した値を読むだけ
+    "trpg_rule_system": {LOBBY, PERSISTENCE},
+    "trpg_plugin_version": {LOBBY, PERSISTENCE},
     "auto_advance": {TURN_ENGINE, GAMEPLAY},
 }
 

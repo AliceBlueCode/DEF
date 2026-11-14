@@ -292,13 +292,31 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
         # 判定（成功・失敗）が作られず合計だけになっていた（2026-11-08、実機確認で発覚）。
         rulebook_id = session.get("trpg_rulebook") or req.rulebook_id
         notation = req.notation
-        if rulebook_id:
-            from def_kari.trpg import registry as _trpg_registry, resources as _trpg_resources
-            _rb = _trpg_resources.load_rulebook(rulebook_id)
-            _system = _trpg_registry.for_rulebook(_rb) if _rb else None
-            if _system is not None:
-                notation = _system.dice_notation(_rb)
-        computed = compute_dice_judgment(notation, req.skill_value, rulebook_id, req.is_skill, req.is_stat)
+        from def_kari.trpg import plugin_hooks as _trpg_hooks, registry as _trpg_registry, resources as _trpg_resources
+        _system = None
+        if session.get("trpg_rulebook"):
+            # 卓のルールシステムは、卓を作ったときに固定した値から引く（B-002）
+            _system, _unavailable = _trpg_hooks.resolve_for_session(session)
+            if _unavailable:
+                from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+                _pause_for_plugin_error(session, {"capability": "rule", "method": "general_check", "error": _unavailable})
+                return {"error": _unavailable}
+        _rb = _trpg_resources.load_rulebook(rulebook_id) if rulebook_id else {}
+        if _rb and _system is None:
+            _system = _trpg_registry.for_rulebook(_rb)
+        try:
+            if _rb and _system is not None:
+                notation = _trpg_registry.call_rule(_system, "dice_notation", _rb)
+            if not notation:
+                # ルールブックの無い卓で表記も無ければ、既定のルールシステムの表記（以前は画面が 1d100 を送っていた）
+                notation = _trpg_registry.get(_trpg_registry.DEFAULT_RULE_SYSTEM).dice_notation({})
+            computed = compute_dice_judgment(notation, req.skill_value, rulebook_id, req.is_skill, req.is_stat,
+                                             system=_system)
+        except _trpg_registry.RuleSystemError as e:
+            # プラグインの判定が失敗したら、卓を止めて知らせる（B-027）
+            from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+            _pause_for_plugin_error(session, {"capability": "rule", "method": "general_check", "error": str(e)})
+            return {"error": str(e)}
     except ValueError as e:
         return {"error": str(e)}
     result = computed["result"]

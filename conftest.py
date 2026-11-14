@@ -15,6 +15,10 @@ import tempfile
 _ISOLATED = tempfile.mkdtemp(prefix="def_pytest_data_")
 os.environ["DEF_ISOLATED_DATA_DIR"] = _ISOLATED
 
+# TestClient でアプリの起動の処理（lifespan）を通るテストが、開発機の本物のバックエンド（TGW・
+# VOICEVOX・A1111 など）を起動しにいかないようにする（2026-11-14。def_kari/api/main.py の lifespan）。
+os.environ["DEF_NO_BACKEND_AUTOSTART"] = "1"
+
 
 def pytest_sessionfinish(session, exitstatus):
     # ログのファイル（def.log・audit.log）が開いたままだと、Windows では消せずに残る

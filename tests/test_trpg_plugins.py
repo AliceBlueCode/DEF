@@ -231,3 +231,117 @@ def test_saved_session_with_missing_rule_system_is_not_restored(monkeypatch, tmp
     sp._restore_one_autosave_file(f, time.time())
     assert "_char_unavail" not in _sessions
     assert f.exists()  # 消さない（プラグインを入れ直せば次の起動で戻る）
+
+
+# ── 読み込みの細部（実装レビューの🟢） ──────────────────────────────
+
+def test_sys_exit_in_register_does_not_stop_startup(fresh_registry, monkeypatch, tmp_path):
+    bad = _copy_plugin(tmp_path, name="bad", decl={"plugin_id": "bad_exit"},
+                       init="import sys\ndef register(api):\n    sys.exit(3)\n")
+    _use(monkeypatch, bad, SAMPLE)
+    assert registry.get("sample_grid") is not None
+    assert any("SystemExit" in r for r in _reasons())
+    assert "def_trpg_plugin_bad_exit" not in sys.modules
+
+
+def test_same_plugin_id_twice_is_refused(fresh_registry, monkeypatch, tmp_path):
+    second = _copy_plugin(tmp_path, name="again", decl={"rule_systems": ["sample_grid"]})
+    _use(monkeypatch, SAMPLE, second)
+    assert len(plugins.loaded_plugins()) == 1
+    assert any("already loaded" in r for r in _reasons())
+
+
+# ── 卓のルールシステムの固定（B-002。実装レビューの🟡2） ─────────────────────
+
+def test_pin_for_records_the_plugin_version(fresh_registry, monkeypatch):
+    _use(monkeypatch, SAMPLE)
+    assert registry.pin_for({"rule_system": "sample_grid"}) == ("sample_grid", "0.1.0")
+    assert registry.pin_for({}) == ("def_original", "")
+
+
+def test_pinned_system_resolves_even_if_the_rulebook_file_changes(fresh_registry, monkeypatch, tmp_path):
+    _use(monkeypatch, SAMPLE)
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    (rules / "gb.json").write_text(json.dumps({"rule_system": "sample_grid"}), encoding="utf-8")
+    monkeypatch.setattr(resources, "RULEBOOK_DIRS", [rules])
+    sess = {"trpg_rulebook": "gb", "trpg_rule_system": "sample_grid", "trpg_plugin_version": "0.1.0"}
+    (rules / "gb.json").write_text(json.dumps({"label": "now a def_original book"}), encoding="utf-8")
+    assert plugin_hooks.system_for_session(sess).id == "sample_grid"
+
+
+def test_unresolvable_pinned_system_closes_and_pauses(fresh_registry, monkeypatch):
+    _use(monkeypatch, SAMPLE)
+    from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+    for version in ("9.9.9",):  # 版が変わった
+        sess = {"trpg_rulebook": "gb", "trpg_rule_system": "sample_grid", "trpg_plugin_version": version}
+        assert plugin_hooks.has_capability(sess, "visibility") is True  # 呼ぶ側を call に回す
+        out = plugin_hooks.call(sess, "visibility", "history_view", sess, {}, on_failure=_pause_for_plugin_error)
+        assert out == [] and sess["ai_paused"] is True and "changed from 9.9.9" in sess["plugin_error"]["error"]
+    gone = {"trpg_rulebook": "gb", "trpg_rule_system": "_no_such_system", "trpg_plugin_version": ""}
+    assert plugin_hooks.call(gone, "memory_policy", "should_save_memory", gone) is False
+
+
+def test_session_start_pins_the_rule_system(fresh_registry, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session_state import _sessions
+    _use(monkeypatch, SAMPLE)
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    (rules / "gb.json").write_text(json.dumps({"rule_system": "sample_grid", "rule_system_name": "G"}), encoding="utf-8")
+    monkeypatch.setattr(resources, "RULEBOOK_DIRS", [rules])
+    monkeypatch.setattr(resources, "_external_sources", lambda: [])
+    with TestClient(app) as client:
+        r = client.post("/api/session/start", json={"character_ids": [], "trpg_mode": True, "trpg_rulebook": "gb"})
+        sid = r.json()["session_id"]
+        try:
+            assert (_sessions[sid]["trpg_rule_system"], _sessions[sid]["trpg_plugin_version"]) == ("sample_grid", "0.1.0")
+        finally:
+            _sessions.pop(sid, None)
+
+
+# ── 判定まわりの失敗（B-027。実装レビューの🟡3） ─────────────────────────────
+
+_BROKEN_CHECK_INIT = _CAPS_INIT.format(caps="").replace(
+    "def general_check(self, r, v, rb, **o): return {{}}".replace("{{}}", "{}"),
+    "def general_check(self, r, v, rb, **o): raise RuntimeError('broken judge')")
+
+
+def test_failing_general_check_is_an_error_not_a_crash(fresh_registry, monkeypatch, tmp_path):
+    _use(monkeypatch, _copy_plugin(tmp_path, init=_BROKEN_CHECK_INIT))
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    (rules / "gb.json").write_text(json.dumps({"rule_system": "sample_grid"}), encoding="utf-8")
+    monkeypatch.setattr(resources, "RULEBOOK_DIRS", [rules])
+    with pytest.raises(registry.RuleSystemError):
+        t.compute_dice_judgment("1d20", 5, "gb")
+    assert t.dice_roll(t.DiceRollRequest(notation="1d20", skill_value=5, rulebook_id="gb"))["error"].startswith(
+        "the rule system 'sample_grid' failed in general_check")
+
+
+def test_failing_judge_pauses_the_table(fresh_registry, monkeypatch, tmp_path):
+    from unittest.mock import patch
+    from def_kari.api.routes.session_gameplay import SessionDiceRollRequest, session_dice_roll
+    from def_kari.api.routes.session_state import _sessions
+    _use(monkeypatch, _copy_plugin(tmp_path, init=_BROKEN_CHECK_INIT))
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    (rules / "gb.json").write_text(json.dumps({"rule_system": "sample_grid"}), encoding="utf-8")
+    monkeypatch.setattr(resources, "RULEBOOK_DIRS", [rules])
+    sid = "_broken_judge"
+    _sessions[sid] = {"id": sid, "trpg_rulebook": "gb", "trpg_rule_system": "sample_grid",
+                      "trpg_plugin_version": "0.1.0", "history": [], "name_map": {}, "human_char_ids": [], "players": {}}
+    try:
+        with patch("def_kari.api.routes.session_gameplay._game_event_bus"):
+            out = session_dice_roll(sid, SessionDiceRollRequest(skill_value=5), _auth={"jti": "h", "role": "host"})
+        assert "failed in general_check" in out["error"]
+        assert _sessions[sid]["ai_paused"] is True
+    finally:
+        _sessions.pop(sid, None)
+
+
+def test_unknown_rule_extension_is_refused():
+    with pytest.raises(ValueError):
+        registry.extension(registry.get("def_original"), "anything")
+    assert registry.extension(registry.get("def_original"), "damage_roll") is not None

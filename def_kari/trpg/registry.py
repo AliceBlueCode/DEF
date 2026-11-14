@@ -80,3 +80,69 @@ def for_rulebook(rulebook: dict) -> RuleSystem | None:
 
 def is_known(rulebook: dict) -> bool:
     return for_rulebook(rulebook) is not None
+
+
+# ── 卓のルールシステムの固定（B-002。実装レビューの🟡2） ───────────────────
+
+def _loaded_plugin_version(rule_system_id: str) -> str:
+    from def_kari.trpg import plugins
+    for p in plugins.loaded_plugins():
+        if rule_system_id in p.rule_systems:
+            return p.plugin_version
+    return ""
+
+
+def pin_for(rulebook: dict) -> tuple[str, str]:
+    """卓を作るとき（とルールブックを変えるとき）にセッションへ書く (rule_system, プラグインの版)。
+    本体のルールシステム（def_original）の版は空。"""
+    rule_system = rule_system_of(rulebook)
+    return rule_system, _loaded_plugin_version(rule_system)
+
+
+def resolve_pinned(rule_system_id: str, plugin_version: str = "") -> tuple["RuleSystem | None", str | None]:
+    """固定したルールシステムを引く。引けない（プラグインが無い、版が変わった）なら (None, 理由)。
+
+    卓の途中でルールブックのファイルが消えた・入れ替わったときに、別のルールシステムや口の無い
+    既定の処理に倒れないよう、卓はルールブックからではなく、固定した値から引く。
+    """
+    system = get(rule_system_id)
+    if system is None:
+        return None, f"rule system {rule_system_id!r} of this table is not available (its plugin is not loaded)"
+    current = _loaded_plugin_version(rule_system_id)
+    if plugin_version and current != plugin_version:
+        return None, (f"the plugin of rule system {rule_system_id!r} changed from {plugin_version} to "
+                      f"{current or 'none'} since this table was created")
+    return system, None
+
+
+# ── ルールシステムの関数を呼ぶ入口（B-027。実装レビューの🟡3） ───────────────────
+
+class RuleSystemError(ValueError):
+    """ルールシステム（プラグイン）の判定まわりの関数が失敗した。"""
+
+
+# 本体の拡張: 片方のルールにしか無い、口ではない機能（B-004）。名前で探すのは、ここに書いたものだけ。
+#   damage_roll(rulebook) -> dict: ダメージ表を振る（def_original の `/api/trpg/damage`）
+RULE_EXTENSIONS = frozenset({"damage_roll"})
+
+
+def extension(system: "RuleSystem | None", name: str):
+    """本体の拡張 `name` の関数。持っていなければ None。"""
+    if name not in RULE_EXTENSIONS:
+        raise ValueError(f"unknown rule extension: {name!r}")
+    fn = getattr(system, name, None) if system is not None else None
+    return fn if callable(fn) else None
+
+
+def call_rule(system: "RuleSystem", method: str, *args, **kwargs):
+    """ルールシステムの判定まわりの関数（B-003 の5つと、本体の拡張）を呼ぶ。失敗したら
+    `RuleSystemError` にする（500 にしない。卓があれば、呼ぶ側が止める）。"""
+    fn = getattr(system, method)
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:  # プラグインの不具合で、サーバーを落とさない（B-027）
+        import logging
+        logging.getLogger("def.trpg").error("[trpg] rule system %s.%s failed: %s: %s",
+                                            getattr(system, "id", "?"), method, type(e).__name__, e)
+        raise RuleSystemError(f"the rule system {getattr(system, 'id', '?')!r} failed in {method}: "
+                              f"{type(e).__name__}: {e}") from e

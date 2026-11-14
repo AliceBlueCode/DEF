@@ -180,14 +180,14 @@ def test_get_rulebook_missing(use_fixture_rulebooks):
 
 
 def test_save_new_rulebook_goes_to_public(rulebook_dirs):
-    """C-002: A章でわざと変える挙動（B-028 で、git で管理していない置き場に保存する）。
-    今は、新しいルールブックは読み込み先の1つ目（public）に保存される。"""
+    """C-002: A章でわざと変えた挙動（B-028、2026-11-14）。以前は、新しいルールブックを読み込み先の
+    1つ目（data/public。git で管理している）に保存していた。今は git で管理していない data/private に保存する。"""
     public, private = rulebook_dirs
     content = json.dumps({"rule_system_name": "x", "dice_system": "1d6",
                           "judgment": {"success_condition": "roll_lte_skill"}})
     assert t.save_rulebook("newbook", t.SaveRulebookRequest(content=content)) == {"status": "ok", "id": "newbook"}
-    assert (public / "trpg_rules" / "newbook.json").exists()
-    assert not (private / "trpg_rules" / "newbook.json").exists()
+    assert (private / "trpg_rules" / "newbook.json").exists()
+    assert not (public / "trpg_rules" / "newbook.json").exists()
 
 
 def test_save_existing_rulebook_stays_where_it_is(rulebook_dirs):

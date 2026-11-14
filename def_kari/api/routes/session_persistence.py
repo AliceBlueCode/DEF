@@ -440,6 +440,15 @@ def load_session(req: SessionLoadRequest):
     _unavailable = _trpg_resources.rulebook_unavailable_reason(meta.get("trpg_rulebook", ""))
     if _unavailable:
         return {"error": _unavailable}
+    _pinned_rs, _pinned_ver = meta.get("trpg_rule_system", ""), meta.get("trpg_plugin_version", "")
+    if meta.get("trpg_rulebook") and not _pinned_rs:
+        from def_kari.trpg import registry as _trpg_registry
+        _pinned_rs, _pinned_ver = _trpg_registry.pin_for(_trpg_resources.load_rulebook(meta["trpg_rulebook"]))
+    if _pinned_rs:
+        from def_kari.trpg import registry as _trpg_registry
+        _sys, _why = _trpg_registry.resolve_pinned(_pinned_rs, _pinned_ver)
+        if _why:
+            return {"error": _why}
     new_id = secrets.token_urlsafe(16)
     session = {
         "id": new_id,
@@ -456,6 +465,9 @@ def load_session(req: SessionLoadRequest):
         "history": data.get("history", []),
         "trpg_mode": meta.get("trpg_mode", False),
         "trpg_rulebook": meta.get("trpg_rulebook", ""),
+        # 保存したときに固定していたルールシステムと版。古い保存には無いので、そのときはルールブックから決める（B-002）
+        "trpg_rule_system": _pinned_rs,
+        "trpg_plugin_version": _pinned_ver,
         "trpg_scenario": meta.get("trpg_scenario", ""),
         "char_game_sheets": meta.get("char_game_sheets", {}),
         "current_scene_index": meta.get("current_scene_index", 0),
@@ -555,6 +567,8 @@ def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSes
         "saved_at": datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
         "trpg_mode": session.get("trpg_mode", False),
         "trpg_rulebook": session.get("trpg_rulebook", ""),
+        "trpg_rule_system": session.get("trpg_rule_system", ""),
+        "trpg_plugin_version": session.get("trpg_plugin_version", ""),
         "trpg_scenario": session.get("trpg_scenario", ""),
         "trpg_scenario_title": _load_trpg_scenario(session.get("trpg_scenario", "")).get("title", "") if session.get("trpg_scenario") else "",
         "char_game_sheets": session.get("char_game_sheets", {}),

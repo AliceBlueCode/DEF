@@ -122,7 +122,7 @@ def _get_dice_sides(rulebook: dict) -> int:
     if not notation:
         from def_kari.trpg import registry
         system = registry.for_rulebook(rulebook) or registry.get(registry.DEFAULT_RULE_SYSTEM)
-        notation = system.dice_notation(rulebook)
+        notation = registry.call_rule(system, "dice_notation", rulebook)
     m = _DICE_RE.match(notation)
     return int(m.group(2)) if m else 100
 

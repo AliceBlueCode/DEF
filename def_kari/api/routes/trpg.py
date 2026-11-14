@@ -18,6 +18,13 @@ def _load_rulebooks() -> dict:
     return resources.all_rulebooks()
 
 
+def _safe_dice_notation(rulebook: dict) -> str:
+    try:
+        return registry.call_rule(registry.for_rulebook(rulebook), "dice_notation", rulebook)
+    except registry.RuleSystemError:
+        return ""
+
+
 @router.get("/rulebooks")
 def list_rulebooks():
     books = _load_rulebooks()
@@ -27,7 +34,7 @@ def list_rulebooks():
                 "id": bid,
                 "label": b.get("label", bid),
                 "rule_system_name": b.get("rule_system_name", ""),
-                "dice_system": registry.for_rulebook(b).dice_notation(b),
+                "dice_system": _safe_dice_notation(b),
                 "private": False,
             }
             for bid, b in books.items()
@@ -65,7 +72,10 @@ def save_rulebook(rulebook_id: str, req: SaveRulebookRequest):
     system = registry.for_rulebook(data) if isinstance(data, dict) else registry.get(registry.DEFAULT_RULE_SYSTEM)
     if system is None:
         return {"error": "Validation failed", "details": [f"unknown rule_system: {registry.rule_system_of(data)!r}"]}
-    errors = system.validate_rulebook(data)
+    try:
+        errors = registry.call_rule(system, "validate_rulebook", data)
+    except registry.RuleSystemError as e:
+        return {"error": "Validation failed", "details": [str(e)]}
     if errors:
         return {"error": "Validation failed", "details": errors}
 
@@ -138,6 +148,7 @@ def compute_dice_judgment(
     rulebook_id: str = "",
     is_skill: bool = False,
     is_stat: bool = False,
+    system=None,
 ) -> dict:
     """ダイスロール＋判定計算のみを行う純粋関数（セッション状態には一切触れない）。
 
@@ -150,12 +161,14 @@ def compute_dice_judgment(
     if skill_value > 0 and rulebook_id:
         books = _load_rulebooks()
         rulebook = books.get(rulebook_id, {})
-        system = registry.for_rulebook(rulebook) if rulebook else None
-        if system is not None:
+        # 卓のルールシステム（固定した値）を渡されればそれを使い、無ければルールブックから引く（B-002）
+        system = system if system is not None else (registry.for_rulebook(rulebook) if rulebook else None)
+        if rulebook and system is not None:
             # 判定はルールブックのルールシステムに任せる（B-003）。def_original は、技能値を直接
             # 使う判定（is_skill）と能力値の生の判定（is_stat）で、判定の型を差し替える。
-            judgment = system.general_check(result["total"], skill_value, rulebook,
-                                            is_skill=is_skill, is_stat=is_stat)
+            # 失敗は RuleSystemError（ValueError）で、呼ぶ側はエラーとして返す（B-027）。
+            judgment = registry.call_rule(system, "general_check", result["total"], skill_value, rulebook,
+                                          is_skill=is_skill, is_stat=is_stat)
 
     return {"result": result, "judgment": judgment}
 
@@ -197,10 +210,12 @@ def damage_roll(req: DamageRollRequest):
         return dict(_RULEBOOK_ID_REQUIRED)
     rulebook = _load_rulebooks().get(req.rulebook_id, {})
     system = registry.for_rulebook(rulebook)
-    roll_table = getattr(system, "damage_roll", None) if system is not None else None
-    if not callable(roll_table):
+    if registry.extension(system, "damage_roll") is None:
         return {"error": "This rule system has no damage table"}
-    return roll_table(rulebook)
+    try:
+        return registry.call_rule(system, "damage_roll", rulebook)
+    except registry.RuleSystemError as e:
+        return {"error": str(e)}
 
 
 class OpposedCheckRequest(BaseModel):

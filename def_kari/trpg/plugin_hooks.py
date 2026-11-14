@@ -57,15 +57,31 @@ CLOSED_VALUES: dict[str, object] = {
 }
 
 
-def system_for_session(session: dict):
-    """セッションのルールブックのルールシステム。ルールブックが無い・読めないときは None。"""
-    rulebook_id = session.get("trpg_rulebook", "") if isinstance(session, dict) else ""
+def resolve_for_session(session: dict) -> tuple[object | None, str | None]:
+    """卓のルールシステムと、引けないときの理由。
+
+    卓を作ったときに固定した `trpg_rule_system`（とプラグインの版）から引く（B-002）。固定した
+    値の無い古い卓は、ルールブックから引く。ルールブックの無い卓は (None, None)。
+    """
+    if not isinstance(session, dict):
+        return None, None
+    if session.get("trpg_rule_system"):
+        return registry.resolve_pinned(session["trpg_rule_system"], session.get("trpg_plugin_version", ""))
+    rulebook_id = session.get("trpg_rulebook", "")
     rulebook = resources.load_rulebook(rulebook_id) if rulebook_id else {}
-    return registry.for_rulebook(rulebook) if rulebook else None
+    return (registry.for_rulebook(rulebook) if rulebook else None), None
+
+
+def system_for_session(session: dict):
+    """卓のルールシステム。引けない・ルールブックが無いときは None。"""
+    return resolve_for_session(session)[0]
 
 
 def has_capability(session: dict, capability: str) -> bool:
-    system = system_for_session(session)
+    """口を持っているか。固定したルールシステムが引けない卓は True（呼ぶ側を `call` に回し、閉じる側に倒す）。"""
+    system, reason = resolve_for_session(session)
+    if reason:
+        return True
     return system is not None and capability in getattr(system, "capabilities", frozenset())
 
 
@@ -78,7 +94,16 @@ def call(session: dict | None, capability: str, method: str, *args, system=None,
     """
     if method not in CLOSED_VALUES:
         raise ValueError(f"unknown hook method: {method!r}")
-    system = system if system is not None else (system_for_session(session) if session else None)
+    reason = None
+    if system is None and session:
+        system, reason = resolve_for_session(session)
+    if reason:
+        # 固定したルールシステムが引けない卓: 口があったはずなので、口が無いときの DEF の処理には
+        # 逃がさず、閉じる側に倒して卓を止める（B-002・B-027。実装レビューの🟡2）
+        _log.error("[trpg] table rule system is unavailable: %s", reason)
+        if on_failure is not None and isinstance(session, dict):
+            on_failure(session, {"capability": capability, "method": method, "error": reason})
+        return copy.deepcopy(CLOSED_VALUES[method])
     if system is None or capability not in getattr(system, "capabilities", frozenset()):
         return NOT_HANDLED
     try:

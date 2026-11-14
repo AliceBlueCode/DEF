@@ -26,7 +26,10 @@ def build_trpg_context(rulebook: dict, scenario: dict | None, user_language: str
     """
     from def_kari.trpg import registry as _registry
     system = _registry.for_rulebook(rulebook) or _registry.get(_registry.DEFAULT_RULE_SYSTEM)
-    return system.build_rule_context(rulebook, scenario, user_language)
+    try:
+        return _registry.call_rule(system, "build_rule_context", rulebook, scenario, user_language)
+    except _registry.RuleSystemError:
+        return ""  # ルールの説明を入れない（秘密が出る方には倒れない）。理由はログに残る
 
 
 def build_session_context(

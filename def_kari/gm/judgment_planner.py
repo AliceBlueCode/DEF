@@ -136,7 +136,10 @@ def plan_judgments(
 
     def _valid_stats_for_char(cid: str) -> frozenset[str]:
         sheet_id = char_game_sheets.get(cid, "")
-        allowed = system.allowed_skills(rulebook)
+        try:
+            allowed = _registry.call_rule(system, "allowed_skills", rulebook)
+        except _registry.RuleSystemError:
+            allowed = frozenset()  # 判定にしない（閉じる側）
         if not sheet_id:
             return allowed
         sheet = resolve_char_game_sheet(cid, sheet_id, profiles, session)

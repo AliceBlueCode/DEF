@@ -128,14 +128,18 @@ def test_session_dice_uses_the_rulebook_notation(dirs, monkeypatch):
     assert out["notation"] == "1d20"
 
 
-def test_session_dice_without_rulebook_needs_a_notation(monkeypatch):
+def test_session_dice_without_rulebook_uses_the_default_notation(monkeypatch):
+    """ルールブックの無い卓で表記も無ければ、既定のルールシステムの表記を使う（以前、画面が 1d100 を
+    送っていたのと同じ動き。実装レビューの🟢）。"""
     from def_kari.api.routes.session_gameplay import SessionDiceRollRequest, session_dice_roll
     from def_kari.api.routes.session_state import _sessions
     sid = "_reg_dice_none"
     _sessions[sid] = {"id": sid, "trpg_rulebook": "", "history": [], "name_map": {},
                       "human_char_ids": [], "players": {}}
+    seen = []
+    monkeypatch.setattr("def_kari.trpg.rule_engine.secrets.randbelow", lambda n: seen.append(n) or 0)
     try:
         out = session_dice_roll(sid, SessionDiceRollRequest(), _auth={"jti": "h", "role": "host"})
     finally:
         _sessions.pop(sid, None)
-    assert "error" in out
+    assert seen == [100] and out["notation"] == "1d100"

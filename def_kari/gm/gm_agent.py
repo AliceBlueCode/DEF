@@ -147,11 +147,14 @@ class GMAgent:
             if _h_content:
                 _history_messages.append({"role": _h_role, "content": _h_content})
         # 判定の要否を LLM が決めるのは、それを持つルールシステム（def_original）の卓だけ（B-031）
-        from def_kari.trpg import registry as _trpg_registry
+        from def_kari.trpg import plugin_hooks as _trpg_hooks, registry as _trpg_registry
+        _table_system, _unavailable = _trpg_hooks.resolve_for_session(session)
+        if _unavailable:
+            return {"text": "", "judgments": [], "error": _unavailable}
         judgments = plan_judgments(
             session, backend_id, _loaded_model, _history_messages,
             name_map, char_game_sheets, _profiles, scenario, user_lang,
-            rule_system=_trpg_registry.for_rulebook(rulebook), rulebook=rulebook,
+            rule_system=_table_system or _trpg_registry.for_rulebook(rulebook), rulebook=rulebook,
         )
 
         if char_lines:

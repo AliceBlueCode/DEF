@@ -149,11 +149,16 @@ def _read_declaration(path: Path) -> tuple[dict | None, str]:
     return decl, ""
 
 
-def _import_package(path: Path, package: str):
+def _module_name(plugin_id: str) -> str:
+    # モジュール名は plugin_id から作る（package の名前が同じプラグインが2つあっても、互いを上書きしない）
+    return "def_trpg_plugin_" + plugin_id.replace("-", "_")
+
+
+def _import_package(path: Path, package: str, plugin_id: str):
     pkg_dir = (path / package).resolve()
     if not pkg_dir.is_relative_to(path.resolve()) or not (pkg_dir / "__init__.py").is_file():
         raise ImportError(f"package {package!r} not found in {path}")
-    module_name = f"def_trpg_plugin_{package}"
+    module_name = _module_name(plugin_id)
     spec = importlib.util.spec_from_file_location(
         module_name, pkg_dir / "__init__.py", submodule_search_locations=[str(pkg_dir)])
     module = importlib.util.module_from_spec(spec)
@@ -190,25 +195,37 @@ def load_plugin(path: Path, register, is_registered) -> LoadedPlugin | None:
     if err:
         _fail(path, plugin_id, err)
         return None
+    if any(p.plugin_id == plugin_id for p in _loaded):
+        _fail(path, plugin_id, f"plugin_id {plugin_id!r} is already loaded from another folder")
+        return None
+
+    def _forget_module() -> None:
+        sys.modules.pop(_module_name(plugin_id), None)
+
+    # 読み込み・register()・返したものの確かめのどこで失敗しても、起動を止めず、読み込んだモジュールも
+    # 残さない（B-027）。SystemExit も捕まえる（プラグインが sys.exit() を呼んでも DEF は止まらない）。
     try:
-        module = _import_package(path, decl["package"])
+        module = _import_package(path, decl["package"], plugin_id)
         entry = getattr(module, "register", None)
         if not callable(entry):
             raise ImportError("package has no register(api)")
         result = entry(PluginApi(plugin_id))
-    except Exception as e:  # プラグインの不具合で起動を止めない（B-027）
+        systems = list(result) if isinstance(result, (list, tuple)) else [result]
+        for system in systems:
+            problem = _validate_system(system, decl["rule_systems"])
+            if problem:
+                _fail(path, plugin_id, problem)
+                _forget_module()
+                return None
+        ids = [s.id for s in systems]
+    except (Exception, SystemExit) as e:
         _fail(path, plugin_id, f"{type(e).__name__}: {e}")
+        _forget_module()
         return None
-    systems = list(result) if isinstance(result, (list, tuple)) else [result]
-    for system in systems:
-        problem = _validate_system(system, decl["rule_systems"])
-        if problem:
-            _fail(path, plugin_id, problem)
-            return None
-    ids = [s.id for s in systems]
     taken = [i for i in ids if is_registered(i)]
     if taken or len(set(ids)) != len(ids):
         _fail(path, plugin_id, f"rule system id already registered or duplicated: {taken or ids}")
+        _forget_module()
         return None
     for system in systems:
         register(system)
