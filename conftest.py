@@ -19,6 +19,10 @@ os.environ["DEF_ISOLATED_DATA_DIR"] = _ISOLATED
 # VOICEVOX・A1111 など）を起動しにいかないようにする（2026-11-14。def_kari/api/main.py の lifespan）。
 os.environ["DEF_NO_BACKEND_AUTOSTART"] = "1"
 
+# 開発機の .env を読まない（def_kari/env_file.py）。CI には .env が無いので、手元のテストも同じ条件にする。
+# 以前は main.py を import したテストに、開発機の .env の一部（キャラのリポジトリの場所など）が混ざっていた。
+os.environ["DEF_SKIP_DOTENV"] = "1"
+
 # ルールブックは、DEF-Rulebooks の形の固定の写しから読む（要求仕様 C-005・C-006。def_original は 2026-11-14 に
 # DEF の本体から DEF-Rulebooks へ移した）。開発機の .env に書いた本物のリポジトリは読まない。
 _RULEBOOK_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "fixtures", "rulebook_repos", "def_rulebooks")
