@@ -7,6 +7,11 @@ import threading
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
+# .env は、def_kari のほかのモジュールを import する前に読む（def_kari/env_file.py の説明を参照）。
+# この行より前に def_kari のモジュールを import しないこと（tests/test_env_file.py が確かめる）。
+from def_kari.env_file import load_env_file as _load_env_file
+_load_env_file()
+
 _LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
 _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 _formatter = logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT)
@@ -222,15 +227,7 @@ _static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 os.makedirs(_static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
-# Load .env
-_env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
-if os.path.exists(_env_path):
-    with open(_env_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+# .env はこのファイルの最初で読んでいる（def_kari/env_file.py。2026-11-15 に、ここから移した）
 
 # Load encrypted API keys into environment
 _KEY_MAP = {
