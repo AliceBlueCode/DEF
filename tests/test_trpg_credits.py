@@ -40,6 +40,24 @@ def test_selection_lists_carry_credits(repos):
     assert scs["credited_sc"]["credits"] == ["Scenario by Someone"]
 
 
+def test_selection_lists_say_whether_online_is_allowed(repos, monkeypatch, tmp_path):
+    """B-022: 一覧に「オンラインの卓で使えるか」を出す（画面が「オンライン不可」と出し、作成を押せなくする）。"""
+    from def_kari.api.routes import trpg as t
+    closed = tmp_path / "closed_repo"
+    (closed / "rulebooks").mkdir(parents=True)
+    (closed / "scenarios").mkdir(parents=True)
+    (closed / "manifest.json").write_text(json.dumps({"online_sessions": False}), encoding="utf-8")
+    (closed / "rulebooks" / "closed_book.json").write_text(json.dumps({"label": "C"}), encoding="utf-8")
+    (closed / "scenarios" / "closed_sc.json").write_text(json.dumps({"title": "C"}), encoding="utf-8")
+    import os
+    monkeypatch.setenv("TRPG_RULEBOOK_REPO_PATHS", os.environ["TRPG_RULEBOOK_REPO_PATHS"] + f";{closed}")
+    books = {b["id"]: b for b in t.list_rulebooks()["rulebooks"]}
+    assert books["closed_book"]["online_sessions"] is False
+    assert books["credited_book"]["online_sessions"] is True  # 書いていなければ、def_original のルールブックは許す（B-020）
+    scs = {s["id"]: s for s in t.list_scenarios()["scenarios"]}
+    assert scs["closed_sc"]["online_sessions"] is False
+
+
 def test_session_credits_endpoint(repos):
     from def_kari.api.routes.session_gameplay import get_session_credits
     from def_kari.api.routes.session_state import _sessions

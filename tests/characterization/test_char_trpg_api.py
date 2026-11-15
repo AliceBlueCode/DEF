@@ -154,19 +154,19 @@ def test_opposed_unknown_rulebook(use_fixture_rulebooks):
 # ── ルールブックの一覧・取得・保存 ────────────────────────────────────
 
 def test_list_rulebooks(use_fixture_rulebooks):
-    """C-002: A章でわざと変えた挙動（B-023、2026-11-14）。一覧の各項目に `credits`（manifest の `credit` の一覧）を足した。
+    """C-002: A章でわざと変えた挙動（B-023、2026-11-14）。一覧の各項目に `credits`（manifest の `credit` の一覧）を足した。2026-11-15 に `online_sessions`（オンラインの卓で使えるか。B-022）も足した。
 
     blank_template は一覧に出さない。"""
     assert_snapshot("list_rulebooks.json", json.dumps(t.list_rulebooks(), ensure_ascii=False, indent=2) + "\n")
 
 
 def test_list_rulebooks_dice_default(rulebook_dirs):
-    """C-002: A章でわざと変えた挙動（B-023、2026-11-14）。一覧の各項目に `credits`（manifest の `credit` の一覧）を足した。"""
+    """C-002: A章でわざと変えた挙動（B-023、2026-11-14）。一覧の各項目に `credits`（manifest の `credit` の一覧）を足した。2026-11-15 に `online_sessions`（オンラインの卓で使えるか。B-022）も足した。"""
     public, _ = rulebook_dirs
     (public / "trpg_rules" / "nodice.json").write_text(json.dumps({"id": "nodice"}), encoding="utf-8")
     assert t.list_rulebooks() == {"rulebooks": [
         {"id": "nodice", "label": "nodice", "rule_system_name": "", "dice_system": "1d100", "private": False,
-         "credits": []}]}
+         "credits": [], "online_sessions": True}]}
 
 
 def test_get_rulebook_returns_raw_text(use_fixture_rulebooks):
