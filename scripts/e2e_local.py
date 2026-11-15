@@ -204,8 +204,8 @@ def main() -> int:
         "E2E_CONTROL_URL": f"http://127.0.0.1:{CONTROL_PORT}",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUNBUFFERED": "1",  # [LLM] 等の print がログに即座に出るように（調査用）
-        # ルールブックは DEF-Rulebooks の形の固定の写しから読む（C-006。手元の .env の本物は読まない）
-        "TRPG_RULEBOOK_REPO_PATHS": str(work / "tests" / "fixtures" / "rulebook_repos" / "def_rulebooks"),
+        # ルールブックは DEF-Rulebook の形の固定の写しから読む（C-006。手元の .env の本物は読まない）
+        "TRPG_RULEBOOK_REPO_PATHS": str(work / "tests" / "fixtures" / "rulebook_repos" / "def_rulebook"),
         "TRPG_PLUGIN_PATHS": "",
     })
 

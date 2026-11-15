@@ -367,7 +367,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       ⚠ {startError}
     </div>
   )
-  // ルールブックが1つも見つからない（B-019。def_original は DEF-Rulebooks にある）
+  // ルールブックが1つも見つからない（B-019。def_original は DEF-Rulebook にある）
   const [noRulebooks, setNoRulebooks] = useState(false)
   const noRulebooksNotice = (
     <p className="trpg-no-rulebooks" style={{ fontSize: '0.85em', margin: '4px 0', color: 'var(--error-color, #e74c3c)' }}>

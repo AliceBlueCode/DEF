@@ -195,18 +195,18 @@ DEF が変わっても、サービスが終わっても、キャラクターは�
 
 `.env` の `CHARACTER_REPO_PATH` に DEF-Character のパスを設定するだけで連携できます。
 
-## ルールブックリポジトリ — DEF-Rulebooks
+## ルールブックリポジトリ — DEF-Rulebook
 
 TRPG モードのルールブックとシナリオ（DEF(仮)ルール、サンプルのシナリオ、新しいルールブックのテンプレート）は、別のリポジトリにあります。
 
-**→ [DEF-Rulebooks](https://github.com/AliceBlueCode/DEF-Rulebooks)**
+**→ [DEF-Rulebook](https://github.com/AliceBlueCode/DEF-Rulebook)**
 
-TRPG モードを使うときは、DEF-Rulebooks を取ってきて、`.env` の `TRPG_RULEBOOK_REPO_PATHS` にその場所を設定してください。
+TRPG モードを使うときは、DEF-Rulebook を取ってきて、`.env` の `TRPG_RULEBOOK_REPO_PATHS` にその場所を設定してください。
 
 ```bash
-git clone https://github.com/AliceBlueCode/DEF-Rulebooks.git
+git clone https://github.com/AliceBlueCode/DEF-Rulebook.git
 # .env
-TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebooks
+TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebook
 ```
 
 -----

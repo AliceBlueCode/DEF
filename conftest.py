@@ -23,9 +23,9 @@ os.environ["DEF_NO_BACKEND_AUTOSTART"] = "1"
 # 以前は main.py を import したテストに、開発機の .env の一部（キャラのリポジトリの場所など）が混ざっていた。
 os.environ["DEF_SKIP_DOTENV"] = "1"
 
-# ルールブックは、DEF-Rulebooks の形の固定の写しから読む（要求仕様 C-005・C-006。def_original は 2026-11-14 に
-# DEF の本体から DEF-Rulebooks へ移した）。開発機の .env に書いた本物のリポジトリは読まない。
-_RULEBOOK_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "fixtures", "rulebook_repos", "def_rulebooks")
+# ルールブックは、DEF-Rulebook の形の固定の写しから読む（要求仕様 C-005・C-006。def_original は 2026-11-14 に
+# DEF の本体から DEF-Rulebook へ移した）。開発機の .env に書いた本物のリポジトリは読まない。
+_RULEBOOK_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "fixtures", "rulebook_repos", "def_rulebook")
 os.environ["TRPG_RULEBOOK_REPO_PATHS"] = _RULEBOOK_FIXTURE
 os.environ["TRPG_PLUGIN_PATHS"] = ""
 

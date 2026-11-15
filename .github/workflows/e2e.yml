@@ -68,8 +68,8 @@ jobs:
       - name: Start mock LLM, backend, frontend
         env:
           TEXTGEN_WEBUI_URL: http://127.0.0.1:5000/v1
-          # ルールブックは DEF-Rulebooks の形の固定の写しから読む（C-006。ネットワークから取ってこない）
-          TRPG_RULEBOOK_REPO_PATHS: ${{ github.workspace }}/tests/fixtures/rulebook_repos/def_rulebooks
+          # ルールブックは DEF-Rulebook の形の固定の写しから読む（C-006。ネットワークから取ってこない）
+          TRPG_RULEBOOK_REPO_PATHS: ${{ github.workspace }}/tests/fixtures/rulebook_repos/def_rulebook
         run: |
           python scripts/e2e_mock_llm.py --port 5000 > mock_llm.log 2>&1 &
           TEXTGEN_WEBUI_URL="$TEXTGEN_WEBUI_URL" python -m def_kari.api.dual_run --local-port 8511 --public-port 8512 --no-trust-cloudflare-tunnel > backend.log 2>&1 &

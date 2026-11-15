@@ -195,18 +195,18 @@ Even if DEF changes, even if services end — your characters remain in your rep
 
 Set the path to DEF-Character in `CHARACTER_REPO_PATH` in your `.env` to connect.
 
-## Rulebook Repository — DEF-Rulebooks
+## Rulebook Repository — DEF-Rulebook
 
 The TRPG mode rulebooks and scenarios (the DEF(kari) rules, sample scenarios, and a template for new rulebooks) live in a separate repository.
 
-**→ [DEF-Rulebooks](https://github.com/AliceBlueCode/DEF-Rulebooks)**
+**→ [DEF-Rulebook](https://github.com/AliceBlueCode/DEF-Rulebook)**
 
-To use TRPG mode, clone DEF-Rulebooks and set its location in `TRPG_RULEBOOK_REPO_PATHS` in your `.env`.
+To use TRPG mode, clone DEF-Rulebook and set its location in `TRPG_RULEBOOK_REPO_PATHS` in your `.env`.
 
 ```bash
-git clone https://github.com/AliceBlueCode/DEF-Rulebooks.git
+git clone https://github.com/AliceBlueCode/DEF-Rulebook.git
 # .env
-TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebooks
+TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebook
 ```
 
 -----
