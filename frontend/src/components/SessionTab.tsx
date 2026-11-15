@@ -356,12 +356,20 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     `${r.label}（${r.dice_system}${r.online_sessions === false ? '・' + t('trpg.online.offlineOnly') : ''}）`
   const scenarioOptionLabel = (s: { label: string; online_sessions?: boolean }) =>
     s.online_sessions === false ? `${s.label}（${t('trpg.online.offlineOnly')}）` : s.label
+  // 判定の文の出目の部分。ルールシステムが合計（出目＋値）を返したら「8+3=11」と書く（def_original は返さない）
+  const rollText = (roll: number, total?: number | null) =>
+    typeof total === 'number' && total !== roll ? `${roll}${total - roll >= 0 ? '+' : ''}${total - roll}=${total}` : `${roll}`
   // 開始・ロビーの変更が断られた理由（以前は console に出すだけで、押しても何も起きないように見えた）
   const [startError, setStartError] = useState<string | null>(null)
   const describeFailure = (status: number, detail: string) =>
-    status === 403 && /online sessions/.test(detail)
-      ? t('trpg.online.refused')
-      : t('session.start.failed', { reason: detail || String(status) })
+    /cannot be (found|read)/.test(detail)
+      ? t('trpg.rulebook.unreadable')
+      : status === 403 && /online sessions/.test(detail)
+        ? t('trpg.online.refused')
+        : t('session.start.failed', { reason: detail || String(status) })
+  // ロビーの設定の変更の連番。断られたとき、最後の要求の失敗だけ欄を戻す（連続で変えたとき、古い値に
+  // 戻さないため。レビュー 2026-11-15 の🟢）
+  const lobbyPatchSeqRef = useRef(0)
   const startErrorBox = startError && (
     <div className="session-start-error" role="alert" style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(224,80,80,0.12)', color: '#e05', fontSize: '0.9em', marginTop: 4 }}>
       ⚠ {startError}
@@ -741,7 +749,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         setMessages(prev => [...prev, {
           character_id: p.character_id,
           character_name: `🎲 ${charMap[p.character_id]?.name ?? nameMap[p.character_id] ?? p.character_id}`,
-          text: `【${p.stat_name}】${p.roll} / ${p.judgment_value}${outcome ? ` → ${outcome}` : ''}`,
+          text: `【${p.stat_name}】${rollText(p.roll, p.total)} / ${p.judgment_value}${outcome ? ` → ${outcome}` : ''}`,
           emotion: '', tags: [],
         }])
       }
@@ -1703,7 +1711,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           setMessages(prev => [...prev, {
             character_id: j.character_id,
             character_name: `🎲 ${j.character_name}`,
-            text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+            text: `【${j.stat}】${rollText(roll.total, roll.judgment?.total)} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
             emotion: '', tags: [],
           }])
           if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
@@ -1825,7 +1833,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         setMessages(prev => [...prev, {
           character_id: j.character_id,
           character_name: `🎲 ${j.character_name}`,
-          text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+          text: `【${j.stat}】${rollText(roll.total, roll.judgment?.total)} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
           emotion: '', tags: [],
         }])
         if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
@@ -1855,7 +1863,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       setMessages(prev => [...prev, {
         character_id: j.character_id,
         character_name: `🎲 ${j.character_name}`,
-        text: `【${j.stat}】${roll.total} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
+        text: `【${j.stat}】${rollText(roll.total, roll.judgment?.total)} / ${jv}${outcome ? ` → ${outcome}` : ''}`,
         emotion: '', tags: [],
       }])
       if (shouldApplyDamage(roll.judgment, j.damage_on) && !isCharDead(j.character_id)) await rollDamage(j.character_id, j.character_name)
@@ -2551,12 +2559,21 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                           if (isTrpg) {
                             const rb = rulebookOnlineOk(selectedRulebook) ? selectedRulebook
                               : (rulebookOptions.find(r => r.online_sessions !== false)?.id ?? '')
-                            const sc = scenarioOnlineOk(selectedScenario) ? selectedScenario : ''
-                            if (rb !== selectedRulebook) setSelectedRulebook(rb)
-                            if (sc !== selectedScenario) setSelectedScenario(sc)
-                            void patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: rb, trpg_scenario: sc }).then(r => {
-                              if (!r.ok) setStartError(describeFailure(r.status, r.detail))
-                            })
+                            if (!rb) {
+                              // オンラインで使えるルールブックが1冊も無い。ルールブック無しの卓を黙って送らない
+                              setStartError(t('trpg.online.noUsableRulebook'))
+                            } else {
+                              const sc = scenarioOnlineOk(selectedScenario) ? selectedScenario : ''
+                              const prevRb = selectedRulebook, prevSc = selectedScenario
+                              const seq = ++lobbyPatchSeqRef.current
+                              if (rb !== selectedRulebook) setSelectedRulebook(rb)
+                              if (sc !== selectedScenario) setSelectedScenario(sc)
+                              void patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: rb, trpg_scenario: sc }).then(r => {
+                                if (r.ok || seq !== lobbyPatchSeqRef.current) return
+                                setSelectedRulebook(prevRb); setSelectedScenario(prevSc)
+                                setStartError(describeFailure(r.status, r.detail))
+                              })
+                            }
                           } else {
                             void patchLobbySettings({ rule_set: ruleSet, topic, trpg_rulebook: '', trpg_scenario: '' })
                           }
@@ -2607,10 +2624,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                           value={selectedRulebook}
                           onChange={e => {
                             const prev = selectedRulebook, next = e.target.value
+                            const seq = ++lobbyPatchSeqRef.current
                             setSelectedRulebook(next)
                             setStartError(null)
                             void patchLobbySettings({ trpg_rulebook: next }).then(r => {
-                              if (!r.ok) { setSelectedRulebook(prev); setStartError(describeFailure(r.status, r.detail)) }
+                              if (r.ok || seq !== lobbyPatchSeqRef.current) return
+                              setSelectedRulebook(prev); setStartError(describeFailure(r.status, r.detail))
                             })
                           }}
                           style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
@@ -2628,10 +2647,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                           value={selectedScenario}
                           onChange={e => {
                             const prev = selectedScenario, next = e.target.value
+                            const seq = ++lobbyPatchSeqRef.current
                             setSelectedScenario(next)
                             setStartError(null)
                             void patchLobbySettings({ trpg_scenario: next }).then(r => {
-                              if (!r.ok) { setSelectedScenario(prev); setStartError(describeFailure(r.status, r.detail)) }
+                              if (r.ok || seq !== lobbyPatchSeqRef.current) return
+                              setSelectedScenario(prev); setStartError(describeFailure(r.status, r.detail))
                             })
                           }}
                           style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}

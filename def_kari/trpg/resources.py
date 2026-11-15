@@ -235,11 +235,27 @@ def load_rulebook(rulebook_id: str, public_only: bool = False) -> dict:
     return data
 
 
+NOT_FOUND_HINT = "Set TRPG_RULEBOOK_REPO_PATHS (for example, to DEF-Rulebook) and restart DEF."
+
+
+def rulebook_not_found(rulebook_id: str) -> str:
+    """卓のルールブックが見つからないときの理由の文（B-019 の案内つき）。画面は "cannot be found" で見分ける。"""
+    return f"rulebook {rulebook_id!r} cannot be found. {NOT_FOUND_HINT}"
+
+
 def rulebook_unavailable_reason(rulebook_id: str) -> str | None:
-    """ルールブックのファイルはあるのに、その `rule_system` が登録されていない（プラグインが
-    読み込まれていない）とき、その理由を返す。それ以外（無い・読める）は None（B-002）。"""
+    """卓をこのルールブックで戻せない・始められないとき、その理由。使えるなら None（B-002・B-019）。
+
+    - ルールブックが見つからない（DEF-Rulebook を設定していない、消えた、壊れた）。以前は None を返し、
+      ルールの説明が空・ダイスが既定のまま卓が進んでいた（レビュー 2026-11-15 の🟡1）。
+    - ファイルはあるのに、その `rule_system` が登録されていない（プラグインが読み込まれていない）。
+    """
+    if not rulebook_id:
+        return None
     data = _locate(rulebook_id, "rules")[0]
-    if data and not registry.is_known(data):
+    if not data:
+        return rulebook_not_found(rulebook_id)
+    if not registry.is_known(data):
         return (f"rulebook {rulebook_id!r} needs the rule system {registry.rule_system_of(data)!r}, "
                 f"which is not available (its plugin is not loaded)")
     return None
@@ -247,6 +263,56 @@ def rulebook_unavailable_reason(rulebook_id: str) -> str | None:
 
 def load_scenario(scenario_id: str, public_only: bool = False) -> dict:
     return _locate(scenario_id, "scenarios", public_only)[0]
+
+
+def _load_all_with_sources(places: list) -> dict:
+    """`_load_all` と同じ読み方で、ID → (中身, まとまり) を返す（一覧で、許可を1回の走査から計算するため）。"""
+    found: dict = {}
+    where: dict = {}
+    for place in places:
+        d, root, src = place
+        if not d.is_dir():
+            continue
+        for f in sorted(d.iterdir()):
+            if f.suffix != ".json" or f.name == ".gitkeep":
+                continue
+            path = safe_file(d, f.name, root)
+            if path is None:
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            rid = f.stem
+            if isinstance(data, dict) and data.get("id") not in (None, rid):
+                _log.warning("[trpg] %s: id %r differs from the file name; using %r", path, data.get("id"), rid)
+            if rid in found:
+                _log.warning("[trpg] %s is also in %s; using the one in %s", rid, d, where[rid])
+                continue
+            found[rid] = (data, src)
+            where[rid] = d
+    return found
+
+
+def rulebook_listing() -> list[tuple[str, dict, dict]]:
+    """一覧に出すルールブックの (ID, 中身, 許可)。出どころとプラグインは1回だけ調べる（レビュー 2026-11-15 の
+    🟡2。以前は項目ごとに `table_permissions` で全部の出どころを探し直し、300冊で13秒かかっていた）。"""
+    places = _places("rules")
+    plugin_sources = [src for _, _, src in places if src.kind == "plugin"]
+    out = []
+    for rid, (data, src) in _load_all_with_sources(places).items():
+        if not registry.is_known(data):
+            continue
+        rule_system = registry.rule_system_of(data)
+        out.append((rid, data, _permissions([src], rule_system, [], plugin_sources)))
+    return out
+
+
+def scenario_listing() -> list[tuple[str, dict, dict]]:
+    """一覧に出すシナリオの (ID, 中身, 許可)。許可はシナリオのまとまりの分だけ（`table_permissions("", id)` と同じ）。"""
+    places = _places("scenarios")
+    return [(sid, data, _permissions([None, src], registry.DEFAULT_RULE_SYSTEM, [], []))
+            for sid, (data, src) in _load_all_with_sources(places).items()]
 
 
 def _load_all(places: list) -> dict:
@@ -374,10 +440,16 @@ def table_permissions(rulebook_id: str, scenario_id: str = "", rule_system: str 
         if sc_source is None:
             missing.append(f"scenario {scenario_id!r} cannot be read")
         involved.append(sc_source)
+    plugin_sources = [s for s in _external_sources() if s.kind == "plugin"] \
+        if rule_system != registry.DEFAULT_RULE_SYSTEM else []
+    return _permissions(involved, rule_system, missing, plugin_sources)
+
+
+def _permissions(involved: list, rule_system: str, missing: list, plugin_sources: list) -> dict:
+    """卓が使うまとまり（`involved`）と、ルールシステムを登録したプラグインのまとまりから、許可とクレジットを計算する。"""
+    involved = list(involved)
     if rule_system != registry.DEFAULT_RULE_SYSTEM:
-        plugin_src = next((s for s in _external_sources()
-                           if s.kind == "plugin" and rule_system in s.plugin_rule_systems), None)
-        involved.append(plugin_src)
+        involved.append(next((s for s in plugin_sources if rule_system in s.plugin_rule_systems), None))
     result = {key: (not missing) and all(_allowed(s, key, rule_system) for s in involved) for key in _PERMISSION_KEYS}
     result["missing"] = missing
     credits = []

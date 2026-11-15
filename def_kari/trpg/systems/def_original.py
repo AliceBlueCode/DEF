@@ -58,7 +58,10 @@ class DefOriginal:
 
         以前は `api/routes/trpg.py` の `compute_dice_judgment` の中にあった判定の型の差し替え。
         両方が真なら `is_skill` が優先する（挙動は tests/characterization が固定している）。
+        値が 0 以下なら判定しない（None）。以前は API の側に直書きされていた def_original の前提（B-003）。
         """
+        if value <= 0:
+            return None
         if options.get("is_skill"):
             rb = deepcopy(rulebook)
             rb.setdefault("judgment", {})["success_condition"] = "roll_lte_skill"

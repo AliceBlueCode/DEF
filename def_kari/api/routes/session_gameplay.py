@@ -308,7 +308,7 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
         _rb = _trpg_resources.load_rulebook(rulebook_id) if rulebook_id else {}
         if session.get("trpg_rulebook") and not _rb:
             # 卓のルールブックが読めない（消えた・壊れた）なら、既定の表記で黙って振らず、止めて知らせる
-            _why = f"rulebook {rulebook_id!r} of this table cannot be read"
+            _why = _trpg_resources.rulebook_not_found(rulebook_id)
             from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
             _pause_for_plugin_error(session, {"capability": "rule", "method": "dice_notation", "error": _why})
             return {"error": _why}
@@ -348,7 +348,12 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
             outcome = "失敗"
         else:
             outcome = ""
-        msg = f"🎲 {cname}{stat_part} {result['total']} / {jv}"
+        _shown = result["total"]
+        _jt = j.get("total")
+        if isinstance(_jt, int) and _jt != result["total"]:
+            # 「出目＋値 ≧ 目標」のルールシステムは、合計も書く（例: 8+3=11 / 10。レビュー 2026-11-15 の🟡3）
+            _shown = f"{result['total']}{_jt - result['total']:+d}={_jt}"
+        msg = f"🎲 {cname}{stat_part} {_shown} / {jv}"
         if outcome:
             msg += f" → {outcome}"
         session["history"].append({
@@ -360,7 +365,7 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
 
     if judgment:
         from def_kari.gm.events import JUDGMENT_RESOLVED
-        _game_event_bus.emit(session_id, JUDGMENT_RESOLVED, {
+        _payload = {
             "character_id": req.character_id,
             "stat_name": req.stat_name,
             "notation": result["notation"],
@@ -370,7 +375,10 @@ def session_dice_roll(session_id: str, req: SessionDiceRollRequest, _auth: dict 
             "critical": judgment.get("critical"),
             "fumble": judgment.get("fumble"),
             "request_id": req.request_id,
-        })
+        }
+        if judgment.get("total") is not None:
+            _payload["total"] = judgment["total"]  # 出目＋値の合計を返すルールシステムだけ（画面が「8+3=11」と出す）
+        _game_event_bus.emit(session_id, JUDGMENT_RESOLVED, _payload)
 
     return {
         "notation": result["notation"],

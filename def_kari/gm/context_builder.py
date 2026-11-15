@@ -94,6 +94,16 @@ def _get_current_chapter(scenario: dict, scene_index: int) -> dict | None:
     )
 
 
+def _require_table_rulebook(rulebook: dict, session: dict) -> None:
+    """卓にルールブックがあるのに読めない（DEF-Rulebook を設定していない、消えた、壊れた）なら、
+    `RuleSystemError` にする。呼ぶ側（GM の語り・AI の手番）が卓を止めて知らせる（B-019・B-027。
+    レビュー 2026-11-15 の🟡1。以前は、ルールの説明が空のまま黙って進んでいた）。"""
+    rulebook_id = (session or {}).get("trpg_rulebook", "") if isinstance(session, dict) else ""
+    if rulebook_id and not rulebook:
+        from def_kari.trpg import registry as _registry, resources as _resources
+        raise _registry.RuleSystemError(_resources.rulebook_not_found(rulebook_id))
+
+
 def build_for_gm(
     rulebook: dict,
     scenario: dict | None,
@@ -101,6 +111,7 @@ def build_for_gm(
     user_language: str,
 ) -> str:
     """GM専用コンテキスト: gm_notes / NPC目標 / 全フラグを含む完全情報。"""
+    _require_table_rulebook(rulebook, session)
     _is_ja = user_language == "ja"
     parts = []
 
@@ -330,6 +341,7 @@ def build_for_player(
     - 自分の knowledge（静的＋セッション中獲得）
     - gm_only: false のフラグのみ
     """
+    _require_table_rulebook(rulebook, session)
     _is_ja = user_language == "ja"
     parts = []
 

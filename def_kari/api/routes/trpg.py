@@ -27,9 +27,8 @@ def _safe_dice_notation(rulebook: dict) -> str:
 
 @router.get("/rulebooks")
 def list_rulebooks():
-    books = _load_rulebooks()
-    listed = [bid for bid in books if bid != "blank_template"]
-    if not listed:
+    listing = [(bid, b, perms) for bid, b, perms in resources.rulebook_listing() if bid != "blank_template"]
+    if not listing:
         # 空の一覧ではなく、置き場所の設定を案内する（B-019。def_original は DEF-Rulebook にある）
         return {"rulebooks": [], "notice": "no_rulebooks",
                 "message": "No rulebooks found. Set TRPG_RULEBOOK_REPO_PATHS (for example, to DEF-Rulebook)."}
@@ -44,8 +43,7 @@ def list_rulebooks():
                 "credits": perms["credits"],  # B-023
                 "online_sessions": perms["online_sessions"],  # B-022（画面で「オンライン不可」と出す）
             }
-            for bid, b, perms in ((bid, b, resources.table_permissions(bid)) for bid, b in books.items())
-            if bid != "blank_template"
+            for bid, b, perms in listing
         ]
     }
 
@@ -120,7 +118,7 @@ def list_scenarios():
                 "credits": perms["credits"],  # B-023（シナリオのまとまりの分だけ）
                 "online_sessions": perms["online_sessions"],  # B-022
             }
-            for sid, s, perms in ((sid, s, resources.table_permissions("", sid)) for sid, s in scenarios.items())
+            for sid, s, perms in resources.scenario_listing()
         ]
     }
 
@@ -167,7 +165,10 @@ def compute_dice_judgment(
     result = roll_dice(notation)
 
     judgment = None
-    if skill_value > 0 and rulebook_id:
+    # 判定するかどうかは、ルールシステムの general_check が決める（def_original は値が 0 以下なら判定しない
+    # = None）。以前はここに「値が 0 より大きいとき」が直書きされていて、値 0 が正しい入力のルールシステムでも
+    # 判定されなかった（レビュー 2026-11-15 の🟡3）。
+    if rulebook_id:
         books = _load_rulebooks()
         rulebook = books.get(rulebook_id, {})
         # 卓のルールシステム（固定した値）を渡されればそれを使い、無ければルールブックから引く（B-002）
