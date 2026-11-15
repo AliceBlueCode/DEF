@@ -95,10 +95,10 @@ def test_missing_repo_folder_is_ignored(local, no_plugins, monkeypatch, tmp_path
 
 
 def test_rulebook_repo_fixtures_are_readable(no_plugins, monkeypatch):
-    """C-006: DEF-Rulebooks の形の固定の写し（集約型・単体型）を、両方とも読める（B-011・B-040 の3）。"""
+    """C-006: DEF-Rulebook の形の固定の写し（集約型・単体型）を、両方とも読める（B-011・B-040 の3）。"""
     from pathlib import Path
     fx = Path(__file__).parent / "fixtures" / "rulebook_repos"
-    monkeypatch.setenv("TRPG_RULEBOOK_REPO_PATHS", f"{fx / 'def_rulebooks'};{fx / 'single_repo'}")
+    monkeypatch.setenv("TRPG_RULEBOOK_REPO_PATHS", f"{fx / 'def_rulebook'};{fx / 'single_repo'}")
     ids = [b["id"] for b in t.list_rulebooks()["rulebooks"]]
     assert {"def_original", "single_sample"} <= set(ids)
     assert "blank_template" not in ids

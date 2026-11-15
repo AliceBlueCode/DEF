@@ -9,5 +9,5 @@
 
 ## ライセンス
 
-`def_original` のルールブックは、2026-11-14 に DEF-Rulebooks へ移し、CC BY-SA 4.0 とした（要求仕様 B-016）。テンプレート（`blank_template.json`）は CC0 1.0。DEF-Rulebooks の形の写しは `../rulebook_repos/` にある。
+`def_original` のルールブックは、2026-11-14 に DEF-Rulebook へ移し、CC BY-SA 4.0 とした（要求仕様 B-016）。テンプレート（`blank_template.json`）は CC0 1.0。DEF-Rulebook の形の写しは `../rulebook_repos/` にある。
 この写しは、作者本人が、DEF（AGPL v3）のリポジトリにテスト用として置いたもの。テスト以外の目的で使うときは、元のルールブックのライセンスに従うこと。
