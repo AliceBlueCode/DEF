@@ -50,7 +50,7 @@
 | —— | アクションディレクティブ追加 | ✅ 実装済み | standard プリセット追加 |
 | —— | i18n基盤（i18n.tsx） | ✅ 実装済み | React側多言語対応基盤、日英対応 |
 | —— | DEF-Character リポジトリ分離 | ✅ 実装済み | `CHARACTER_REPO_PATH` で外部キャラクターリポジトリを連携。旧 `data/characters/` 形式をフォールバック |
-| F-20 | TRPGルールブック注入 | ✅ 実装済み | JSON形式。`data/public/trpg_rules/` / `data/private/trpg_rules/` から読み込み。IDバリデーション付き |
+| F-20 | TRPGルールブック注入 | ✅ 実装済み | JSON形式。v5.0.0 から、プラグインのデータ → ルールブックのリポジトリ（`TRPG_RULEBOOK_REPO_PATHS`。DEF(仮)ルールは DEF-Rulebook）→ `data/public/trpg_rules/` → `data/private/trpg_rules/` の順に読み込む。manifest・プラグイン（試験的）対応。IDバリデーション付き |
 | F-21 | GMエージェント | ✅ 実装済み | キャラクターをGMとして指名。イベントバス（`game_event_bus`）で非同期通知。判定結果をセッション履歴に自動注入 |
 | F-22 | ダイスロール・キャラクターシート | ✅ 実装済み | `NdM±K` 記法、成功/クリティカル/ファンブル/失敗判定、対抗判定、ダメージロール。シナリオ管理APIも提供 |
 | —— | オンラインマルチプレイヤー（v4.0〜） | ✅ 実装済み | WebSocket同期・JWT認証・招待コード・参加者ロール4種・ロビー・GMロール（`waiting_for_gm`）・Cloudflare Tunnelでの外部公開。詳細は `DEF_kari_マルチプレイ設計書_内部用.md` および基本設計書7.11節を参照 |

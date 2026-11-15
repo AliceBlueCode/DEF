@@ -471,6 +471,8 @@ data/public/trpg_rules/      <- public rulebooks/scenarios (subject to Git manag
 data/private/trpg_rules/     <- NSFW rulebooks/scenarios (gitignored)
 ```
 
+> From v5.0.0: rulebooks and scenarios are looked up in plugin data (`TRPG_PLUGIN_PATHS`), rulebook repositories (`TRPG_RULEBOOK_REPO_PATHS`), `data/public`, then `data/private`. The DEF(kari) rules and the sample scenarios moved out of DEF into the public repository DEF-Rulebook. Rulebooks newly saved from the screen go to `data/private/trpg_rules/`.
+
 The file format must be JSON (since the Rule Engine parses it). See `docs/DEF_TRPG_Rulebook_en.md` for the detailed schema.
 
 Selecting a rulebook/scenario from the dropdown at session start expands the JSON into the system prompt. If none is selected, it behaves the same as a normal session.

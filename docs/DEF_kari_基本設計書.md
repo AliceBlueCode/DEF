@@ -718,6 +718,8 @@ Character Persistence(1.2節)の実現により、全履歴をフロントエン
 
 `def_kari/api/routes/trpg.py` にルールブック一覧取得・個別取得・保存APIを実装。`data/public/trpg_rules/` および `data/private/trpg_rules/` を走査。IDバリデーション・アトミック書き込み(tmp→replace)済み。
 
+> v5.0.0 から: ルールブックとシナリオは、プラグインのデータ（`TRPG_PLUGIN_PATHS`）→ ルールブックのリポジトリ（`TRPG_RULEBOOK_REPO_PATHS`）→ `data/public` → `data/private` の順に探す。DEF(仮)ルールとサンプルのシナリオは本体から外し、公開のリポジトリ DEF-Rulebook に移した。画面から新しく保存するルールブックは `data/private/trpg_rules/` に置く。
+
 ### F-21: ゲームマスター(GM)エージェントの動的生成 ✅ v3.0.0 実装済み
 
 F-6で登録された複数のAIキャラクターの中から1つを「GM」として指名できる。GMエージェントはF-20で読み込まれたルールブックを最優先で遵守し、進行・情景描写・ダイスロールの要求・判定を担う。GMエージェントの情景描写は、F-8のセーフティ運用ガードレールの対象として扱われ、誤った完全マスクによる進行停止を避ける。
