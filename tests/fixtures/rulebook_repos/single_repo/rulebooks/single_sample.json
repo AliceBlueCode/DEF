@@ -1,0 +1,9 @@
+{
+  "id": "single_sample",
+  "label": "Single repo sample",
+  "rule_system_name": "test",
+  "dice_system": "1d20",
+  "judgment": {
+    "success_condition": "roll_lte_skill"
+  }
+}

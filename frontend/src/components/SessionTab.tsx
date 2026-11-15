@@ -348,6 +348,13 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     selectedScenario ? scenarioOptions.find(s => s.id === selectedScenario)?.credits : undefined,
   )
   const [sessionCredits, setSessionCredits] = useState<string[]>([])
+  // ルールブックが1つも見つからない（B-019。def_original は DEF-Rulebooks にある）
+  const [noRulebooks, setNoRulebooks] = useState(false)
+  const noRulebooksNotice = (
+    <p className="trpg-no-rulebooks" style={{ fontSize: '0.85em', margin: '4px 0', color: 'var(--error-color, #e74c3c)' }}>
+      {t('trpg.rulebook.notFound')}
+    </p>
+  )
   const authFetch = (path: string, init: RequestInit = {}) =>
     fetch(path, {
       ...init,
@@ -1274,6 +1281,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           setRulebookOptions(d.rulebooks)
           setSelectedRulebook(d.rulebooks[0].id)
         }
+        setNoRulebooks(d.notice === 'no_rulebooks')
       })
       .catch(() => {})
     fetch('/api/trpg/scenarios')
@@ -2588,6 +2596,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                         )}
                       </div>
                     )}
+                    {noRulebooks && noRulebooksNotice}
                     <TrpgCredits credits={selectedTableCredits} />
                   </>
                 )}
@@ -3087,6 +3096,10 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                 </p>
               )}
             </div>
+          )}
+
+          {trpgMode && noRulebooks && (
+            <div className="session-field">{noRulebooksNotice}</div>
           )}
 
           {trpgMode && selectedTableCredits.length > 0 && (

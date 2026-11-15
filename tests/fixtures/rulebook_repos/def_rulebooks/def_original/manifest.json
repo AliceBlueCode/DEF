@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "def_original",
+  "title": "DEF(仮)ルール",
+  "license": "CC BY-SA 4.0",
+  "credit": "DEF(仮)ルール © 2026 AliceBlueCode (CC BY-SA 4.0)",
+  "external_services_allowed": true,
+  "online_sessions": true
+}

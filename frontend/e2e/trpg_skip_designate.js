@@ -46,7 +46,7 @@ function classify(call) {
 
   const browser = await chromium.launch()
   try {
-    const { page: host, inviteCode } = await createOnlineTrpgSession(browser)
+    const { page: host, inviteCode } = await createOnlineTrpgSession(browser, { rulebook: 'def_original' })
     const { page: guest } = await joinAsPlayer(browser, inviteCode)
     // キーパーの語りを、どのタブが起こしてもモックに向くように（trpg_keeper_online_join.js 参照）
     await selectTextgenWebuiBackend(guest)

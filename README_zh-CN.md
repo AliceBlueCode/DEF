@@ -193,6 +193,20 @@ DEF-Character/    ← 角色数据（你的资产）
 
 在 `.env` 的 `CHARACTER_REPO_PATH` 中设置 DEF-Character 的路径即可连接。
 
+## 规则书仓库 — DEF-Rulebooks
+
+TRPG 模式的规则书和剧本（DEF(kari) 规则、示例剧本、新规则书模板）位于单独的仓库中。
+
+**→ [DEF-Rulebooks](https://github.com/AliceBlueCode/DEF-Rulebooks)**
+
+使用 TRPG 模式时，请克隆 DEF-Rulebooks，并在 `.env` 的 `TRPG_RULEBOOK_REPO_PATHS` 中设置其路径。
+
+```bash
+git clone https://github.com/AliceBlueCode/DEF-Rulebooks.git
+# .env
+TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebooks
+```
+
 -----
 
 ## 关于创作自由的理念

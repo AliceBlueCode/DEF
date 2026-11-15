@@ -25,7 +25,7 @@ import { assert, createOnlineTrpgSession, joinAsPlayer, startSession, selectText
 ;(async () => {
   const browser = await chromium.launch()
   try {
-    const { page: host, inviteCode } = await createOnlineTrpgSession(browser)
+    const { page: host, inviteCode } = await createOnlineTrpgSession(browser, { rulebook: 'def_original' })
     const { page: guest } = await joinAsPlayer(browser, inviteCode)
 
     // ai_keeper呼び出しはfireKeeperTurnを実行したタブ(=自分の人間ターンを

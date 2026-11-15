@@ -28,6 +28,11 @@ def _safe_dice_notation(rulebook: dict) -> str:
 @router.get("/rulebooks")
 def list_rulebooks():
     books = _load_rulebooks()
+    listed = [bid for bid in books if bid != "blank_template"]
+    if not listed:
+        # 空の一覧ではなく、置き場所の設定を案内する（B-019。def_original は DEF-Rulebooks にある）
+        return {"rulebooks": [], "notice": "no_rulebooks",
+                "message": "No rulebooks found. Set TRPG_RULEBOOK_REPO_PATHS (for example, to DEF-Rulebooks)."}
     return {
         "rulebooks": [
             {

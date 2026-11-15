@@ -87,8 +87,27 @@ def test_order_and_duplicate_warning(local, no_plugins, monkeypatch, tmp_path, c
 
 
 def test_missing_repo_folder_is_ignored(local, no_plugins, monkeypatch, tmp_path):
+    """C-002: ルールブックが1つも無いときは、空の一覧に置き場所の設定の案内を添える（B-019、2026-11-14）。"""
     _repos(monkeypatch, tmp_path / "nowhere")
-    assert t.list_rulebooks() == {"rulebooks": []}
+    out = t.list_rulebooks()
+    assert out["rulebooks"] == [] and out["notice"] == "no_rulebooks"
+    assert "TRPG_RULEBOOK_REPO_PATHS" in out["message"]
+
+
+def test_rulebook_repo_fixtures_are_readable(no_plugins, monkeypatch):
+    """C-006: DEF-Rulebooks の形の固定の写し（集約型・単体型）を、両方とも読める（B-011・B-040 の3）。"""
+    from pathlib import Path
+    fx = Path(__file__).parent / "fixtures" / "rulebook_repos"
+    monkeypatch.setenv("TRPG_RULEBOOK_REPO_PATHS", f"{fx / 'def_rulebooks'};{fx / 'single_repo'}")
+    ids = [b["id"] for b in t.list_rulebooks()["rulebooks"]]
+    assert {"def_original", "single_sample"} <= set(ids)
+    assert "blank_template" not in ids
+    assert resources.rulebook_source("def_original").root.name == "def_original"
+    assert resources.rulebook_source("single_sample").root.name == "single_repo"
+    assert resources.scenario_source("sample_cafe").root.name == "def_original"
+    perms = resources.table_permissions("def_original", "sample_cafe")
+    assert perms["external_services_allowed"] and perms["online_sessions"]
+    assert perms["credits"] == ["DEF(仮)ルール © 2026 AliceBlueCode (CC BY-SA 4.0)"]
 
 
 def test_public_only_reads_only_external_sources_that_allow_online(local, no_plugins, monkeypatch, tmp_path):

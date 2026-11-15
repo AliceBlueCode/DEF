@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "template",
+  "title": "Rulebook template",
+  "license": "CC0 1.0",
+  "credit": "",
+  "external_services_allowed": true,
+  "online_sessions": true
+}

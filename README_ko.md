@@ -193,6 +193,20 @@ DEF가 바뀌어도, 서비스가 종료되어도, 캐릭터는 당신의 저장
 
 `.env`의 `CHARACTER_REPO_PATH`에 DEF-Character 경로를 설정하면 연동됩니다.
 
+## 룰북 리포지토리 — DEF-Rulebooks
+
+TRPG 모드의 룰북과 시나리오(DEF(kari) 룰, 샘플 시나리오, 새 룰북용 템플릿)는 별도의 리포지토리에 있습니다.
+
+**→ [DEF-Rulebooks](https://github.com/AliceBlueCode/DEF-Rulebooks)**
+
+TRPG 모드를 사용하려면 DEF-Rulebooks를 클론하고, `.env`의 `TRPG_RULEBOOK_REPO_PATHS`에 그 경로를 설정하세요.
+
+```bash
+git clone https://github.com/AliceBlueCode/DEF-Rulebooks.git
+# .env
+TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebooks
+```
+
 -----
 
 ## 창작의 자유에 대한 생각

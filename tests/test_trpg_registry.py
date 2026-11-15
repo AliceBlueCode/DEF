@@ -51,6 +51,7 @@ def dirs(monkeypatch, tmp_path):
         (base / "trpg_scenarios").mkdir(parents=True)
     monkeypatch.setattr(resources, "RULEBOOK_DIRS", [public / "trpg_rules", private / "trpg_rules"])
     monkeypatch.setattr(resources, "PUBLIC_RULEBOOK_DIRS", [public / "trpg_rules"])
+    monkeypatch.setattr(resources, "_external_sources", lambda: [])  # 外部のリポジトリ（conftest の写し）は読まない
     return public / "trpg_rules"
 
 
