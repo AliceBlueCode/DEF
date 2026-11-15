@@ -89,7 +89,7 @@ def test_dice_with_an_unreadable_rulebook_pauses_instead_of_rolling_1d100(monkey
     try:
         with patch("def_kari.api.routes.session_gameplay._game_event_bus"):
             out = session_dice_roll(sid, SessionDiceRollRequest(skill_value=5), _auth={"jti": "h", "role": "host"})
-        assert "cannot be read" in out["error"]
+        assert "cannot be found" in out["error"] and "TRPG_RULEBOOK_REPO_PATHS" in out["error"]
         assert rolled == [] and _sessions[sid]["ai_paused"] is True
     finally:
         _sessions.pop(sid, None)

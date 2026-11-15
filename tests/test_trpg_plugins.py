@@ -223,7 +223,9 @@ def test_saved_session_with_missing_rule_system_is_not_restored(monkeypatch, tmp
     (rules / "needs_plugin.json").write_text(json.dumps({"rule_system": "_not_installed"}), encoding="utf-8")
     monkeypatch.setattr(resources, "RULEBOOK_DIRS", [rules])
     assert "_not_installed" in resources.rulebook_unavailable_reason("needs_plugin")
-    assert resources.rulebook_unavailable_reason("missing_book") is None
+    # 見つからないルールブックの卓も戻さない（B-019。レビュー 2026-11-15 の🟡1。以前は None だった）
+    assert "cannot be found" in resources.rulebook_unavailable_reason("missing_book")
+    assert resources.rulebook_unavailable_reason("") is None
 
     f = tmp_path / "autosave.json"
     f.write_text(json.dumps({"id": "_char_unavail", "trpg_rulebook": "needs_plugin", "history": []}),

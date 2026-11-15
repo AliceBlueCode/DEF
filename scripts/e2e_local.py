@@ -205,7 +205,8 @@ def main() -> int:
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUNBUFFERED": "1",  # [LLM] 等の print がログに即座に出るように（調査用）
         # ルールブックは DEF-Rulebook の形の固定の写しから読む（C-006。手元の .env の本物は読まない）
-        "TRPG_RULEBOOK_REPO_PATHS": str(work / "tests" / "fixtures" / "rulebook_repos" / "def_rulebook"),
+        "TRPG_RULEBOOK_REPO_PATHS": ";".join(str(work / "tests" / "fixtures" / "rulebook_repos" / name)
+                                             for name in ("def_rulebook", "single_repo")),  # 集約型・単体型（C-006）
         "TRPG_PLUGIN_PATHS": "",
     })
 
