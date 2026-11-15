@@ -2,8 +2,8 @@ import { useRef, useState } from 'react'
 
 export type RuleOption = { id: string; label: string }
 export type DirectiveOption = { id: string; label: string; rating: string; recommended_for: number[] }
-export type RulebookOption = { id: string; label: string; dice_system: string; credits?: string[] }
-export type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string; credits?: string[] }
+export type RulebookOption = { id: string; label: string; dice_system: string; credits?: string[]; online_sessions?: boolean }
+export type ScenarioOption = { id: string; label: string; synopsis: string; rulebook_id: string; credits?: string[]; online_sessions?: boolean }
 
 type SavedSession = {
   filename: string
@@ -56,13 +56,20 @@ export function useLobbySession() {
   }
 
   // ロビー中のセッション設定変更（お題・ルール・ルールブック・シナリオ・参加人数）。ホスト専用
-  const patchLobbySettings = (body: Record<string, string | number>, sessionIdRef: React.RefObject<string>, hostTokenRef: React.RefObject<string>) => {
-    if (!sessionIdRef.current) return
-    void fetch(`/api/session/${sessionIdRef.current}/lobby/settings`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
-      body: JSON.stringify(body),
-    })
+  const patchLobbySettings = async (body: Record<string, string | number>, sessionIdRef: React.RefObject<string>, hostTokenRef: React.RefObject<string>): Promise<{ ok: boolean; status: number; detail: string }> => {
+    if (!sessionIdRef.current) return { ok: true, status: 0, detail: '' }
+    try {
+      const res = await fetch(`/api/session/${sessionIdRef.current}/lobby/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hostTokenRef.current}` },
+        body: JSON.stringify(body),
+      })
+      if (res.ok) return { ok: true, status: res.status, detail: '' }
+      const data = await res.json().catch(() => ({}))
+      return { ok: false, status: res.status, detail: typeof data.detail === 'string' ? data.detail : '' }
+    } catch (e) {
+      return { ok: false, status: 0, detail: String(e) }
+    }
   }
 
   const openRuleDialog = async () => {

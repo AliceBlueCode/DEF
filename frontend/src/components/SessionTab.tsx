@@ -348,6 +348,25 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     selectedScenario ? scenarioOptions.find(s => s.id === selectedScenario)?.credits : undefined,
   )
   const [sessionCredits, setSessionCredits] = useState<string[]>([])
+  // オンラインの卓で使えないルールブック・シナリオ（manifest。B-022）
+  const rulebookOnlineOk = (id: string) => rulebookOptions.find(r => r.id === id)?.online_sessions !== false
+  const scenarioOnlineOk = (id: string) => !id || scenarioOptions.find(s => s.id === id)?.online_sessions !== false
+  const selectedOfflineOnly = trpgMode && (!rulebookOnlineOk(selectedRulebook) || !scenarioOnlineOk(selectedScenario))
+  const rulebookOptionLabel = (r: { label: string; dice_system: string; online_sessions?: boolean }) =>
+    `${r.label}（${r.dice_system}${r.online_sessions === false ? '・' + t('trpg.online.offlineOnly') : ''}）`
+  const scenarioOptionLabel = (s: { label: string; online_sessions?: boolean }) =>
+    s.online_sessions === false ? `${s.label}（${t('trpg.online.offlineOnly')}）` : s.label
+  // 開始・ロビーの変更が断られた理由（以前は console に出すだけで、押しても何も起きないように見えた）
+  const [startError, setStartError] = useState<string | null>(null)
+  const describeFailure = (status: number, detail: string) =>
+    status === 403 && /online sessions/.test(detail)
+      ? t('trpg.online.refused')
+      : t('session.start.failed', { reason: detail || String(status) })
+  const startErrorBox = startError && (
+    <div className="session-start-error" role="alert" style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(224,80,80,0.12)', color: '#e05', fontSize: '0.9em', marginTop: 4 }}>
+      ⚠ {startError}
+    </div>
+  )
   // ルールブックが1つも見つからない（B-019。def_original は DEF-Rulebooks にある）
   const [noRulebooks, setNoRulebooks] = useState(false)
   const noRulebooksNotice = (
@@ -1392,12 +1411,18 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {}, keeper_char_id: trpgMode ? keeperCharId : '', human_keeper: trpgMode ? humanKeeper : false }),
       })
       const data = await res.json()
-      if (!res.ok) { console.error('session start failed:', data.detail || res.status); return }
+      if (!res.ok) {
+        console.error('session start failed:', data.detail || res.status)
+        setStartError(describeFailure(res.status, typeof data.detail === 'string' ? data.detail : ''))
+        return
+      }
+      setStartError(null)
       await _initSession(data, selectedChars)
       // オンライン側（ロビー終了処理）と同様、ここではai_resumeを呼ばない。
       // 開始後は「自動」トグルか「次の発言」ボタンでユーザーが能動的に始める。
     } catch (e) {
       console.error(e)
+      setStartError(t('session.start.failed', { reason: String(e) }))
     } finally {
       setSessionStarting(false)
     }
@@ -1414,7 +1439,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         body: JSON.stringify({ character_ids: [], topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: {}, keeper_char_id: '', human_keeper: false, online_mode: true }),
       })
       const data = await res.json()
-      if (!res.ok) { console.error('session start failed:', data.detail || res.status); return }
+      if (!res.ok) {
+        console.error('session start failed:', data.detail || res.status)
+        setStartError(describeFailure(res.status, typeof data.detail === 'string' ? data.detail : ''))
+        return
+      }
+      setStartError(null)
       await _initSession(data, [])
       setLobbyTrpgMode(trpgMode)
       setKeeperSource('ai')
@@ -2517,10 +2547,18 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                             body: JSON.stringify({ trpg_mode: isTrpg }),
                           })
                           // /start と同じ条件付けで設定を同期する（TRPG: ルールブック/シナリオ、通常: ルール/お題）
+                          setStartError(null)
                           if (isTrpg) {
-                            patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: selectedRulebook, trpg_scenario: selectedScenario })
+                            const rb = rulebookOnlineOk(selectedRulebook) ? selectedRulebook
+                              : (rulebookOptions.find(r => r.online_sessions !== false)?.id ?? '')
+                            const sc = scenarioOnlineOk(selectedScenario) ? selectedScenario : ''
+                            if (rb !== selectedRulebook) setSelectedRulebook(rb)
+                            if (sc !== selectedScenario) setSelectedScenario(sc)
+                            void patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: rb, trpg_scenario: sc }).then(r => {
+                              if (!r.ok) setStartError(describeFailure(r.status, r.detail))
+                            })
                           } else {
-                            patchLobbySettings({ rule_set: ruleSet, topic, trpg_rulebook: '', trpg_scenario: '' })
+                            void patchLobbySettings({ rule_set: ruleSet, topic, trpg_rulebook: '', trpg_scenario: '' })
                           }
                         }}
                         style={{ padding: '6px 18px', borderRadius: 8, border: `1px solid ${lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'var(--border-color, #ccc)'}`, background: lobbyTrpgMode === isTrpg ? '#4a6cf7' : 'transparent', color: lobbyTrpgMode === isTrpg ? '#fff' : 'inherit', cursor: 'pointer', fontSize: '0.88em', fontWeight: lobbyTrpgMode === isTrpg ? 600 : 400 }}
@@ -2567,11 +2605,18 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                         <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('trpg.rulebook.label')}</div>
                         <select
                           value={selectedRulebook}
-                          onChange={e => { setSelectedRulebook(e.target.value); patchLobbySettings({ trpg_rulebook: e.target.value }) }}
+                          onChange={e => {
+                            const prev = selectedRulebook, next = e.target.value
+                            setSelectedRulebook(next)
+                            setStartError(null)
+                            void patchLobbySettings({ trpg_rulebook: next }).then(r => {
+                              if (!r.ok) { setSelectedRulebook(prev); setStartError(describeFailure(r.status, r.detail)) }
+                            })
+                          }}
                           style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
                         >
                           {rulebookOptions.map(r => (
-                            <option key={r.id} value={r.id}>{r.label}（{r.dice_system}）</option>
+                            <option key={r.id} value={r.id} disabled={lobbyMode && r.online_sessions === false}>{rulebookOptionLabel(r)}</option>
                           ))}
                         </select>
                       </div>
@@ -2581,12 +2626,19 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                         <div style={{ fontSize: '0.78em', opacity: 0.55, marginBottom: 8 }}>{t('trpg.scenario.label')}</div>
                         <select
                           value={selectedScenario}
-                          onChange={e => { setSelectedScenario(e.target.value); patchLobbySettings({ trpg_scenario: e.target.value }) }}
+                          onChange={e => {
+                            const prev = selectedScenario, next = e.target.value
+                            setSelectedScenario(next)
+                            setStartError(null)
+                            void patchLobbySettings({ trpg_scenario: next }).then(r => {
+                              if (!r.ok) { setSelectedScenario(prev); setStartError(describeFailure(r.status, r.detail)) }
+                            })
+                          }}
                           style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border-color, #ccc)', background: 'var(--input-bg, #f5f5f5)', color: 'inherit', fontSize: '0.9em' }}
                         >
                           <option value="">{t('trpg.scenario.none')}</option>
                           {scenarioOptions.map(s => (
-                            <option key={s.id} value={s.id}>{s.label}</option>
+                            <option key={s.id} value={s.id} disabled={s.online_sessions === false}>{scenarioOptionLabel(s)}</option>
                           ))}
                         </select>
                         {selectedScenario && scenarioOptions.find(s => s.id === selectedScenario)?.synopsis && (
@@ -2598,6 +2650,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                     )}
                     {noRulebooks && noRulebooksNotice}
                     <TrpgCredits credits={selectedTableCredits} />
+                    {startErrorBox}
                   </>
                 )}
 
@@ -3071,7 +3124,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                 onChange={e => setSelectedRulebook(e.target.value)}
               >
                 {rulebookOptions.map(r => (
-                  <option key={r.id} value={r.id}>{r.label}（{r.dice_system}）</option>
+                  <option key={r.id} value={r.id} disabled={lobbyMode && r.online_sessions === false}>{rulebookOptionLabel(r)}</option>
                 ))}
               </select>
             </div>
@@ -3087,7 +3140,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
               >
                 <option value="">{t('trpg.scenario.none')}</option>
                 {scenarioOptions.map(s => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
+                  <option key={s.id} value={s.id}>{scenarioOptionLabel(s)}</option>
                 ))}
               </select>
               {selectedScenario && scenarioOptions.find(s => s.id === selectedScenario)?.synopsis && (
@@ -3105,6 +3158,14 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           {trpgMode && selectedTableCredits.length > 0 && (
             <div className="session-field">
               <TrpgCredits credits={selectedTableCredits} />
+            </div>
+          )}
+
+          {selectedOfflineOnly && (
+            <div className="session-field">
+              <p className="trpg-offline-only" style={{ fontSize: '0.85em', margin: '4px 0', opacity: 0.8 }}>
+                {t('trpg.online.offlineOnlyNotice')}
+              </p>
             </div>
           )}
 
@@ -3166,6 +3227,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
               ⚠ {removedNotice}
             </div>
           )}
+          {startErrorBox}
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
             <button
@@ -3178,7 +3240,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             <button
               className="start-btn"
               onClick={startOnlineSession}
-              disabled={sessionStarting}
+              disabled={sessionStarting || selectedOfflineOnly}
+              title={selectedOfflineOnly ? t('trpg.online.offlineOnlyNotice') : undefined}
               style={{ background: '#4a6cf7' }}
             >
               {t('session.setup.startOnlineBtn')}

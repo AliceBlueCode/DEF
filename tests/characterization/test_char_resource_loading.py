@@ -80,13 +80,14 @@ def test_missing_returns_empty(rulebook_dirs):
 
 
 def test_scenario_list_and_get(rulebook_dirs):
-    """C-002: A章でわざと変えた挙動（B-023、2026-11-14）。一覧の各項目に `credits`（manifest の `credit` の一覧）を足した。"""
+    """C-002: A章でわざと変えた挙動（B-023、2026-11-14）。一覧の各項目に `credits`（manifest の `credit` の一覧）を足した。2026-11-15 に `online_sessions`（オンラインの卓で使えるか。B-022）も足した。"""
     public, private = rulebook_dirs
     _write(public / "trpg_scenarios", "s1", {"title": "T1", "synopsis": "S", "rulebook_id": "def_original"})
     _write(private / "trpg_scenarios", "s2", {"id": "s2", "title": "T2"})
     assert t.list_scenarios() == {"scenarios": [
-        {"id": "s1", "label": "T1", "synopsis": "S", "rulebook_id": "def_original", "credits": []},
-        {"id": "s2", "label": "T2", "synopsis": "", "rulebook_id": "", "credits": []},
+        {"id": "s1", "label": "T1", "synopsis": "S", "rulebook_id": "def_original", "credits": [],
+         "online_sessions": True},
+        {"id": "s2", "label": "T2", "synopsis": "", "rulebook_id": "", "credits": [], "online_sessions": True},
     ]}
     assert t.get_scenario("s2")["id"] == "s2"
     assert t.get_scenario("../s2") == {"error": "Invalid scenario ID"}

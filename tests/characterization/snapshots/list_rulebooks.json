@@ -6,7 +6,8 @@
       "rule_system_name": "DEF(仮)TRPGシステム",
       "dice_system": "1d100",
       "private": false,
-      "credits": []
+      "credits": [],
+      "online_sessions": true
     }
   ]
 }

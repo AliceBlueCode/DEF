@@ -41,9 +41,10 @@ def list_rulebooks():
                 "rule_system_name": b.get("rule_system_name", ""),
                 "dice_system": _safe_dice_notation(b),
                 "private": False,
-                "credits": resources.table_credits(bid),  # B-023
+                "credits": perms["credits"],  # B-023
+                "online_sessions": perms["online_sessions"],  # B-022（画面で「オンライン不可」と出す）
             }
-            for bid, b in books.items()
+            for bid, b, perms in ((bid, b, resources.table_permissions(bid)) for bid, b in books.items())
             if bid != "blank_template"
         ]
     }
@@ -116,9 +117,10 @@ def list_scenarios():
                 "label": s.get("title", sid),
                 "synopsis": s.get("synopsis", ""),
                 "rulebook_id": s.get("rulebook_id", ""),
-                "credits": resources.table_credits("", sid),  # B-023（シナリオのまとまりの分だけ）
+                "credits": perms["credits"],  # B-023（シナリオのまとまりの分だけ）
+                "online_sessions": perms["online_sessions"],  # B-022
             }
-            for sid, s in scenarios.items()
+            for sid, s, perms in ((sid, s, resources.table_permissions("", sid)) for sid, s in scenarios.items())
         ]
     }
 
