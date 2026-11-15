@@ -471,6 +471,8 @@ data/public/trpg_rules/      ← 公開ルールブック・シナリオ（Git�
 data/private/trpg_rules/     ← NSFWルールブック・シナリオ（gitignore対象）
 ```
 
+> v5.0.0 から: ルールブックとシナリオは、プラグインのデータ（`TRPG_PLUGIN_PATHS`）→ ルールブックのリポジトリ（`TRPG_RULEBOOK_REPO_PATHS`）→ `data/public` → `data/private` の順に探す。DEF(仮)ルールとサンプルのシナリオは本体から外し、公開のリポジトリ DEF-Rulebook に移した。画面から新しく保存するルールブックは `data/private/trpg_rules/` に置く。
+
 ファイル形式はJSON必須（Rule Engine が解釈するため）。ルールブックの詳細スキーマは`docs/DEF_TRPG_ルールブック.md`を参照。
 
 セッション開始時にルールブック・シナリオをドロップダウンで選択すると、JSONがシステムプロンプトに展開される。未選択の場合は通常セッションと同じ動作になる。

@@ -101,13 +101,26 @@ Speech, votes, and removals during the session are broadcast to all participants
 
 Enable the "TRPG Mode ON" toggle on the session start screen to use ruleBooks, scenarios, and dice rolls.
 
+#### Preparing Rulebooks (from v5.0.0)
+The DEF(kari) rules and the sample scenarios are no longer part of DEF itself; they live in the public repository [DEF-Rulebook](https://github.com/AliceBlueCode/DEF-Rulebook). Before using TRPG mode, clone it, set its location in `.env`, and restart DEF.
+
+```
+git clone https://github.com/AliceBlueCode/DEF-Rulebook.git
+# .env
+TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebook
+```
+
+- If it is not set, a setup notice appears in place of the rulebook list.
+- Several repositories can be listed, separated by `;`. Each repository's `manifest.json` sets the terms of use, the credits, whether content may be sent to external services, and whether it may be used at online tables.
+- Rules with a different judgment system are loaded as plugins from `TRPG_PLUGIN_PATHS` (the plugin API is experimental).
+
 #### Before Starting the Session
-1. **Rulebook** — Select the rule system from the dropdown
+1. **Rulebook** — Select the rule system from the dropdown (its credits are shown below; rulebooks that cannot be used at online tables are marked "offline only")
 2. **Scenario** — Select a scenario from the dropdown (synopsis is shown)
 3. **Keeper** — Select the character who will serve as GM
 
 #### During the Session
-- **🎲 Roll** — Open the dice dialog. Select a character, skill, and notation (e.g., `1d100`) and roll
+- **🎲 Roll** — Open the dice dialog. Select a character and skill and roll (the dice notation comes from the table's rulebook)
 - **📍 Advance Scene** — Progress the current scene to the next
 - **Role badges** — Each message displays a `GM` / `human` / `ai` badge
 
@@ -186,8 +199,8 @@ data/
 │   ├── characters/      # Public characters (legacy format)
 │   ├── action_directives/
 │   ├── session_rules/
-│   ├── trpg_rules/      # TRPG rulebooks (public)
-│   ├── trpg_scenarios/  # TRPG scenarios (public)
+│   ├── trpg_rules/      # TRPG rulebooks you add (the DEF(kari) rules are in DEF-Rulebook)
+│   ├── trpg_scenarios/  # TRPG scenarios you add
 │   └── episode_prompts/ # Novel plot files (public)
 ├── private/             # Private data (git-excluded)
 │   ├── characters/      # Private characters (legacy format)
@@ -196,7 +209,7 @@ data/
 │   ├── session_history/
 │   ├── session_rules/
 │   ├── action_directives/
-│   ├── trpg_rules/      # TRPG rulebooks (private)
+│   ├── trpg_rules/      # TRPG rulebooks (private; rulebooks newly saved from the screen also go here)
 │   ├── trpg_scenarios/  # TRPG scenarios (private)
 │   └── thoughts/
 ├── sessions/            # Session history

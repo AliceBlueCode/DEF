@@ -718,6 +718,8 @@ Loads an external rule definition file (JSON/Markdown) into the system at sessio
 
 Implemented rulebook list/individual-get/save APIs in `def_kari/api/routes/trpg.py`. Scans `data/public/trpg_rules/` and `data/private/trpg_rules/`. ID validation and atomic writes (tmp -> replace) are already in place.
 
+> From v5.0.0: rulebooks and scenarios are looked up in plugin data (`TRPG_PLUGIN_PATHS`), rulebook repositories (`TRPG_RULEBOOK_REPO_PATHS`), `data/public`, then `data/private`. The DEF(kari) rules and the sample scenarios moved out of DEF into the public repository DEF-Rulebook. Rulebooks newly saved from the screen go to `data/private/trpg_rules/`.
+
 ### F-21: Dynamic Generation of a Game Master (GM) Agent ✅ Implemented in v3.0.0
 
 One of the multiple AI characters registered in F-6 can be designated as the "GM." The GM agent gives top priority to the rulebook loaded in F-20, handling progression, scene description, and dice-roll requests/judgments. The GM agent's scene descriptions are subject to F-8's safety operation guardrail, avoiding a stall from an erroneous full mask.

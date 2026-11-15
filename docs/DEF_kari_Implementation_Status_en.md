@@ -50,7 +50,7 @@ This document records the implementation status of feature specifications (F-num
 | —— | Action directives added | ✅ Done | standard preset added |
 | —— | i18n foundation (i18n.tsx) | ✅ Done | React-side i18n base; Japanese + English |
 | —— | DEF-Character repository separation | ✅ Done | External character repository linked via `CHARACTER_REPO_PATH`. Falls back to legacy `data/characters/` format |
-| F-20 | TRPG Rulebook Injection | ✅ Done | JSON format. Loaded from `data/public/trpg_rules/` / `data/private/trpg_rules/`. ID validation included |
+| F-20 | TRPG Rulebook Injection | ✅ Done | JSON format. From v5.0.0, loaded from plugin data, rulebook repositories (`TRPG_RULEBOOK_REPO_PATHS`; the DEF(kari) rules are in DEF-Rulebook), `data/public/trpg_rules/`, then `data/private/trpg_rules/`. Manifests and (experimental) plugins supported. ID validation included |
 | F-21 | GM Agent | ✅ Done | Designate a character as GM. Async notification via event bus (`game_event_bus`). Judgment results auto-injected into session history |
 | F-22 | Dice Roll & Character Sheet | ✅ Done | `NdM±K` notation, success/critical/fumble/failure judgment, opposed rolls, damage rolls. Scenario management API also provided |
 | —— | Online Multiplayer (v4.0+) | ✅ Done | WebSocket sync, JWT auth, invite codes, 4 participant roles, lobby, GM role (`waiting_for_gm`), public exposure via Cloudflare Tunnel. See `DEF_kari_マルチプレイ設計書_内部用.md` (internal, Japanese only) and Basic Design Specification Section 7.11 |

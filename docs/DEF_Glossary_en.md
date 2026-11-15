@@ -299,7 +299,7 @@ Definitions of terms unique to TRPG Mode.
 
 A rule definition for the TRPG system applied to a session, managed in JSON format.
 
-Placed in `data/public/trpg_rules/` (public) or `data/private/trpg_rules/` (private), and selected from the dropdown on the session start screen.
+Looked up in plugin data (`TRPG_PLUGIN_PATHS`), rulebook repositories (`TRPG_RULEBOOK_REPO_PATHS` in `.env`; the DEF(kari) rules are in DEF-Rulebook), `data/public/trpg_rules/`, then `data/private/trpg_rules/` (from v5.0.0), and selected from the dropdown on the session start screen. Each repository's `manifest.json` sets the terms of use, the credits, whether content may be sent to external services, and whether it may be used at online tables.
 
 ---
 

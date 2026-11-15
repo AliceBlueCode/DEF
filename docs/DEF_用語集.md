@@ -305,7 +305,7 @@ TRPGモードで使用する固有概念の定義。
 
 セッションに適用するTRPGシステムのルール定義。JSON形式で管理する。
 
-`data/public/trpg_rules/`（公開）または `data/private/trpg_rules/`（非公開）に配置する。
+ルールブックのリポジトリ（`.env` の `TRPG_RULEBOOK_REPO_PATHS`。DEF(仮)ルールは DEF-Rulebook）、ルールシステムのプラグイン（`TRPG_PLUGIN_PATHS`）、`data/public/trpg_rules/`、`data/private/trpg_rules/` の順に探す（v5.0.0 から）。各リポジトリの `manifest.json` が、利用条件・クレジット・外部のサービスに送ってよいか・オンラインの卓で使ってよいかを決める。
 
 ---
 

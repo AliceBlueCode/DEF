@@ -101,13 +101,26 @@ npm run dev
 
 セッション開始画面で「TRPGモード ON」トグルを有効にすると、ルールブック・シナリオ・ダイスロールが使えるようになる。
 
+#### ルールブックの準備（v5.0.0 から）
+DEF(仮)ルールとサンプルのシナリオは、DEF の本体ではなく、公開のリポジトリ [DEF-Rulebook](https://github.com/AliceBlueCode/DEF-Rulebook) にある。TRPGモードを使う前に、取ってきて `.env` に場所を書き、DEF を起動し直す。
+
+```
+git clone https://github.com/AliceBlueCode/DEF-Rulebook.git
+# .env
+TRPG_RULEBOOK_REPO_PATHS=/path/to/DEF-Rulebook
+```
+
+- 設定していないと、ルールブックの欄の代わりに設定の案内が出る。
+- 複数のリポジトリを `;` 区切りで書ける。各リポジトリの `manifest.json` が、利用条件・クレジット・外部のサービスに送ってよいか・オンラインの卓で使ってよいかを決める。
+- 別の判定の仕組みを持つルールは、プラグインとして `TRPG_PLUGIN_PATHS` から読み込む（プラグインの API は試験的）。
+
 #### セッション開始前の設定
-1. **ルールブック** — プルダウンから使用するルールを選択
+1. **ルールブック** — プルダウンから使用するルールを選択（その下にクレジットが出る。オンラインの卓で使えないものには「オンライン不可」と出る）
 2. **シナリオ** — プルダウンからシナリオを選択（あらすじが表示される）
 3. **キーパー** — GM担当のキャラクターを選択
 
 #### セッション中の操作
-- **🎲 振る** — ダイスダイアログを開く。キャラクター・技能・記法（例: `1d100`）を指定して振る
+- **🎲 振る** — ダイスダイアログを開く。キャラクターと技能を指定して振る（ダイスの記法は、卓のルールブックで決まる）
 - **📍 シーン進行** — 現在のシーンを次に進める
 - **ロールバッジ** — 各発言に `GM` / `human` / `ai` バッジが表示される
 
@@ -186,8 +199,8 @@ data/
 │   ├── characters/      # 公開キャラクター（旧形式）
 │   ├── action_directives/
 │   ├── session_rules/
-│   ├── trpg_rules/      # TRPGルールブック（公開）
-│   ├── trpg_scenarios/  # TRPGシナリオ（公開）
+│   ├── trpg_rules/      # 自分で置くTRPGルールブック（DEF(仮)ルールは DEF-Rulebook にある）
+│   ├── trpg_scenarios/  # 自分で置くTRPGシナリオ
 │   └── episode_prompts/ # ノベル用プロットファイル（公開）
 ├── private/             # プライベートデータ（git除外）
 │   ├── characters/      # プライベートキャラクター（旧形式）
@@ -196,7 +209,7 @@ data/
 │   ├── session_history/
 │   ├── session_rules/
 │   ├── action_directives/
-│   ├── trpg_rules/      # TRPGルールブック（非公開）
+│   ├── trpg_rules/      # TRPGルールブック（非公開。画面から新しく保存したルールブックもここ）
 │   ├── trpg_scenarios/  # TRPGシナリオ（非公開）
 │   └── thoughts/
 ├── sessions/            # セッション履歴
