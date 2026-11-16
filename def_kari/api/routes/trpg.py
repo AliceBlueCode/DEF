@@ -169,8 +169,9 @@ def compute_dice_judgment(
     # = None）。以前はここに「値が 0 より大きいとき」が直書きされていて、値 0 が正しい入力のルールシステムでも
     # 判定されなかった（レビュー 2026-11-15 の🟡3）。
     if rulebook_id:
-        books = _load_rulebooks()
-        rulebook = books.get(rulebook_id, {})
+        # 1冊だけ読む（以前は全部のルールブックを読んでいた。判定の条件を外してから、ルールブックのある卓の
+        # すべてのダイスがここを通るようになったため。確認のレビュー 2026-11-16 の🟢3）
+        rulebook = resources.load_rulebook(rulebook_id)
         # 卓のルールシステム（固定した値）を渡されればそれを使い、無ければルールブックから引く（B-002）
         system = system if system is not None else (registry.for_rulebook(rulebook) if rulebook else None)
         if rulebook and system is not None:
