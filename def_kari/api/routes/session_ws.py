@@ -61,11 +61,15 @@ def _register_ws_connection(sess: dict, token: str, ws: WebSocket) -> None:
     sess.setdefault("ws_connections", {})[token] = ws
 
 
-def _forget_ws_connection(sess: dict | None, token: str) -> WebSocket | None:
+def _forget_ws_connection(sess: dict | None, token: str, ws: WebSocket | None = None) -> WebSocket | None:
     """接続を外す（閉じない）。外した接続を返す。切断済み・送信失敗・トークンの失効で使う。
 
     自動保存から復元した直後のセッションは ws_connections を持たないので .get() で扱う。
+    `ws` を渡したときは、今そのトークンに登録されている接続が `ws` 自身のときだけ外す。同じトークンで
+    新しい接続が先に入っていたら、古い接続の後始末で新しい方を外さない（全体レビュー第3回の🟢。v4 から）。
     """
+    if ws is not None and sess and sess.get("ws_connections", {}).get(token) is not ws:
+        return None
     _ws_send_locks.pop(token, None)
     if not sess:
         return None
@@ -106,7 +110,7 @@ async def _safe_send(session_id: str, token: str, ws: WebSocket, event: dict) ->
         try:
             await ws.send_json(event)
         except Exception:
-            _forget_ws_connection(_sessions.get(session_id), token)
+            _forget_ws_connection(_sessions.get(session_id), token, ws)
 
 
 def _session_tokens(sess: dict) -> set[str]:

@@ -325,7 +325,7 @@ def _load_env_file() -> dict[str, str]:
     result: dict[str, str] = {}
     if not _ENV_PATH.exists():
         return result
-    for line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
+    for line in _ENV_PATH.read_text(encoding="utf-8-sig").splitlines():  # 先頭の BOM を名前に含めない
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

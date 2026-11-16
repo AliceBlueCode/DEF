@@ -3,7 +3,7 @@
 ルールブックの manifest が外部への送信を許さない卓では、外部の LLM・読み上げ（TTS）・画像生成（T2I）に
 送らない。送る直前に `check()`（断るときは例外）か `allowed()`（断るときは False）を呼ぶ。確かめる
 処理はここ1か所にまとめ、呼ぶ所はセッションと GM のコードの中で LLM・TTS・T2I を直接呼ぶ関数すべて
-（`tests/test_backend_guard_coverage.py` が呼び忘れを機械的に探す）。
+（`tests/test_backend_guard.py` の `test_every_sender_checks_the_guard` が呼び忘れを機械的に探す）。
 
 - 手元のバックエンド: LLM は textgen_webui・ollama、TTS は voicevox・irodori・kokoro、T2I は a1111・comfyui。
   互換バックエンドは、設定の画面で「手元で動いている」の印（`local: true`）を付けたものだけ。印の無い

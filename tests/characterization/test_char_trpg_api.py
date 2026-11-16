@@ -112,7 +112,7 @@ def test_damage_always_rolls_1d100(use_fixture_rulebooks, fixed_dice):
     assert seen == [100]
 
 
-def test_damage_default_rulebook_is_def_original(use_fixture_rulebooks, fixed_dice):
+def test_damage_requires_rulebook_id(use_fixture_rulebooks, fixed_dice):
     """C-002: A章でわざと変えた挙動（B-030、2026-11-14）。以前は rulebook_id の既定が "def_original"
     だった。今は必須で、省くと検証で断り、空なら理由を返す。"""
     from pydantic import ValidationError
@@ -122,8 +122,10 @@ def test_damage_default_rulebook_is_def_original(use_fixture_rulebooks, fixed_di
 
 
 def test_damage_unknown_rulebook(use_fixture_rulebooks, fixed_dice):
+    """C-002: 無いルールブックは「見つからない」と返す（全体レビュー第3回の🟢、2026-11-17）。以前は def_original の
+    ダメージ表の処理に入り、`{"error": "Entry not found", "roll": 7}` を返していた。"""
     with fixed_dice(7):
-        assert t.damage_roll(t.DamageRollRequest(rulebook_id="nope")) == {"error": "Entry not found", "roll": 7}
+        assert t.damage_roll(t.DamageRollRequest(rulebook_id="nope")) == {"error": "Rulebook 'nope' not found"}
 
 
 # ── POST /opposed-check ──────────────────────────────────────────
@@ -134,7 +136,7 @@ def test_opposed_endpoint(use_fixture_rulebooks):
     assert (out["winner"], out["reason"]) == ("defender", "tie_defense_wins")
 
 
-def test_opposed_default_rulebook_is_def_original(use_fixture_rulebooks):
+def test_opposed_requires_rulebook_id(use_fixture_rulebooks):
     """C-002: A章でわざと変えた挙動（B-030、2026-11-14）。以前は rulebook_id の既定が "def_original"
     だった。今は必須。"""
     from pydantic import ValidationError
@@ -183,7 +185,7 @@ def test_get_rulebook_missing(use_fixture_rulebooks):
     assert t.get_rulebook("nope") == {"error": "Rulebook 'nope' not found"}
 
 
-def test_save_new_rulebook_goes_to_public(rulebook_dirs):
+def test_save_new_rulebook_goes_to_private(rulebook_dirs):
     """C-002: A章でわざと変えた挙動（B-028、2026-11-14）。以前は、新しいルールブックを読み込み先の
     1つ目（data/public。git で管理している）に保存していた。今は git で管理していない data/private に保存する。"""
     public, private = rulebook_dirs

@@ -15,8 +15,8 @@
 
 - ID の正本はファイル名（拡張子を除く）。JSON の `id` がファイル名と違えば警告を残し、ファイル名を使う（B-029）。
 - どの読み方でも、パスを解決した後に置き場所の内側にある普通のファイルだけを読む（`safe_file`、B-012）。
-- オンラインの卓・公開のポートからの読み込み（`public_only`）は、今は `data/public` だけ。manifest の
-  `online_sessions` に従って広げるのは B-013・B-022（手順4b）。
+- オンラインの卓・公開のポートからの読み込み（`public_only`）は、`data/public` と、manifest で `online_sessions`
+  をはっきり許した外部のまとまりだけ（B-013・B-022）。
 - manifest（B-020）はまとまりごとに1つ。卓が外部に送ってよいか・オンラインで使ってよいかは
   `table_permissions()` で、使うものすべての manifest が許すときだけ許す。
 
@@ -335,35 +335,9 @@ def scenario_listing() -> list[tuple[str, dict, dict]]:
 
 
 def _load_all(places: list) -> dict:
-    """置き場所のすべての JSON を読み、ID（ファイル名）→ 中身 の dict を返す。
-
-    同じ ID は先に見つかった方を使い、重なりを警告に残す（B-011）。JSON の `id` がファイル名と
-    違えば警告を残し、ファイル名を ID にする（B-029）。読めないファイルは飛ばす。
-    """
-    found: dict = {}
-    where: dict = {}
-    for place in places:
-        d, root = _as_place(place[:2] if isinstance(place, tuple) else place)
-        if not d.is_dir():
-            continue
-        for f in sorted(d.iterdir()):
-            if f.suffix != ".json" or f.name == ".gitkeep":
-                continue
-            path = safe_file(d, f.name, root)
-            if path is None:
-                continue
-            data = _read_object(path)
-            if data is None:
-                continue
-            rid = f.stem
-            if isinstance(data, dict) and data.get("id") not in (None, rid):
-                _log.warning("[trpg] %s: id %r differs from the file name; using %r", path, data.get("id"), rid)
-            if rid in found:
-                _log.warning("[trpg] %s is also in %s; using the one in %s", rid, d, where[rid])
-                continue
-            found[rid] = data
-            where[rid] = d
-    return found
+    """置き場所（`_places()` の (フォルダ, 根, まとまり)）のすべての JSON を読み、ID（ファイル名）→ 中身 を返す。
+    読み方は `_load_all_with_sources()` と同じ（同じ ID は先勝ちで警告、ID はファイル名、object でないものは飛ばす）。"""
+    return {rid: data for rid, (data, _src) in _load_all_with_sources(places).items()}
 
 
 def all_rulebooks() -> dict:

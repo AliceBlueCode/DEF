@@ -204,6 +204,11 @@ def start_session(req: SessionStartRequest, request: Request):
         for cid, bid in req.char_backends.items()
         if cid in req.character_ids and bid in LLM_BACKENDS
     }
+    # ルールブックの無い TRPG の卓は始めない。ルールの説明が空・判定なしのまま黙って進むため
+    # （B-019。全体レビュー第3回の🟡2）
+    if req.trpg_mode and not req.trpg_rulebook:
+        raise HTTPException(400, "A TRPG table needs a rulebook. Set TRPG_RULEBOOK_REPO_PATHS "
+                                 "(for example, to DEF-Rulebook) and choose one.")
     # オンラインの卓では、manifest がオンラインを許すルールブック・シナリオだけ使える（B-022）
     if req.online_mode and req.trpg_mode:
         from def_kari.trpg import resources as _trpg_resources
