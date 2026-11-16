@@ -336,6 +336,34 @@ def _note_pending_vote_dropped_on_restore(restored: dict, expel: dict | None) ->
         _log.warning("failed to note dropped pending vote for session %s", restored.get("id"), exc_info=True)
 
 
+def _table_pin(state: dict) -> tuple[str, str, str | None, bool]:
+    """保存した卓（自動保存の中身、または `/load` の metadata）を戻してよいかと、戻すときのピン。
+
+    返す値は (rule_system, plugin_version, 断る理由, 移行したか)。
+    - ルールブックが見つからない・ルールシステムが登録されていない → 断る（B-002・B-019）
+    - ピンがあれば `resolve_pinned()` で引く。プラグインが無い・版が違う → 断る。別の版や def_original には
+      切り替えない（B-002）
+    - ピンが無い（v5.0.0 より前の卓）→ 今の環境でピンを作る。これは当時の環境の再現ではなく、今の環境への
+      移行の扱い（ログに残す）
+    自動保存の復元と `/load` は、この1つの確かめ方を使う（実装再開メモ 2026-11-16 の指摘。以前は自動保存の
+    復元だけがピンを確かめず、版が変わった卓も戻していた）。
+    """
+    rulebook_id = state.get("trpg_rulebook", "") or ""
+    pinned_rs, pinned_ver = state.get("trpg_rule_system", "") or "", state.get("trpg_plugin_version", "") or ""
+    if not rulebook_id:
+        return pinned_rs, pinned_ver, None, False
+    unavailable = _trpg_resources.rulebook_unavailable_reason(rulebook_id)
+    if unavailable:
+        return pinned_rs, pinned_ver, unavailable, False
+    from def_kari.trpg import registry as _trpg_registry
+    migrated = False
+    if not pinned_rs:
+        pinned_rs, pinned_ver = _trpg_registry.pin_for(_trpg_resources.load_rulebook(rulebook_id))
+        migrated = True
+    _sys, why = _trpg_registry.resolve_pinned(pinned_rs, pinned_ver)
+    return pinned_rs, pinned_ver, why, migrated
+
+
 def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
     """1件のautosaveファイルを復元する。TTLを超えて放置されたファイルは復元せず削除する。"""
     if f.suffix != ".json":
@@ -349,10 +377,15 @@ def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
             # ルールブックのルールシステムが使えない（プラグインが読み込まれていない）セッションは
             # 戻さない。def_original として遊ばせない。ファイルは消さずに残すので、プラグインを
             # 入れ直せば次の起動で戻る（B-002、基本設計書 11.6）。
-            _unavailable = _trpg_resources.rulebook_unavailable_reason(restored.get("trpg_rulebook", ""))
+            _rs, _ver, _unavailable, _migrated = _table_pin(restored)
             if _unavailable:
                 _log.warning("[autosave] session %s not restored: %s", str(restored["id"])[:8], _unavailable)
                 return
+            if _migrated:
+                # v5.0.0 より前の卓: 今の環境でピンを作り、すぐ保存し直す（移行。当時の環境の再現ではない）
+                restored["trpg_rule_system"], restored["trpg_plugin_version"] = _rs, _ver
+                _log.info("[autosave] session %s: pinned to rule system %r %s (migrated from a table saved "
+                          "before v5.0.0)", str(restored["id"])[:8], _rs, _ver or "(built-in)")
             # 投票中・追放の決定待ちのまま保存されていたら捨てる。確定や選択のUIはキーパーの
             # タブの状態にしか無く、再起動後には出せない。残すとターンの進行が止まったまま
             # 二度と進まなくなる（2026-11-08。投票の発言は履歴に残っている）。
@@ -361,7 +394,7 @@ def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
             had_ai_proposal = "_ai_vote_proposal" in restored
             _refund_unaccepted_ai_vote_proposal(restored)
             _sessions[restored["id"]] = restored
-            if had_ai_proposal and not (pending_vote or expel):
+            if (had_ai_proposal or _migrated) and not (pending_vote or expel):
                 _autosave(restored["id"])
             if pending_vote or expel:
                 _refund_proposer_counter(restored, pending_vote)
@@ -450,19 +483,13 @@ def load_session(req: SessionLoadRequest):
     if data is None:
         return {"error": "File not found"}
     meta = data.get("metadata", {})
-    # ルールブックのルールシステムが使えないセッションは読み込まず、何が足りないかを返す（B-002）
-    _unavailable = _trpg_resources.rulebook_unavailable_reason(meta.get("trpg_rulebook", ""))
-    if _unavailable:
-        return {"error": _unavailable}
-    _pinned_rs, _pinned_ver = meta.get("trpg_rule_system", ""), meta.get("trpg_plugin_version", "")
-    if meta.get("trpg_rulebook") and not _pinned_rs:
-        from def_kari.trpg import registry as _trpg_registry
-        _pinned_rs, _pinned_ver = _trpg_registry.pin_for(_trpg_resources.load_rulebook(meta["trpg_rulebook"]))
-    if _pinned_rs:
-        from def_kari.trpg import registry as _trpg_registry
-        _sys, _why = _trpg_registry.resolve_pinned(_pinned_rs, _pinned_ver)
-        if _why:
-            return {"error": _why}
+    # 戻してよいかとピンは、自動保存の復元と同じ確かめ方で決める（B-002・B-019）
+    _pinned_rs, _pinned_ver, _why, _migrated = _table_pin(meta)
+    if _why:
+        return {"error": _why}
+    if _migrated:
+        _log.info("[load] %s: pinned to rule system %r (migrated from a table saved before v5.0.0)",
+                  req.filename, _pinned_rs)
     new_id = secrets.token_urlsafe(16)
     session = {
         "id": new_id,

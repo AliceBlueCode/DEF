@@ -119,6 +119,9 @@ class Source:
     root: Path | None = None   # 外部のまとまりの根。中のファイルは、この内側にあるものだけを読む（B-012）
 
 
+_EMPTY_REPO_WARNED: set = set()
+
+
 def _repo_sources(root: Path) -> list[Source]:
     if not root.is_dir():
         _log.warning("[trpg] rulebook repository not found: %s", root)
@@ -143,6 +146,11 @@ def _repo_sources(root: Path) -> list[Source]:
         if e:
             _log.warning("[trpg] %s: %s", sub, e)
         found.append(Source("repo", str(sub), sub / "rulebooks", sub / "scenarios", m, e, (), sub))
+    if not found and str(root) not in _EMPTY_REPO_WARNED:
+        # 単体型（直下に manifest.json・rulebooks/・scenarios/）でも、集約型（中にルールブックのフォルダ）でもない。
+        # 読み込みの失敗と「0件」を区別できるよう、1回だけ知らせる（実装再開メモ 2026-11-16 の指摘）
+        _EMPTY_REPO_WARNED.add(str(root))
+        _log.warning("[trpg] %s: no rulebook folders found (neither a single nor an aggregated repository)", root)
     return found
 
 
@@ -187,6 +195,19 @@ def _as_place(d) -> tuple[Path, Path | None]:
     return d if isinstance(d, tuple) else (d, None)
 
 
+def _read_object(path: Path) -> dict | None:
+    """JSON を読み、いちばん外側が object（dict）のときだけ返す。壊れている・object でないなら None
+    （警告を残す）。配列や文字列のファイルをルールブックとして扱わない（実装再開メモ 2026-11-16 の指摘）。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        _log.warning("[trpg] %s: the top level is not a JSON object; ignored", path)
+        return None
+    return data
+
+
 def load_resource(resource_id: str, dirs: list) -> dict:
     """`dirs`（フォルダ、または (フォルダ, 根)）を順に探し、最初に読めた `{resource_id}.json` を返す。"""
     if not is_safe_id(resource_id):
@@ -195,10 +216,9 @@ def load_resource(resource_id: str, dirs: list) -> dict:
         folder, root = _as_place(d)
         path = safe_file(folder, f"{resource_id}.json", root)
         if path is not None:
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
+            data = _read_object(path)
+            if data is not None:
+                return data
     return {}
 
 
@@ -218,10 +238,10 @@ def _locate(resource_id: str, kind: str, public_only: bool = False) -> tuple[dic
         path = safe_file(folder, f"{resource_id}.json", root)
         if path is None:
             continue
-        try:
-            return json.loads(path.read_text(encoding="utf-8")), path, src
-        except (json.JSONDecodeError, OSError):
+        data = _read_object(path)
+        if data is None:
             continue
+        return data, path, src
     return {}, None, None
 
 
@@ -279,9 +299,8 @@ def _load_all_with_sources(places: list) -> dict:
             path = safe_file(d, f.name, root)
             if path is None:
                 continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            data = _read_object(path)
+            if data is None:
                 continue
             rid = f.stem
             if isinstance(data, dict) and data.get("id") not in (None, rid):
@@ -333,9 +352,8 @@ def _load_all(places: list) -> dict:
             path = safe_file(d, f.name, root)
             if path is None:
                 continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            data = _read_object(path)
+            if data is None:
                 continue
             rid = f.stem
             if isinstance(data, dict) and data.get("id") not in (None, rid):

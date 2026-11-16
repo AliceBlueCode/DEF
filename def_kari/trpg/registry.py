@@ -79,7 +79,8 @@ def for_rulebook(rulebook: dict) -> RuleSystem | None:
 
 
 def is_known(rulebook: dict) -> bool:
-    return for_rulebook(rulebook) is not None
+    """ルールブックのルールシステムが登録されているか。dict でないものは、ルールブックとして扱わない（False）。"""
+    return isinstance(rulebook, dict) and for_rulebook(rulebook) is not None
 
 
 # ── 卓のルールシステムの固定（B-002。実装レビューの🟡2） ───────────────────
