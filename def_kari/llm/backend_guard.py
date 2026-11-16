@@ -39,7 +39,18 @@ _LOCAL_URL_ENV = {
     "a1111": ("A1111_URL", "http://localhost:7860"),
     "comfyui": ("COMFYUI_URL", "http://127.0.0.1:8188"),
 }
-_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+def _is_loopback_host(host: str) -> bool:
+    """この機械を指すホストか。IP アドレスは `ipaddress` で解析して `is_loopback` で決め、ホスト名は
+    `localhost` だけを認める（名前の解決はしない）。以前は文字列の前方一致（`127.` で始まる）で、
+    `127.example.com` のような外のホスト名も手元とみなしていた（実装再開メモ 2026-11-16 の指摘）。"""
+    import ipaddress
+    host = (host or "").strip().lower().strip("[]")
+    if host in ("localhost", "localhost."):
+        return True
+    try:
+        return ipaddress.ip_address(host.split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
 
 
 def _points_to_this_machine(backend_id: str) -> bool:
@@ -47,8 +58,11 @@ def _points_to_this_machine(backend_id: str) -> bool:
     from urllib.parse import urlparse
     env, default = _LOCAL_URL_ENV.get(backend_id, ("", ""))
     url = os.environ.get(env, default) if env else ""
-    host = (urlparse(url).hostname or "").lower()
-    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:  # 壊れた URL は外部として扱う
+        return False
+    return _is_loopback_host(host)
 
 
 def _is_ollama_cloud_model(model: str) -> bool:
