@@ -100,7 +100,7 @@ class _Sum:
 def test_value_zero_is_judged_when_the_rule_system_wants(monkeypatch):
     """C-002: 判定するかどうかはルールシステムが決める。以前は「値が 0 より大きいとき」が本体に直書きされていた。"""
     from def_kari.api.routes import trpg as t
-    monkeypatch.setattr(t, "_load_rulebooks", lambda: {"rb": {"rule_system": "_sum"}})
+    monkeypatch.setattr(resources, "load_rulebook", lambda rid, public_only=False: {"rule_system": "_sum"} if rid == "rb" else {})
     out = t.compute_dice_judgment("1d20", 0, "rb", system=_Sum())
     assert out["judgment"] is not None and out["judgment"]["total"] == out["result"]["total"]
     # def_original は、値が 0 以下なら今までどおり判定しない
@@ -115,7 +115,6 @@ def test_history_and_event_show_the_total(monkeypatch):
                       "history": [], "name_map": {"c": "C"}, "human_char_ids": [], "players": {}}
     monkeypatch.setattr("def_kari.trpg.plugin_hooks.resolve_for_session", lambda s: (_Sum(), None))
     monkeypatch.setattr(resources, "load_rulebook", lambda rid, public_only=False: {"rule_system": "_sum", "dice_system": "1d20"})
-    monkeypatch.setattr("def_kari.api.routes.trpg._load_rulebooks", lambda: {"rb": {"rule_system": "_sum"}})
     monkeypatch.setattr(registry, "call_rule", lambda system, m, *a, **k: "1d20" if m == "dice_notation" else getattr(system, m)(*a, **k))
     monkeypatch.setattr("def_kari.trpg.rule_engine.secrets.randbelow", lambda n: 7)  # 出目 8
     try:
@@ -127,3 +126,15 @@ def test_history_and_event_show_the_total(monkeypatch):
         assert bus.emit.call_args[0][2]["total"] == 11
     finally:
         _sessions.pop(sid, None)
+
+
+def test_dice_reads_only_the_one_rulebook(monkeypatch):
+    """ダイスのたびに全部のルールブックを読まない（確認のレビュー 2026-11-16 の🟢3）。"""
+    from def_kari.api.routes import trpg as t
+
+    def boom():
+        raise AssertionError("all rulebooks were read for one dice roll")
+    monkeypatch.setattr(resources, "all_rulebooks", boom)
+    monkeypatch.setattr(t, "_load_rulebooks", boom)
+    monkeypatch.setattr(resources, "load_rulebook", lambda rid, public_only=False: {"rule_system": "_sum"} if rid == "rb" else {})
+    assert t.compute_dice_judgment("1d20", 3, "rb", system=_Sum())["judgment"]["total"] is not None

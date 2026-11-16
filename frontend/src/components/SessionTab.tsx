@@ -369,7 +369,10 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         : t('session.start.failed', { reason: detail || String(status) })
   // ロビーの設定の変更の連番。断られたとき、最後の要求の失敗だけ欄を戻す（連続で変えたとき、古い値に
   // 戻さないため。レビュー 2026-11-15 の🟢）
-  const lobbyPatchSeqRef = useRef(0)
+  // 欄ごとに持つ（1つだと、ルールブックを変えた直後にシナリオを変えたとき、ルールブックの失敗が戻らない。
+  // 確認のレビュー 2026-11-16 の🟢1）
+  const rulebookPatchSeqRef = useRef(0)
+  const scenarioPatchSeqRef = useRef(0)
   const startErrorBox = startError && (
     <div className="session-start-error" role="alert" style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(224,80,80,0.12)', color: '#e05', fontSize: '0.9em', marginTop: 4 }}>
       ⚠ {startError}
@@ -1900,7 +1903,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         })
         const data = await parseJsonResponse(res)
         if (data.error) { myDiceRollKeysRef.current.delete(requestId); continue }
-        let text = `[${data.rolls?.join(', ')}] = ${data.total}`
+        let text = `[${data.rolls?.join(', ')}] = ${rollText(data.total, data.judgment?.total)}`
         if (data.judgment) {
           const j = data.judgment
           text += `　/ ${key}(${j.judgment_value})`
@@ -2547,6 +2550,12 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                       <button
                         key={String(isTrpg)}
                         onClick={() => {
+                          if (isTrpg && !rulebookOptions.some(r => r.online_sessions !== false)) {
+                            // オンラインの卓で使えるルールブックが1冊も無い。モードも変えずに案内だけ出す
+                            // （確認のレビュー 2026-11-16 の🟢4。以前はモードだけ TRPG に変わっていた）
+                            setStartError(t('trpg.online.noUsableRulebook'))
+                            return
+                          }
                           setLobbyTrpgMode(isTrpg)
                           // キーパー専任 → 通常モードでも同じ役割なのでラベルのみ変更
                           void fetch(`/api/session/${sessionId}/lobby/mode`, {
@@ -2559,21 +2568,18 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                           if (isTrpg) {
                             const rb = rulebookOnlineOk(selectedRulebook) ? selectedRulebook
                               : (rulebookOptions.find(r => r.online_sessions !== false)?.id ?? '')
-                            if (!rb) {
-                              // オンラインで使えるルールブックが1冊も無い。ルールブック無しの卓を黙って送らない
-                              setStartError(t('trpg.online.noUsableRulebook'))
-                            } else {
-                              const sc = scenarioOnlineOk(selectedScenario) ? selectedScenario : ''
-                              const prevRb = selectedRulebook, prevSc = selectedScenario
-                              const seq = ++lobbyPatchSeqRef.current
-                              if (rb !== selectedRulebook) setSelectedRulebook(rb)
-                              if (sc !== selectedScenario) setSelectedScenario(sc)
-                              void patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: rb, trpg_scenario: sc }).then(r => {
-                                if (r.ok || seq !== lobbyPatchSeqRef.current) return
-                                setSelectedRulebook(prevRb); setSelectedScenario(prevSc)
-                                setStartError(describeFailure(r.status, r.detail))
-                              })
-                            }
+                            const sc = scenarioOnlineOk(selectedScenario) ? selectedScenario : ''
+                            const prevRb = selectedRulebook, prevSc = selectedScenario
+                            const rbSeq = ++rulebookPatchSeqRef.current
+                            const scSeq = ++scenarioPatchSeqRef.current
+                            if (rb !== selectedRulebook) setSelectedRulebook(rb)
+                            if (sc !== selectedScenario) setSelectedScenario(sc)
+                            void patchLobbySettings({ rule_set: 'none', topic: '', trpg_rulebook: rb, trpg_scenario: sc }).then(r => {
+                              if (r.ok) return
+                              if (rbSeq === rulebookPatchSeqRef.current) setSelectedRulebook(prevRb)
+                              if (scSeq === scenarioPatchSeqRef.current) setSelectedScenario(prevSc)
+                              setStartError(describeFailure(r.status, r.detail))
+                            })
                           } else {
                             void patchLobbySettings({ rule_set: ruleSet, topic, trpg_rulebook: '', trpg_scenario: '' })
                           }
@@ -2624,11 +2630,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                           value={selectedRulebook}
                           onChange={e => {
                             const prev = selectedRulebook, next = e.target.value
-                            const seq = ++lobbyPatchSeqRef.current
+                            const seq = ++rulebookPatchSeqRef.current
                             setSelectedRulebook(next)
                             setStartError(null)
                             void patchLobbySettings({ trpg_rulebook: next }).then(r => {
-                              if (r.ok || seq !== lobbyPatchSeqRef.current) return
+                              if (r.ok || seq !== rulebookPatchSeqRef.current) return
                               setSelectedRulebook(prev); setStartError(describeFailure(r.status, r.detail))
                             })
                           }}
@@ -2647,11 +2653,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                           value={selectedScenario}
                           onChange={e => {
                             const prev = selectedScenario, next = e.target.value
-                            const seq = ++lobbyPatchSeqRef.current
+                            const seq = ++scenarioPatchSeqRef.current
                             setSelectedScenario(next)
                             setStartError(null)
                             void patchLobbySettings({ trpg_scenario: next }).then(r => {
-                              if (r.ok || seq !== lobbyPatchSeqRef.current) return
+                              if (r.ok || seq !== scenarioPatchSeqRef.current) return
                               setSelectedScenario(prev); setStartError(describeFailure(r.status, r.detail))
                             })
                           }}
