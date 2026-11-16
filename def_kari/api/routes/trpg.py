@@ -32,7 +32,14 @@ def list_rulebooks():
         # 空の一覧ではなく、置き場所の設定を案内する（B-019。def_original は DEF-Rulebook にある）
         return {"rulebooks": [], "notice": "no_rulebooks",
                 "message": "No rulebooks found. Set TRPG_RULEBOOK_REPO_PATHS (for example, to DEF-Rulebook)."}
+    extra = {}
+    if not os.environ.get("TRPG_RULEBOOK_REPO_PATHS", "").strip():
+        # 自分のルールブックだけがある（DEF-Rulebook を設定していない）人にも、DEF(仮)ルールの置き場所を知らせる。
+        # アップグレードした人が、DEF(仮)ルールの卓が戻らない理由に気づけるように（全体レビュー第3回の🔴2）
+        extra = {"notice": "no_repo",
+                 "message": "TRPG_RULEBOOK_REPO_PATHS is not set. The DEF(kari) rules are in DEF-Rulebook."}
     return {
+        **extra,
         "rulebooks": [
             {
                 "id": bid,
@@ -219,7 +226,9 @@ def damage_roll(req: DamageRollRequest):
     （B-004・B-030。def_original の実装は `DefOriginal.damage_roll`）。"""
     if not req.rulebook_id:
         return dict(_RULEBOOK_ID_REQUIRED)
-    rulebook = _load_rulebooks().get(req.rulebook_id, {})
+    rulebook = resources.load_rulebook(req.rulebook_id)
+    if not rulebook:
+        return {"error": f"Rulebook '{req.rulebook_id}' not found"}
     system = registry.for_rulebook(rulebook)
     if registry.extension(system, "damage_roll") is None:
         return {"error": "This rule system has no damage table"}
@@ -242,8 +251,7 @@ class OpposedCheckRequest(BaseModel):
 def opposed_check_endpoint(req: OpposedCheckRequest):
     if not req.rulebook_id:
         return dict(_RULEBOOK_ID_REQUIRED)
-    books = _load_rulebooks()
-    rulebook = books.get(req.rulebook_id, {})
+    rulebook = resources.load_rulebook(req.rulebook_id)
     if not rulebook:
         return {"error": f"Rulebook '{req.rulebook_id}' not found"}
     result = opposed_check(

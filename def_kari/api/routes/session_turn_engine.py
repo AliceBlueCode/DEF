@@ -1722,7 +1722,7 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     finally:
         keepalive_task.cancel()
         sess = _sessions.get(session_id)
-        _forget_ws_connection(sess, raw_token)
+        _forget_ws_connection(sess, raw_token, ws)
         if sess:
             # /leave で既に除去済み（players からも消えている）なら通知しない。
             # 参加者データは保持したまま切断のみを通知する（退室とは異なり再接続可能）

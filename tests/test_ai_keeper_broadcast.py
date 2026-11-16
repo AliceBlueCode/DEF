@@ -22,7 +22,8 @@ client = TestClient(app)
 def _start_trpg_session():
     resp = client.post(
         "/api/session/start",
-        json={"character_ids": [], "online_mode": True, "trpg_mode": True},
+        # ルールブックの無い TRPG の卓は作れない（全体レビュー第3回の🟡2）。テストの写しの DEF(仮)ルールを使う
+        json={"character_ids": [], "online_mode": True, "trpg_mode": True, "trpg_rulebook": "def_original"},
     )
     d = resp.json()
     sid = d["session_id"]

@@ -380,6 +380,13 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
   )
   // ルールブックが1つも見つからない（B-019。def_original は DEF-Rulebook にある）
   const [noRulebooks, setNoRulebooks] = useState(false)
+  // ルールブックのリポジトリを設定していない（自分のルールブックだけがある）。DEF(仮)ルールの置き場所を知らせる
+  const [noRepo, setNoRepo] = useState(false)
+  const noRepoHint = (
+    <p className="trpg-no-repo" style={{ fontSize: '0.8em', margin: '4px 0', opacity: 0.75 }}>
+      {t('trpg.rulebook.noRepoHint')}
+    </p>
+  )
   const noRulebooksNotice = (
     <p className="trpg-no-rulebooks" style={{ fontSize: '0.85em', margin: '4px 0', color: 'var(--error-color, #e74c3c)' }}>
       {t('trpg.rulebook.notFound')}
@@ -1312,6 +1319,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           setSelectedRulebook(d.rulebooks[0].id)
         }
         setNoRulebooks(d.notice === 'no_rulebooks')
+        setNoRepo(d.notice === 'no_repo')
       })
       .catch(() => {})
     fetch('/api/trpg/scenarios')
@@ -1930,7 +1938,14 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         body: JSON.stringify({ filename }),
       })
       const data = await res.json()
-      if (!res.ok || data.error) { console.error(data.detail || data.error || res.status); return }
+      if (!res.ok || data.error) {
+        console.error(data.detail || data.error || res.status)
+        // 以前は console に出すだけで、DEF(仮)ルールの卓が黙って戻らなかった（全体レビュー第3回の🔴2）
+        const detail = typeof data.error === 'string' ? data.error : typeof data.detail === 'string' ? data.detail : ''
+        setStartError(describeFailure(res.status, detail))
+        return
+      }
+      setStartError(null)
 
       const nameMap: Record<string, string> = data.name_map || {}
       const history: any[] = data.history || []
@@ -2676,6 +2691,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
                       </div>
                     )}
                     {noRulebooks && noRulebooksNotice}
+                    {noRepo && noRepoHint}
                     <TrpgCredits credits={selectedTableCredits} />
                     {startErrorBox}
                   </>
@@ -3181,6 +3197,9 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           {trpgMode && noRulebooks && (
             <div className="session-field">{noRulebooksNotice}</div>
           )}
+          {trpgMode && noRepo && (
+            <div className="session-field">{noRepoHint}</div>
+          )}
 
           {trpgMode && selectedTableCredits.length > 0 && (
             <div className="session-field">
@@ -3260,14 +3279,14 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             <button
               className="start-btn"
               onClick={startLocalSession}
-              disabled={selectedChars.length < 1 || sessionStarting}
+              disabled={selectedChars.length < 1 || sessionStarting || (trpgMode && !selectedRulebook)}
             >
               {t('session.setup.startLocalBtn')}
             </button>
             <button
               className="start-btn"
               onClick={startOnlineSession}
-              disabled={sessionStarting || selectedOfflineOnly}
+              disabled={sessionStarting || selectedOfflineOnly || (trpgMode && !selectedRulebook)}
               title={selectedOfflineOnly ? t('trpg.online.offlineOnlyNotice') : undefined}
               style={{ background: '#4a6cf7' }}
             >
