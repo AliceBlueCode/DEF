@@ -17,11 +17,15 @@ def _isolate_audit_log(tmp_path):
     """
     from def_kari.safety import audit_log
     audit_log._violations.clear()
+    for _h in list(audit_log._audit_logger.handlers):  # 閉じてから外す（閉じていないファイルの警告を出さない）
+        _h.close()
     audit_log._audit_logger.handlers.clear()
     audit_log._handler_ready = False
     with patch.object(audit_log, "_LOG_DIR", tmp_path / "logs"):
         yield
     audit_log._violations.clear()
+    for _h in list(audit_log._audit_logger.handlers):  # 閉じてから外す（閉じていないファイルの警告を出さない）
+        _h.close()
     audit_log._audit_logger.handlers.clear()
     audit_log._handler_ready = False
 
