@@ -1,7 +1,10 @@
 version: 2
+# main は v4.2.1 で凍結中。更新は v5.0 の作業ブランチに向ける（v5.0 を main にマージしたら、
+# target-branch の行を消す）。この設定は既定のブランチ（main）のものだけが読まれる。
 updates:
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "feature/multi-rulebook"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -13,6 +16,7 @@ updates:
 
   - package-ecosystem: "npm"
     directory: "/frontend"
+    target-branch: "feature/multi-rulebook"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -21,5 +25,6 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "feature/multi-rulebook"
     schedule:
       interval: "monthly"
