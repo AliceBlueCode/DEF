@@ -63,10 +63,15 @@ class PluginApi:
 
     LLM への送信・読み上げ・画像生成は、外部への送信の確かめ（B-021、手順4）と一緒に足す。
     それまでは渡さない。
+
+    データの読み書きは、プラグインがパスを組み立てずにこの口だけを通す（B-006・B-007）:
+    読む口は `load_data()`、書き込みの置き場は `storage`（`plugin_storage.PluginStorage`）。
     """
 
     def __init__(self, plugin_id: str):
         self.plugin_id = plugin_id
+        from def_kari.trpg.plugin_storage import PluginStorage
+        self.storage = PluginStorage(plugin_id)
 
     @staticmethod
     def roll_dice(notation: str) -> dict:
@@ -82,6 +87,11 @@ class PluginApi:
     def load_scenario(scenario_id: str) -> dict:
         from def_kari.trpg import resources
         return resources.load_scenario(scenario_id)
+
+    @staticmethod
+    def load_data(rulebook_id: str, ruleset: str, kind: str, data_id: str) -> dict:
+        from def_kari.trpg import resources
+        return resources.load_data(rulebook_id, ruleset, kind, data_id)
 
     @staticmethod
     def vram_lock():

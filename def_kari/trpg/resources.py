@@ -365,6 +365,27 @@ def scenario_source(scenario_id: str) -> Source | None:
     return _locate(scenario_id, "scenarios")[2]
 
 
+def load_data(rulebook_id: str, ruleset: str, kind: str, data_id: str) -> dict:
+    """ルールブックと同じまとまりの、裁定の組の版のデータ（B-006）。
+
+    `<まとまりの根>/data/rulesets/<ruleset>/<kind>/<data_id>.json` を読む。機体・エネミー・アビリティ・
+    マップ・固有名の表・版の中のシナリオなど、ルールブックでもシナリオでもないデータのため。
+    4つの引数は、それぞれ ID の許可リストで確かめる（`/` を含む ID は使わない。B-012）。
+    根の無いまとまり（data/public・data/private の平らな置き場）には、データは無い。
+    無い・壊れている・いちばん外側が object でないなら空の dict。
+    """
+    if not all(is_safe_id(x) for x in (rulebook_id, ruleset, kind, data_id)):
+        return {}
+    src = rulebook_source(rulebook_id)
+    if src is None or src.root is None:
+        return {}
+    folder = src.root / "data" / "rulesets" / ruleset / kind
+    path = safe_file(folder, f"{data_id}.json", src.root)
+    if path is None:
+        return {}
+    return _read_object(path) or {}
+
+
 def new_rulebook_file(rulebook_id: str) -> Path:
     """画面から新しく保存するルールブックのパス。git で管理していない置き場（data/private。
     `RULEBOOK_DIRS` の最後）に置く（B-028。2026-11-14 までは data/public に保存していた）。"""

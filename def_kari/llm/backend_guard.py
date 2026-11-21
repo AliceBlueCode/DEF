@@ -102,8 +102,18 @@ def is_local(kind: str, backend_id: str, model: str = "") -> bool:
     return True
 
 
-def refusal(session: dict | None, kind: str, backend_id: str, model: str = "") -> str | None:
-    """送ってはいけないなら、その理由。送ってよいなら None。"""
+# 呼び出しの役（B-021）。manifest の細かい許可（種類ごと・役ごと）は権利者の返事の後に作るが、呼ぶ所は
+# 今から役を渡す。プラグインのルールシステムの卓では、役の分からない呼び出しを外部へ送らない。
+ROLES = frozenset({"gm", "pc", "image_prompt", "narration", "image", "tts", "other"})
+
+
+def refusal(session: dict | None, kind: str, backend_id: str, model: str = "", role: str | None = None) -> str | None:
+    """送ってはいけないなら、その理由。送ってよいなら None。
+
+    `role` は呼び出しの役（`ROLES`）。今は manifest が全部まとめての許可だけなので、役で許可は変わらない。
+    ただし、プラグインのルールシステムの卓で外部へ送ろうとして、役が分からない（`None`）か知らない役なら
+    断る（設計レビュー 2026-11-21 の🟡10。役ごとの許可を足したときに、役の無い呼び出しが素通りしないように）。
+    """
     if not isinstance(session, dict) or not backend_id:
         return None
     rulebook_id = session.get("trpg_rulebook", "") or ""
@@ -116,12 +126,20 @@ def refusal(session: dict | None, kind: str, backend_id: str, model: str = "") -
     # 卓を作ったときに固定したルールシステムも渡す。ルールブックが読めなくても、閉じる側に倒れる（🔴1）
     perms = resources.table_permissions(rulebook_id, scenario_id, session.get("trpg_rule_system") or None)
     if perms["external_services_allowed"]:
+        if perms.get("rule_system") != _default_rule_system() and role not in ROLES:
+            return (f"{kind} backend {backend_id!r} is an external service, and the role of this call "
+                    f"({role!r}) is not known, so nothing is sent outside")
         return None
     if perms.get("missing"):
         return (f"{kind} backend {backend_id!r} is an external service, and this table's rules cannot be "
                 f"checked ({'; '.join(perms['missing'])}), so nothing is sent outside")
     return (f"{kind} backend {backend_id!r} is an external service, and this table's rulebook does not "
             f"allow sending to external services")
+
+
+def _default_rule_system() -> str:
+    from def_kari.trpg import registry
+    return registry.DEFAULT_RULE_SYSTEM
 
 
 _notified: dict[str, set] = {}
@@ -146,17 +164,17 @@ def _notify(session: dict, kind: str, backend_id: str, reason: str) -> None:
         _log.warning("[trpg] could not notify the host: %s", e)
 
 
-def check(session: dict | None, kind: str, backend_id: str, model: str = "") -> None:
+def check(session: dict | None, kind: str, backend_id: str, model: str = "", role: str | None = None) -> None:
     """送ってはいけないなら、ホストに知らせて `ExternalServiceRefused` を出す。"""
-    reason = refusal(session, kind, backend_id, model)
+    reason = refusal(session, kind, backend_id, model, role)
     if reason:
         _notify(session, kind, backend_id, reason)
         raise ExternalServiceRefused(reason)
 
 
-def allowed(session: dict | None, kind: str, backend_id: str, model: str = "") -> bool:
+def allowed(session: dict | None, kind: str, backend_id: str, model: str = "", role: str | None = None) -> bool:
     """送ってよいか。いけないなら、ホストに知らせて False（読み上げ・挿絵のように、黙って飛ばす所用）。"""
-    reason = refusal(session, kind, backend_id, model)
+    reason = refusal(session, kind, backend_id, model, role)
     if reason:
         _notify(session, kind, backend_id, reason)
         return False
