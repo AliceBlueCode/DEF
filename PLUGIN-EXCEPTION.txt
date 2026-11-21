@@ -15,12 +15,24 @@ the Plugin, provided that:
      GNU Affero General Public License version 3 or (at your option) any later
      version.
 
+The Plugin may be licensed and conveyed under terms of your choice. You are
+not required to license the Plugin under the GNU AGPL, nor to disclose its
+source code, solely because it is combined with or used by DEF under this
+exception.
+
+You may also include a Plugin in the same archive or distribution medium as
+an unmodified copy of DEF, provided that DEF is conveyed under the GNU AGPL
+together with its Corresponding Source. In that case the Plugin is a separate
+work in an aggregate (section 5 of the GNU AGPL) and is not part of DEF's
+Corresponding Source.
+
 "Plugin" means a TRPG rule-system plugin for DEF: a work that declares itself
 in a def_plugin.json file and is loaded by DEF's plugin loader.
 
 "Plugin Interface" means the def_plugin.json declaration, the register(api)
 entry point, the PluginApi object passed to it, and the RuleSystem protocol
-and capability hooks, as published in DEF.
+and capability hooks, as published in the version of DEF with which the
+Plugin is used.
 
 A work that imports, copies or modifies DEF's internal modules other than
 through the Plugin Interface is not a Plugin for the purposes of this
