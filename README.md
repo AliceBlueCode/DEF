@@ -264,6 +264,8 @@ Copyright (C) 2026 AliceBlueCode
 - 改造版を配布する場合はソースコードをAGPL v3で公開する義務があります
 - 改造版をネットワーク経由で提供する場合も同様にソースコードの公開が必要です
 
+- **プラグインの例外**: DEF のプラグインの口（`def_plugin.json`、`register(api)`、`PluginApi`、ルールシステムの口）だけを通して動き、使う人が設定した場所（`TRPG_PLUGIN_PATHS`）から読み込まれる TRPG のルールシステムのプラグインは、AGPL ではなく、プラグインの作者が決めた条件で配布できます。DEF 本体と、DEF を改変したものは、AGPL のままです（AGPL v3 第7条の追加の許可。本文は `PLUGIN-EXCEPTION.txt`）
+
 > 詳細は`LICENSE`ファイルを参照してください。
 
 -----

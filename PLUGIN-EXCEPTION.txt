@@ -1,0 +1,34 @@
+DEF Plugin Exception
+(Additional permission under GNU AGPL version 3, section 7)
+
+Copyright (C) 2026 AliceBlueCode
+
+As an additional permission under section 7 of the GNU Affero General Public
+License version 3, the copyright holder of DEF gives you permission to combine
+DEF with a Plugin, and to convey such a Plugin, under terms of your choice for
+the Plugin, provided that:
+
+  a) the Plugin interacts with DEF only through the Plugin Interface;
+  b) the Plugin is loaded by DEF at run time from a location that the user
+     configures (TRPG_PLUGIN_PATHS), and is not conveyed as part of DEF; and
+  c) DEF itself, including any modification you make to it, remains under the
+     GNU Affero General Public License version 3 or (at your option) any later
+     version.
+
+"Plugin" means a TRPG rule-system plugin for DEF: a work that declares itself
+in a def_plugin.json file and is loaded by DEF's plugin loader.
+
+"Plugin Interface" means the def_plugin.json declaration, the register(api)
+entry point, the PluginApi object passed to it, and the RuleSystem protocol
+and capability hooks, as published in DEF.
+
+A work that imports, copies or modifies DEF's internal modules other than
+through the Plugin Interface is not a Plugin for the purposes of this
+exception.
+
+Rulebook and scenario data are not part of DEF; they are licensed by their
+own authors.
+
+If you modify DEF, you may extend this exception to your version, but you are
+not obliged to do so. If you do not wish to do so, delete this exception
+statement from your version.

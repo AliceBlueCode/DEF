@@ -241,6 +241,8 @@ Copyright (C) 2026 AliceBlueCode
 - Si distribuyes versiones modificadas, debes publicar el código fuente bajo AGPL v3
 - Si ofreces versiones modificadas a través de una red, también se requiere la divulgación del código fuente
 
+- **Excepción para plugins**: un plugin de sistema de reglas de TRPG que interactúa con DEF solo a través de su interfaz de plugins (`def_plugin.json`, `register(api)`, `PluginApi`, los puntos de enganche del sistema de reglas) y que se carga desde una ubicación configurada por el usuario (`TRPG_PLUGIN_PATHS`) puede distribuirse bajo los términos que elija su autor en lugar de la AGPL. DEF y las versiones modificadas de DEF siguen bajo la AGPL (permiso adicional según la sección 7 de la AGPL v3; ver `PLUGIN-EXCEPTION.txt`)
+
 > Consulta el archivo `LICENSE` para más detalles.
 
 -----

@@ -13,3 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# Additional permission under GNU AGPL version 3 section 7: TRPG rule-system
+# plugins that use only the plugin interface may be distributed under terms of
+# their authors' choice. See PLUGIN-EXCEPTION.txt.

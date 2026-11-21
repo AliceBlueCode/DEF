@@ -241,6 +241,8 @@ Copyright (C) 2026 AliceBlueCode
 - 개조판을 배포하는 경우 소스 코드를 AGPL v3로 공개할 의무가 있습니다
 - 개조판을 네트워크를 통해 제공하는 경우에도 마찬가지로 소스 코드 공개가 필요합니다
 
+- **플러그인 예외**: DEF의 플러그인 인터페이스(`def_plugin.json`, `register(api)`, `PluginApi`, 룰 시스템 훅)만을 통해 동작하고, 사용자가 설정한 위치(`TRPG_PLUGIN_PATHS`)에서 로드되는 TRPG 룰 시스템 플러그인은 AGPL이 아닌, 플러그인 작성자가 정한 조건으로 배포할 수 있습니다. DEF 본체와 DEF를 개조한 것은 AGPL 그대로입니다(AGPL v3 제7조의 추가 허가. 본문은 `PLUGIN-EXCEPTION.txt`)
+
 > 자세한 내용은 `LICENSE` 파일을 참조해 주세요.
 
 -----

@@ -243,6 +243,8 @@ Copyright (C) 2026 AliceBlueCode
 - If distributing modified versions, you must release the source code under AGPL v3
 - If providing modified versions over a network, source code disclosure is also required
 
+- **Plugin exception**: a TRPG rule-system plugin that interacts with DEF only through its plugin interface (`def_plugin.json`, `register(api)`, `PluginApi`, the rule-system hooks) and is loaded from a location the user configures (`TRPG_PLUGIN_PATHS`) may be distributed under terms chosen by its author instead of the AGPL. DEF itself and modified versions of DEF remain under the AGPL (an additional permission under AGPL v3 section 7; see `PLUGIN-EXCEPTION.txt`)
+
 > See the `LICENSE` file for details.
 
 -----

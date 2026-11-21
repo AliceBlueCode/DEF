@@ -241,6 +241,8 @@ Copyright (C) 2026 AliceBlueCode
 - 若分发修改版本，须以 AGPL v3 公开源代码
 - 若以网络方式提供修改版本，同样须公开源代码
 
+- **插件例外**：仅通过 DEF 的插件接口（`def_plugin.json`、`register(api)`、`PluginApi`、规则系统钩子）运行，并从用户配置的位置（`TRPG_PLUGIN_PATHS`）加载的 TRPG 规则系统插件，可以按插件作者决定的条件而非 AGPL 发布。DEF 本体及其修改版本仍适用 AGPL（AGPL v3 第7条的附加许可，正文见 `PLUGIN-EXCEPTION.txt`）
+
 > 详情请参阅 `LICENSE` 文件。
 
 -----
