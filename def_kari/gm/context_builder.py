@@ -104,6 +104,23 @@ def _require_table_rulebook(rulebook: dict, session: dict) -> None:
         raise _registry.RuleSystemError(_resources.rulebook_not_found(rulebook_id))
 
 
+def _context_from_rule_system(session: dict, method: str, *args) -> str | None:
+    """束の組み立ての口（prompt_context。差し込み口 3）を持つ卓なら、口が作った束。持たない卓は None。
+
+    口が失敗した・文字列を返さなかったら `RuleSystemError` にする。呼ぶ側（GM の語り・AI の手番）が
+    卓を止めて知らせ、LLM を呼ばない（DEF の束には逃がさない。隠したものが LLM へ出るため。B-027）。
+    """
+    from def_kari.trpg import plugin_hooks as _hooks, registry as _registry
+    if not isinstance(session, dict) or not _hooks.has_capability(session, "prompt_context"):
+        return None
+    out = _hooks.call(session, "prompt_context", method, session, *args)
+    if out is _hooks.NOT_HANDLED:
+        return None
+    if not isinstance(out, str):
+        raise _registry.RuleSystemError(f"prompt_context.{method} of the table's rule system did not build a context")
+    return out
+
+
 def build_for_gm(
     rulebook: dict,
     scenario: dict | None,
@@ -112,6 +129,9 @@ def build_for_gm(
 ) -> str:
     """GM専用コンテキスト: gm_notes / NPC目標 / 全フラグを含む完全情報。"""
     _require_table_rulebook(rulebook, session)
+    _plugin_ctx = _context_from_rule_system(session, "gm_context", user_language)
+    if _plugin_ctx is not None:
+        return _plugin_ctx
     _is_ja = user_language == "ja"
     parts = []
 
@@ -341,6 +361,9 @@ def build_for_player(
     - 自分の knowledge（静的＋セッション中獲得）
     - gm_only: false のフラグのみ
     """
+    _plugin_ctx = _context_from_rule_system(session, "player_context", char_id, user_language)
+    if _plugin_ctx is not None:
+        return _plugin_ctx
     _require_table_rulebook(rulebook, session)
     _is_ja = user_language == "ja"
     parts = []

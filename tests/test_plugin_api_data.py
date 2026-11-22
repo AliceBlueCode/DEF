@@ -191,4 +191,4 @@ def test_loaded_plugin_gets_its_declared_version(monkeypatch):
         plugins._reset_for_tests()
         import sys
         sys.modules.pop("def_trpg_plugin_sample_grid", None)
-    assert seen["args"] == ("sample_grid", "0.1.0", 1)
+    assert seen["args"] == ("sample_grid", "0.1.0", 1, ["sample_grid"])

@@ -61,15 +61,18 @@ def check_capabilities(capabilities) -> list[str]:
 class PluginApi:
     """プラグインに渡す、DEF の中で使ってよいものだけの入れ物（基本設計書 11.3、対応表 2.2）。
 
-    LLM への送信・読み上げ・画像生成は、外部への送信の確かめ（B-021、手順4）と一緒に足す。
-    それまでは渡さない。
+    LLM への送信は `llm_chat`（外部への送信の確かめと vram_lock を必ず通る。B-021・B-051）。読み上げと
+    画像生成は、まだ渡さない。卓へのイベントは `emit`（配るときに見せてよいものの境界を通る）。
+    どちらも、そのプラグインのルールシステムの卓でだけ使える。
 
     データの読み書きは、プラグインがパスを組み立てずにこの口だけを通す（B-006・B-007）:
     読む口は `load_data()`、書き込みの置き場は `storage`（`plugin_storage.PluginStorage`）。
     """
 
-    def __init__(self, plugin_id: str, plugin_version: str = "", plugin_api: int = 1):
+    def __init__(self, plugin_id: str, plugin_version: str = "", plugin_api: int = 1,
+                 rule_systems: list[str] | tuple[str, ...] = ()):
         self.plugin_id = plugin_id
+        self.rule_systems = frozenset(rule_systems)
         # 版（保存するファイルに、作ったとき・書いたときの版を残すため。要求仕様 S-209）
         self.plugin_version = plugin_version
         self.plugin_api = plugin_api  # プラグインが宣言した def_plugin_api
@@ -97,6 +100,18 @@ class PluginApi:
     def load_data(rulebook_id: str, ruleset: str, kind: str, data_id: str) -> dict:
         from def_kari.trpg import resources
         return resources.load_data(rulebook_id, ruleset, kind, data_id)
+
+    def llm_chat(self, session_id: str, messages: list, *, role: str, json_mode: bool = False,
+                 options: dict | None = None) -> str:
+        """卓のバックエンドで LLM を1回呼ぶ。`role` は呼び出しの役（`backend_guard.ROLES`）。
+        断ったとき・失敗したときは `PluginCallError`（`def_kari.api.routes.session_plugin_bridge`）。"""
+        from def_kari.api.routes import session_plugin_bridge as _bridge
+        return _bridge.llm_chat(self.rule_systems, session_id, messages, role=role, json_mode=json_mode,
+                                options=options)
+
+    def emit(self, session_id: str, event_type: str, payload: dict) -> None:
+        from def_kari.api.routes import session_plugin_bridge as _bridge
+        _bridge.emit(self.rule_systems, session_id, event_type, payload)
 
     @staticmethod
     def vram_lock():
@@ -224,7 +239,7 @@ def load_plugin(path: Path, register, is_registered) -> LoadedPlugin | None:
         entry = getattr(module, "register", None)
         if not callable(entry):
             raise ImportError("package has no register(api)")
-        result = entry(PluginApi(plugin_id, decl["plugin_version"], decl["def_plugin_api"]))
+        result = entry(PluginApi(plugin_id, decl["plugin_version"], decl["def_plugin_api"], decl["rule_systems"]))
         systems = list(result) if isinstance(result, (list, tuple)) else [result]
         for system in systems:
             problem = _validate_system(system, decl["rule_systems"])

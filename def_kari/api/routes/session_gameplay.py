@@ -134,6 +134,11 @@ def ai_keeper_narrate(session_id: str, req: AIKeeperRequest, _auth: dict = Depen
         return {"error": "Not in TRPG mode"}
     if session.get("human_keeper"):
         return {"error": "Human keeper mode: use POST /keeper endpoint instead"}
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if _plugin_hooks.has_capability(session, "gm_driver"):
+        # GM をサーバー側から呼ぶルールシステムの卓（差し込み口 2、S-352）。画面がラウンドの終わりに呼ぶ
+        # この入口では GM を呼ばない
+        raise HTTPException(409, "This rule system calls its GM from the server; /ai_keeper is not used")
 
     _round_seq = session.get("_round_seq", 0)
     _cache = session.get("_keeper_narrated_cache")
