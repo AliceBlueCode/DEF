@@ -420,6 +420,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         if (!alive) return
         const list: { id: string; title: string }[] = Array.isArray(d.campaigns) ? d.campaigns : []
         setUsesCampaigns(d.uses_campaigns === true)
+        // 続きものから作る卓では、DEF のシナリオを使わない（前のルールブックで選んだものを持ち越さない）
+        if (d.uses_campaigns === true) setSelectedScenario('')
         setCampaignOptions(list)
         setSelectedCampaign(prev => (list.some(c => c.id === prev) ? prev : (list[0]?.id ?? '')))
       })
@@ -3219,7 +3221,8 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             </div>
           )}
 
-          {trpgMode && scenarioOptions.length > 0 && (
+          {/* 続きものから作るルールブックでは、シナリオは続きものの側で決まるので、DEF のシナリオの欄は出さない */}
+          {trpgMode && !usesCampaigns && scenarioOptions.length > 0 && (
             <div className="session-field">
               <label className="session-label">{t('trpg.scenario.label')}</label>
               <select
