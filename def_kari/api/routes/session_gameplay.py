@@ -8,7 +8,7 @@ NPC状態・stat同期。`session.py`分割の一部。
 import logging
 import os
 
-from fastapi import HTTPException, Depends
+from fastapi import Body, HTTPException, Depends
 from pydantic import BaseModel
 
 from def_kari.llm.backend import DEFAULT_LLM_BACKEND
@@ -646,7 +646,66 @@ def get_session(session_id: str, _auth: dict = Depends(require_participant)):
     if _auth.get("role") == "player" and _auth.get("char_id"):
         result["my_game_sheet_id"] = session.get("char_game_sheets", {}).get(_auth["char_id"], "")
     result["participants"] = _participants_snapshot(session)
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    # 画面部品の口（ui）を持つ卓か。画面は、この印があるときだけ GET /rule_ui を読む（差し込み口 11）
+    result["rule_ui"] = _plugin_hooks.has_capability(session, "ui")
     return result
+
+
+@router.get("/{session_id}/rule_ui")
+def get_rule_ui(session_id: str, _auth: dict = Depends(require_participant)):
+    """画面部品に渡すデータ（ui の口。差し込み口 11、B-052、基本設計書 11.5）。
+
+    相手ごとに違うものを見せるのは口の側。DEF は形を確かめ、正しくない部品・要素だけを除く。除いたものは
+    ホストにだけ `problems` で知らせる。口が失敗した・トークンを混ぜたときは、部品を1つも描かない。
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if not _plugin_hooks.has_capability(session, "ui"):
+        return {"ui": None, "problems": []}
+    from def_kari.api.routes import session_visibility as _vis
+    from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+    from def_kari.trpg.ui_schema import validate_ui_state
+    audience = _vis.audience_of(_auth)
+    raw = _plugin_hooks.call(session, "ui", "ui_state", session, dict(audience), on_failure=_pause_for_plugin_error)
+    ui, problems = validate_ui_state(raw)
+    if _vis._has_session_token(session, ui):
+        _vis._refuse(session, "ui_state", "the ui state contained a session token")
+        ui, problems = validate_ui_state(None)
+    if problems:
+        _log.warning("[rule_ui] session %s: %d problem(s) in ui_state: %s", session_id[:8], len(problems), problems[:3])
+    return {"ui": ui, "problems": problems if audience["role"] == "host" else []}
+
+
+@router.post("/{session_id}/rule_ui/action")
+def post_rule_ui_action(session_id: str, action: dict = Body(...), _auth: dict = Depends(require_participant)):
+    """画面部品からの操作を ui の口へ渡す（差し込み口 11）。相手は JWT から作る（本文の role は使わない）。"""
+    session = _sessions.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if not _plugin_hooks.has_capability(session, "ui"):
+        raise HTTPException(409, "This table has no rule system screen")
+    from def_kari.api.routes import session_visibility as _vis
+    from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+    from def_kari.trpg.ui_schema import validate_ui_action
+    checked = validate_ui_action(action)
+    if checked is None:
+        raise HTTPException(400, "An action needs component, action, data (object) and base_revision (integer or null)")
+    out = _plugin_hooks.call(session, "ui", "ui_action", session, _vis.audience_of(_auth), checked,
+                             on_failure=_pause_for_plugin_error)
+    if not isinstance(out, dict) or not isinstance(out.get("accepted"), bool):
+        _vis._refuse(session, "ui_action", "returned something that is not {accepted: bool, reason: str}")
+        raise HTTPException(409, "Refused by the table's rule system: plugin_error")
+    reason = out.get("reason") if isinstance(out.get("reason"), str) else ""
+    if _vis._has_session_token(session, {"reason": reason}):
+        _vis._refuse(session, "ui_action", "the result contained a session token")
+        raise HTTPException(409, "Refused by the table's rule system: plugin_error")
+    if not out["accepted"]:
+        raise HTTPException(409, f"Refused by the table's rule system: {reason or 'refused'}")
+    return {"accepted": True, "reason": reason}
 
 
 @router.get("/{session_id}/credits")

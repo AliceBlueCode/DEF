@@ -25,6 +25,7 @@ import { useAiAssignWizard } from './useAiAssignWizard'
 import { useLobbySession } from './useLobbySession'
 import { useParticipants } from './useParticipants'
 import { TrpgCredits, mergeCredits } from './TrpgCredits'
+import { RuleUiPanel } from './RuleUiPanel'
 
 type Props = {
   characters: Character[]
@@ -348,6 +349,11 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
     selectedScenario ? scenarioOptions.find(s => s.id === selectedScenario)?.credits : undefined,
   )
   const [sessionCredits, setSessionCredits] = useState<string[]>([])
+  // ルールシステムの画面部品（ui の口。差し込み口 11）。GET /{session_id} の rule_ui が true の卓だけ描く。
+  // WS のイベントが届くたびに取り直す（画面の中身は口が相手ごとに作る）
+  const [ruleUi, setRuleUi] = useState(false)
+  const ruleUiRef = useRef(false)
+  const [ruleUiTick, setRuleUiTick] = useState(0)
   // オンラインの卓で使えないルールブック・シナリオ（manifest。B-022）
   const rulebookOnlineOk = (id: string) => rulebookOptions.find(r => r.id === id)?.online_sessions !== false
   const scenarioOnlineOk = (id: string) => !id || scenarioOptions.find(s => s.id === id)?.online_sessions !== false
@@ -581,6 +587,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
         // 受信できた時点で復帰試行は成功とみなしてよい。
         isRestoringRef.current = false
         try { void handleSessionEvent(JSON.parse(e.data as string)) } catch {}
+        if (ruleUiRef.current) setRuleUiTick(n => n + 1)
       }
       ws.onclose = (event) => {
         wsRef.current = null
@@ -630,6 +637,10 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
           if (res.ok && !cancelled && data.session?.initiative) {
             initiativeRef.current = data.session.initiative
             setInitiative(data.session.initiative)
+          }
+          if (res.ok && !cancelled) {
+            ruleUiRef.current = data.rule_ui === true
+            setRuleUi(data.rule_ui === true)
           }
           // trpgModeRefは自分でセッション作成したタブ(_initSession)以外では
           // 初期値falseのまま取り残されており、参加者/リロード後のタブでは
@@ -3576,6 +3587,9 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       </div>
       {trpgMode && sessionCredits.length > 0 && (
         <div style={{ padding: '0 10px' }}><TrpgCredits credits={sessionCredits} compact /></div>
+      )}
+      {ruleUi && sessionId && (
+        <RuleUiPanel sessionId={sessionId} token={hostTokenRef.current} refreshKey={ruleUiTick} />
       )}
 
       {isKeeperUi && auditWarnings.length > 0 && (

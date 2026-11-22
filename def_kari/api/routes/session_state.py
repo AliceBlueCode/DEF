@@ -38,6 +38,7 @@ from starlette.requests import HTTPConnection
 _TURN_DRIVER_PASS = frozenset({
     "get_session", "get_session_credits", "get_session_events",
     "end_session_by_host", "leave_session", "ai_pause",
+    "get_rule_ui", "post_rule_ui_action",  # 画面部品（ui の口。操作はプラグインが受ける）
 })
 _TURN_DRIVER_HANDLE = frozenset({"ai_resume", "human_turn_action", "inject_keeper_message"})
 
