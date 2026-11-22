@@ -171,6 +171,9 @@ def main() -> int:
     ap.add_argument("scenarios", nargs="+", help="frontend/e2e/<名前>.js の <名前>")
     ap.add_argument("--build", action="store_true", help="先に frontend で npm run build する（公開ポートの画面を使うシナリオ用）")
     ap.add_argument("--keep", action="store_true", help="終わった後も環境（一時ディレクトリ）を消さない")
+    ap.add_argument("--with-test-plugin", action="store_true",
+                    help="架空のルールシステムのプラグイン tests/fixtures/plugins/ui_grid を読み込む"
+                         "（画面部品のシナリオ trpg_rule_ui 用。CI の既定の組では読み込まない）")
     args = ap.parse_args()
 
     for name in args.scenarios:
@@ -207,7 +210,7 @@ def main() -> int:
         # ルールブックは DEF-Rulebook の形の固定の写しから読む（C-006。手元の .env の本物は読まない）
         "TRPG_RULEBOOK_REPO_PATHS": ";".join(str(work / "tests" / "fixtures" / "rulebook_repos" / name)
                                              for name in ("def_rulebook", "single_repo")),  # 集約型・単体型（C-006）
-        "TRPG_PLUGIN_PATHS": "",
+        "TRPG_PLUGIN_PATHS": str(work / "tests" / "fixtures" / "plugins" / "ui_grid") if args.with_test_plugin else "",
     })
 
     if args.build:

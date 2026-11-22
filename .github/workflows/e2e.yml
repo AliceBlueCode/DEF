@@ -134,6 +134,15 @@ jobs:
         run: |
           python scripts/e2e_local.py generation_failure chat_thinking_output trpg_skip_designate vote_flow expel_flow restart_recovery
 
+      # ルールシステムの画面部品（v5.0 差し込み口 11）。架空のプラグイン tests/fixtures/plugins/ui_grid を
+      # 読み込んだ別の環境で流す（上の組はプラグイン無しのまま。プラグインが既定の卓に混ざらないように）
+      - name: Run rule system screen e2e (isolated stack with a test plugin)
+        timeout-minutes: 8
+        env:
+          E2E_WORK_ROOT: ${{ runner.temp }}
+        run: |
+          python scripts/e2e_local.py --with-test-plugin trpg_rule_ui
+
       # 実時間で~2分・~6分かかる2本は既定で除外し、手動実行時の任意指定のみで走らせる。
       - name: Run slow e2e scenarios (optional)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.include_slow == 'true'

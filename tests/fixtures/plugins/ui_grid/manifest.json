@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "ui_grid",
+  "title": "UI Grid (test)",
+  "license": "CC0-1.0",
+  "credit": "UI Grid test plugin (DEF tests)",
+  "external_services_allowed": false,
+  "online_sessions": true
+}

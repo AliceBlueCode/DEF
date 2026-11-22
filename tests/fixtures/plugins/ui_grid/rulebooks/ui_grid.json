@@ -1,0 +1,7 @@
+{
+  "id": "ui_grid",
+  "label": "UI Grid (test)",
+  "rule_system": "ui_grid",
+  "rule_system_name": "UI Grid (test)",
+  "dice_system": "1d20"
+}
