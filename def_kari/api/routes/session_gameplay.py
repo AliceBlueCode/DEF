@@ -542,7 +542,14 @@ def get_session_events(session_id: str, _auth: dict = Depends(require_keeper)):
     GM専用の隠し情報を覗けてしまっていた）。フロントからは現状未使用。
     """
     from def_kari.gm.events import game_event_bus
-    return {"session_id": session_id, "events": game_event_bus.get_log(session_id)}
+    events = game_event_bus.get_log(session_id)
+    session = _sessions.get(session_id)
+    from def_kari.api.routes import session_visibility as _vis
+    if session and _vis.uses_visibility(session):
+        # 見せてよいものの境界を持つ卓: 呼んだ人に見せてよいものだけ（S-801）
+        audience = _vis.audience_of(_auth)
+        events = [v for v in (_vis.event_view(session, e, audience) for e in events) if v is not None]
+    return {"session_id": session_id, "events": events}
 
 
 class NpcKnowledgeRequest(BaseModel):
@@ -616,7 +623,12 @@ def get_session(session_id: str, _auth: dict = Depends(require_participant)):
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
-    result = {"session": _session_for_public_json(session)}
+    from def_kari.api.routes import session_visibility as _vis
+    if _vis.uses_visibility(session):
+        # 見せてよいものの境界を持つ卓: 相手ごとに口が一から作ったもの（差し込み口 6、S-801）
+        result = {"session": _vis.session_view(session, _vis.audience_of(_auth))}
+    else:
+        result = {"session": _session_for_public_json(session)}
     # 再読み込みで復帰したプレイヤーのタブが、自分のキャラシートを読み込み直せるよう、
     # 呼び出した本人のキャラのシートIDだけを返す。以前は参加の瞬間にしか読み込まず、
     # 再読み込みの後は「振る」ボタンが消えて自分の判定を振れなくなっていた（2026-11-08、

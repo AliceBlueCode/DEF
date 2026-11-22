@@ -90,6 +90,7 @@ from def_kari.api.routes.session_ws import (
     _try_acquire_ws_pending_auth_slot,
     _release_ws_pending_auth_slot,
     _safe_send,
+    _send_through_boundary,
     _register_ws_connection,
     _forget_ws_connection,
 )
@@ -1629,7 +1630,8 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
             pass
         return
 
-    _register_ws_connection(sess, raw_token, ws)
+    from def_kari.api.routes.session_visibility import audience_of as _audience_of
+    _register_ws_connection(sess, raw_token, ws, _audience_of(jwt_payload))
     _cancel_idle_shutdown(session_id)
 
     # 接続してきたタブが、どのビルドのフロントで、いつ読み込まれたページかを記録する。
@@ -1671,10 +1673,18 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
     # 後に送るので、以降の変化はイベントで追いつく（2026-11-13、e2e restart_recovery D-4 で発覚）。
     # 中身は GET の participants と同じ（トークンと game_sheet_id は含まない）。
     from def_kari.api.routes.session_gameplay import _participants_snapshot
-    await _safe_send(session_id, raw_token, ws, {
+    from def_kari.api.routes import session_visibility as _vis
+    # 接続のときの初期の配信も、見せてよいものの境界を通す（差し込み口 5、S-801）
+    await _send_through_boundary(session_id, raw_token, ws, {
         "type": "PARTICIPANTS_SNAPSHOT",
         "payload": {"participants": _participants_snapshot(sess)},
     })
+    if _vis.uses_visibility(sess):
+        # 境界を持つ卓: 相手ごとの状態を送る（GET の session と同じもの）
+        await _safe_send(session_id, raw_token, ws, {
+            "type": _vis.SESSION_VIEW_EVENT,
+            "payload": {"session": _vis.session_view(sess, _audience_of(jwt_payload))},
+        })
 
     # 接続時に現在の状態を送信: 人間ターン待ちなら WAITING_FOR_HUMAN を再送する
     # （ブラウザ変更・リロード・遅延参加でイベントを見逃したタブ向け）
@@ -1684,7 +1694,7 @@ async def ws_endpoint(ws: WebSocket, session_id: str):
         if _task_idle:
             _current = _get_current_speaker(sess)
             if _current and _is_human_char(sess, _current):
-                await _safe_send(session_id, raw_token, ws, {
+                await _send_through_boundary(session_id, raw_token, ws, {
                     "type": "WAITING_FOR_HUMAN",
                     "payload": {
                         "character_id": _current,

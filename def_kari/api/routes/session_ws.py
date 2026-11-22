@@ -56,9 +56,16 @@ def _release_ws_pending_auth_slot(client_ip: str) -> None:
 # 消すか、ソケットを閉じるか）。JWTの再生成は送信ロックを消し忘れていた（2026-11-09、
 # セッション進行のリファクタリング Step 1 で洗い出し）。ここに集め、各所はこれを呼ぶ。
 
-def _register_ws_connection(sess: dict, token: str, ws: WebSocket) -> None:
-    """認証が済んだ接続を登録する。"""
+# 接続ごとの相手（見せてよいものの境界に渡す。session_visibility.audience_of の値）。
+# セッションには持たない（自動保存に載せない。再接続のたびに JWT から作り直す）
+_ws_audiences: dict[str, dict] = {}
+
+
+def _register_ws_connection(sess: dict, token: str, ws: WebSocket, audience: dict | None = None) -> None:
+    """認証が済んだ接続を登録する。`audience` は、その接続の相手（JWT から作る）。"""
+    from def_kari.api.routes.session_visibility import audience_of
     sess.setdefault("ws_connections", {})[token] = ws
+    _ws_audiences[token] = audience if audience is not None else audience_of(None)
 
 
 def _forget_ws_connection(sess: dict | None, token: str, ws: WebSocket | None = None) -> WebSocket | None:
@@ -71,6 +78,7 @@ def _forget_ws_connection(sess: dict | None, token: str, ws: WebSocket | None = 
     if ws is not None and sess and sess.get("ws_connections", {}).get(token) is not ws:
         return None
     _ws_send_locks.pop(token, None)
+    _ws_audiences.pop(token, None)
     if not sess:
         return None
     return sess.get("ws_connections", {}).pop(token, None)
@@ -121,6 +129,46 @@ def _session_tokens(sess: dict) -> set[str]:
     return {t for t in tokens if isinstance(t, str) and len(t) >= 20}
 
 
+def _contains_token(event: dict, tokens: set[str]) -> bool:
+    if not tokens:
+        return False
+    try:
+        text = json.dumps(event, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(event)
+    return any(t in text for t in tokens)
+
+
+def _views_for_connections(sess: dict, event: dict, connections: list) -> list:
+    """接続ごとに配るもの [(token, ws, event)]。
+
+    見せてよいものの境界（visibility の口）を持つ卓では、相手ごとに口が作ったものだけ（S-801。
+    差し込み口 5）。持たない卓は、全員に同じイベント。
+    """
+    from def_kari.api.routes import session_visibility as _vis
+    if not _vis.uses_visibility(sess):
+        return [(t, ws, event) for t, ws in connections]
+    out = []
+    for token, ws in connections:
+        audience = _ws_audiences.get(token) or _vis.audience_of(None)
+        view = _vis.event_view(sess, event, audience)
+        if view is not None:
+            out.append((token, ws, view))
+    return out
+
+
+async def _send_through_boundary(session_id: str, token: str, ws: WebSocket, event: dict) -> None:
+    """1つの接続にだけ送る（接続のときの初期の配信）。配信と同じ守り（境界・トークン）を通す。"""
+    sess = _sessions.get(session_id)
+    if not sess:
+        return
+    for _t, _ws, view in _views_for_connections(sess, event, [(token, ws)]):
+        if _contains_token(view, _session_tokens(sess)):
+            _log.error("[ws] dropped event %s: it contained a session token", view.get("type"))
+            continue
+        await _safe_send(session_id, _t, _ws, view)
+
+
 def _ws_broadcast_handler(session_id: str, event: dict) -> None:
     """game_event_bus の全イベントを接続中の全 WebSocket に配信する。
 
@@ -140,14 +188,9 @@ def _ws_broadcast_handler(session_id: str, event: dict) -> None:
     # 配っていた（2026-11-08、全体レビューで指摘）。発生源は直したが、同じ型の漏れが
     # どこかで再発しても外へ出ないよう、全イベントが通るここで止める。
     tokens = _session_tokens(sess)
-    if tokens:
-        try:
-            text = json.dumps(event, ensure_ascii=False, default=str)
-        except Exception:
-            text = str(event)
-        if any(t in text for t in tokens):
-            _log.error("[ws] dropped event %s: it contained a session token", event.get("type"))
-            return
+    if _contains_token(event, tokens):
+        _log.error("[ws] dropped event %s: it contained a session token", event.get("type"))
+        return
 
     # 守り2: GM専用（gm_only）のイベントは、キーパー（ホスト・参加したGM）の接続にだけ送る。
     # 以前は全接続へ送っており、GET からは外した NPC の知識（8.27）が、WS 経由でプレイヤーと
@@ -159,9 +202,20 @@ def _ws_broadcast_handler(session_id: str, event: dict) -> None:
         if not connections:
             return
 
+    # 守り3: 見せてよいものの境界を持つ卓では、相手ごとに口が作ったものだけを配る（差し込み口 5）。
+    # 口が作ったものにも、守り1を当て直す
+    sends = []
+    for token, ws, view in _views_for_connections(sess, event, connections):
+        if view is not event and _contains_token(view, tokens):
+            _log.error("[ws] dropped event %s for one connection: it contained a session token", view.get("type"))
+            continue
+        sends.append((token, ws, view))
+    if not sends:
+        return
+
     async def _do_broadcast() -> None:
-        for token, ws in connections:
-            asyncio.create_task(_safe_send(session_id, token, ws, event))
+        for token, ws, view in sends:
+            asyncio.create_task(_safe_send(session_id, token, ws, view))
 
     try:
         loop = asyncio.get_running_loop()
