@@ -226,9 +226,9 @@ def test_save_records_the_campaign_id(books, monkeypatch):
 def test_campaign_listing_comes_from_the_rule_system(books):
     with TestClient(app) as client:
         assert client.get("/api/trpg/rulebooks/gb/campaigns").json() == {
-            "campaigns": [{"id": "c1", "title": "First"}, {"id": "c2", "title": "c2"}]}
-        assert client.get("/api/trpg/rulebooks/plain/campaigns").json() == {"campaigns": []}
-        assert client.get("/api/trpg/rulebooks/no_such/campaigns").json() == {"campaigns": []}
+            "campaigns": [{"id": "c1", "title": "First"}, {"id": "c2", "title": "c2"}], "uses_campaigns": True}
+        assert client.get("/api/trpg/rulebooks/plain/campaigns").json() == {"campaigns": [], "uses_campaigns": False}
+        assert client.get("/api/trpg/rulebooks/no_such/campaigns").json() == {"campaigns": [], "uses_campaigns": False}
 
 
 # ── レビュー 2026-11-22 の🟡1〜🟡4 ─────────────────────────────────

@@ -407,6 +407,28 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       },
     })
 
+  // 続きもの（キャンペーン）から作るルールブック（persistence の口）。選ぶまで卓を作らせない（S-309）
+  const [campaignOptions, setCampaignOptions] = useState<{ id: string; title: string }[]>([])
+  const [usesCampaigns, setUsesCampaigns] = useState(false)
+  const [selectedCampaign, setSelectedCampaign] = useState('')
+  useEffect(() => {
+    if (!trpgMode || !selectedRulebook) { setUsesCampaigns(false); setCampaignOptions([]); setSelectedCampaign(''); return }
+    let alive = true
+    fetch(`/api/trpg/rulebooks/${encodeURIComponent(selectedRulebook)}/campaigns`)
+      .then(r => r.json())
+      .then(d => {
+        if (!alive) return
+        const list: { id: string; title: string }[] = Array.isArray(d.campaigns) ? d.campaigns : []
+        setUsesCampaigns(d.uses_campaigns === true)
+        setCampaignOptions(list)
+        setSelectedCampaign(prev => (list.some(c => c.id === prev) ? prev : (list[0]?.id ?? '')))
+      })
+      .catch(() => { if (alive) { setUsesCampaigns(false); setCampaignOptions([]); setSelectedCampaign('') } })
+    return () => { alive = false }
+  }, [trpgMode, selectedRulebook])
+  const campaignMissing = trpgMode && usesCampaigns && !selectedCampaign
+  const campaignField = trpgMode && usesCampaigns ? { campaign_id: selectedCampaign } : {}
+
   useEffect(() => {
     if (!sessionId || !trpgMode) { setSessionCredits([]); return }
     let alive = true
@@ -1438,7 +1460,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {}, keeper_char_id: trpgMode ? keeperCharId : '', human_keeper: trpgMode ? humanKeeper : false }),
+        body: JSON.stringify({ character_ids: selectedChars, topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: trpgMode ? charGameSheets : {}, keeper_char_id: trpgMode ? keeperCharId : '', human_keeper: trpgMode ? humanKeeper : false, ...campaignField }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -1466,7 +1488,7 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ character_ids: [], topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: {}, keeper_char_id: '', human_keeper: false, online_mode: true }),
+        body: JSON.stringify({ character_ids: [], topic: trpgMode ? '' : topic, backend, rule_set: trpgMode ? 'none' : ruleSet, action_directive_set: directiveSet, actions_per_turn: actionsPerTurn, char_backends: charBackends, trpg_mode: trpgMode, trpg_rulebook: trpgMode ? selectedRulebook : '', trpg_scenario: trpgMode ? selectedScenario : '', char_game_sheets: {}, keeper_char_id: '', human_keeper: false, online_mode: true, ...campaignField }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -3184,6 +3206,19 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             </div>
           )}
 
+          {trpgMode && usesCampaigns && (
+            <div className="session-field">
+              <label className="session-label">{t('trpg.campaign.label')}</label>
+              {campaignOptions.length > 0 ? (
+                <select className="session-select" value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}>
+                  {campaignOptions.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                </select>
+              ) : (
+                <p style={{ fontSize: '0.82em', opacity: 0.8, margin: '4px 0 0' }}>{t('trpg.campaign.none')}</p>
+              )}
+            </div>
+          )}
+
           {trpgMode && scenarioOptions.length > 0 && (
             <div className="session-field">
               <label className="session-label">{t('trpg.scenario.label')}</label>
@@ -3290,14 +3325,14 @@ export default function SessionTab({ characters, backend, t2iBackend, initialJoi
             <button
               className="start-btn"
               onClick={startLocalSession}
-              disabled={selectedChars.length < 1 || sessionStarting || (trpgMode && !selectedRulebook)}
+              disabled={selectedChars.length < 1 || sessionStarting || (trpgMode && !selectedRulebook) || campaignMissing}
             >
               {t('session.setup.startLocalBtn')}
             </button>
             <button
               className="start-btn"
               onClick={startOnlineSession}
-              disabled={sessionStarting || selectedOfflineOnly || (trpgMode && !selectedRulebook)}
+              disabled={sessionStarting || selectedOfflineOnly || (trpgMode && !selectedRulebook) || campaignMissing}
               title={selectedOfflineOnly ? t('trpg.online.offlineOnlyNotice') : undefined}
               style={{ background: '#4a6cf7' }}
             >

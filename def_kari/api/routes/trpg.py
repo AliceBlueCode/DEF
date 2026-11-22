@@ -61,6 +61,8 @@ def list_campaigns(rulebook_id: str):
 
     再開は、卓を作るときに `campaign_id` を付けて行う（S-310）。口を持たないルールシステムは空の一覧。
     口が失敗したら、閉じる側（何も示さない）に倒し、理由を返す。このルートは公開用のポートには無い。
+    `uses_campaigns`: そのルールブックの卓は続きものから作る（persistence の口を持つ）。画面は、これが真なら
+    キャンペーンを選ぶ欄を出し、選ぶまで卓を作らせない。
     """
     from def_kari.trpg import plugin_hooks
     if not resources.is_safe_id(rulebook_id):
@@ -69,12 +71,12 @@ def list_campaigns(rulebook_id: str):
     system = registry.for_rulebook(rulebook) if rulebook else None
     out = plugin_hooks.call(None, "persistence", "list_campaigns", rulebook_id, system=system)
     if out is plugin_hooks.NOT_HANDLED:
-        return {"campaigns": []}
+        return {"campaigns": [], "uses_campaigns": False}
     campaigns = []
     for c in out if isinstance(out, list) else []:
         if isinstance(c, dict) and resources.is_safe_id(str(c.get("id", ""))):
             campaigns.append({"id": c["id"], "title": str(c.get("title", c["id"]))})
-    return {"campaigns": campaigns}
+    return {"campaigns": campaigns, "uses_campaigns": True}
 
 
 @router.get("/rulebooks/{rulebook_id}")
