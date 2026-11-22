@@ -71,6 +71,14 @@ def _save_session_episodic(session_id: str, session: dict) -> None:
     if _table_keeps_content_inside(session):
         _log.info("[memory] session %s: not saved (this table does not allow sending outside)", str(session_id)[:8])
         return
+    # 記憶に書くかを決める口（memory_policy。差し込み口 9、S-1001）を持つ卓では、口が True と答えたときだけ
+    # 書く。呼び出し元（終了・追放の決着）ごとには確かめず、ここ1か所で確かめる。口の失敗は書かない側
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if _plugin_hooks.has_capability(session, "memory_policy"):
+        _decision = _plugin_hooks.call(session, "memory_policy", "should_save_memory", session)
+        if _decision is not True:
+            _log.info("[memory] session %s: not saved (the table's rule system said no)", str(session_id)[:8])
+            return
     try:
         from def_kari.gm.memory import save_episodic
     except ImportError:
