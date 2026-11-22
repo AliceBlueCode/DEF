@@ -58,12 +58,17 @@ def _generate_turn_image(session_id: str, result: dict) -> None:
         image_prompt_en = result.get("image_prompt_en", "")
         if not image_prompt_en:
             return
+        from def_kari.trpg import plugin_hooks as _plugin_hooks
+        if _plugin_hooks.has_capability(_sessions.get(session_id) or {}, "image_prompt"):
+            # 画像のプロンプトの元の口を持つ卓では、手番の出力の image_prompt_en から自動で挿絵を作らない
+            # （公開する語りから作ったものだけにする。差し込み口 7、S-704）。挿絵は /generate-image から
+            return
         settings = load_settings()
         backend = settings.get("t2i_backend", "")
         if not backend:
             return
         # 外部への送信を許さない卓では、外部の画像生成に送らない（B-025）
-        if not _backend_guard.allowed(_sessions.get(session_id), "t2i", backend):
+        if not _backend_guard.allowed(_sessions.get(session_id), "t2i", backend, role="image"):
             return
         model = settings.get(f"t2i_model_{backend}") or None
         from def_kari.api.routes.session_turn_engine import _VRAM_LOCK_TIMEOUT_SECONDS
@@ -105,7 +110,7 @@ def _generate_turn_audio(session_id: str, result: dict) -> None:
             return
         tts_backend = settings.get("tts_backend", "")
         # 外部への送信を許さない卓では、外部の読み上げに送らない（B-025）
-        if not _backend_guard.allowed(_sessions.get(session_id), "tts", tts_backend):
+        if not _backend_guard.allowed(_sessions.get(session_id), "tts", tts_backend, role="tts"):
             return
         url = _synthesize_turn_audio_sync(result.get("text", ""), result.get("character_id", ""), tts_backend)
         if not url:
@@ -145,7 +150,7 @@ def _synthesize_and_notify_audio(session_id: str, text: str, character_id: str, 
     try:
         tts_backend = load_settings().get("tts_backend", "")
         # 外部への送信を許さない卓では、外部の読み上げに送らない（B-025）
-        if not _backend_guard.allowed(_sessions.get(session_id), "tts", tts_backend):
+        if not _backend_guard.allowed(_sessions.get(session_id), "tts", tts_backend, role="tts"):
             return
         url = _synthesize_turn_audio_sync(text, character_id, tts_backend)
         if not url:

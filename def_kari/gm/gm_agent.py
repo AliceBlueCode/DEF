@@ -138,7 +138,7 @@ class GMAgent:
         # 外部への送信を許さない卓では、外部の LLM に送らない（B-021。判定の要否もこの後で同じ LLM）
         from def_kari.llm import backend_guard as _backend_guard
         try:
-            _backend_guard.check(session, "llm", backend_id)
+            _backend_guard.check(session, "llm", backend_id, role="gm")
         except _backend_guard.ExternalServiceRefused as e:
             return {"text": "", "judgments": [], "error": str(e)}
         _loaded_model = ""

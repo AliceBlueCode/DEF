@@ -183,7 +183,7 @@ def _generate_visitor_images(session_id: str, char_id: str, character_json: dict
         if not backend:
             return
         # 外部への送信を許さない卓では、外部の画像生成に送らない（B-025）
-        if not _backend_guard.allowed(_sessions.get(session_id), "t2i", backend):
+        if not _backend_guard.allowed(_sessions.get(session_id), "t2i", backend, role="image"):
             return
         model = settings.get(f"t2i_model_{backend}") or None
         char_dir = _VISITORS_DIR / char_id

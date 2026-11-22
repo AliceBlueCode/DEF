@@ -293,7 +293,7 @@ def vote_deliberate(session_id: str, req: VoteRequest, request: Request, _auth: 
         if bid not in LLM_BACKENDS:
             bid = DEFAULT_LLM_BACKEND
         # 外部への送信を許さない卓では、外部の LLM に弁明させない（B-021。弁明なしと同じ扱い）
-        if not _backend_guard.allowed(session, "llm", bid):
+        if not _backend_guard.allowed(session, "llm", bid, role="pc"):
             continue
         model = _resolve_model(bid)
 
@@ -606,7 +606,7 @@ def _resolve_vote_results(
             yes_word=_sp("yes_word", lang), no_word=_sp("no_word", lang),
         )
         try:
-            _backend_guard.check(session, "llm", bid)  # 断ったら下の except（判定できない票）に乗る（B-021）
+            _backend_guard.check(session, "llm", bid, role="pc")  # 断ったら下の except（判定できない票）に乗る（B-021）
             chat_fn = LLM_BACKENDS[bid]["chat"]
             messages = [
                 {"role": "system", "content": char.get("persona_description", "")},
@@ -639,7 +639,7 @@ def _resolve_vote_results(
                 yes_word=_sp("yes_word", lang), no_word=_sp("no_word", lang),
             )
             try:
-                _backend_guard.check(session, "llm", bid)  # 断ったら下の except に乗る（B-021）
+                _backend_guard.check(session, "llm", bid, role="pc")  # 断ったら下の except に乗る（B-021）
                 chat_fn = LLM_BACKENDS[bid]["chat"]
                 keeper_msgs = [
                     {"role": "system", "content": _sp("keeper_system", lang) or "あなたはセッションのキーパー（GM・司会者）です。"},

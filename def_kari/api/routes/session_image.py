@@ -145,6 +145,17 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
     round_size = max(len(initiative) * actions_per_turn, 1)
     last_round = [h for h in history[-round_size * 2:] if h.get("role") == "assistant"][-round_size:]
 
+    # 画像のプロンプトの元の口（image_prompt。差し込み口 7、S-704）を持つ卓: 元にするのは、口が渡す
+    # 公開してよい語りだけ。共有の履歴・場面・お題は使わない。口が失敗した・文字列でない・空なら作らない
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if _plugin_hooks.has_capability(session, "image_prompt"):
+        from def_kari.api.routes.session_turn_engine import _pause_for_plugin_error
+        _source = _plugin_hooks.call(session, "image_prompt", "image_prompt_source", session,
+                                     on_failure=_pause_for_plugin_error)
+        if not isinstance(_source, str) or not _source.strip():
+            return {"error": "The table's rule system gave no public text for an image"}
+        last_round, scene, topic = [], _source.strip(), ""
+
     from def_kari.settings import load_settings as _load_settings
     _settings = _load_settings()
     t2i_prompt_mode = req.t2i_prompt_mode or _settings.get("t2i_prompt_mode", "current")
@@ -271,7 +282,7 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
             backend_id = DEFAULT_LLM_BACKEND
 
         try:
-            _backend_guard.check(session, "llm", backend_id)  # 外部への送信を許さない卓（B-021）
+            _backend_guard.check(session, "llm", backend_id, role="image_prompt")  # 外部への送信を許さない卓（B-021）
             chat_fn = LLM_BACKENDS[backend_id]["chat"]
             model = _resolve_model(backend_id)
             messages = [
@@ -304,9 +315,9 @@ def _generate_session_image_impl(session_id: str, req: SessionGenerateImageReque
         if not t2i_backend:
             return {"error": "T2Iバックエンドが未設定です"}
         # 外部への送信を許さない卓では、外部の画像生成に送らない（B-025）
-        _t2i_refusal = _backend_guard.refusal(session, "t2i", t2i_backend)
+        _t2i_refusal = _backend_guard.refusal(session, "t2i", t2i_backend, role="image")
         if _t2i_refusal:
-            _backend_guard.allowed(session, "t2i", t2i_backend)  # ホストに知らせる
+            _backend_guard.allowed(session, "t2i", t2i_backend, role="image")  # ホストに知らせる
             return {"error": _t2i_refusal}
         t2i_model = req.t2i_model or settings.get(f"t2i_model_{t2i_backend}") or None
         workflow = settings.get("comfyui_workflow", "default") if t2i_backend == "comfyui" else ""
