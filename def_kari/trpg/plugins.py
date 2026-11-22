@@ -109,6 +109,11 @@ class PluginApi:
         return _bridge.llm_chat(self.rule_systems, session_id, messages, role=role, json_mode=json_mode,
                                 options=options)
 
+    def table_info(self, session_id: str) -> dict:
+        """自分のルールシステムの卓の `campaign_id`・停止の印など（`session_plugin_bridge.table_info`）。"""
+        from def_kari.api.routes import session_plugin_bridge as _bridge
+        return _bridge.table_info(self.rule_systems, session_id)
+
     def emit(self, session_id: str, event_type: str, payload: dict) -> None:
         from def_kari.api.routes import session_plugin_bridge as _bridge
         _bridge.emit(self.rule_systems, session_id, event_type, payload)

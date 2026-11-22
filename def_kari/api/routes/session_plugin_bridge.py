@@ -68,6 +68,26 @@ def llm_chat(rule_systems: frozenset, session_id: str, messages: list, *, role: 
     return text or ""
 
 
+def table_info(rule_systems: frozenset, session_id: str) -> dict:
+    """自分のルールシステムの卓の、プラグインが知ってよい少しの値（写し）。卓が無い・違うなら PluginCallError。
+
+    - `campaign_id`: 卓を作ったときの続きものの ID（persistence の口。手番の口 `handle_request` には卓の ID
+      しか来ないため、どの続きものの卓かをここで引く）。
+    - `paused`: ホストが止めた（`/ai_pause`）か、口の失敗で止めた（`ai_paused`）。手番を自分で回す卓は、
+      これが True の間は進めない。`plugin_error` は、口の失敗で止めたときだけ True。
+    """
+    session = _own_session(rule_systems, session_id)
+    return {
+        "session_id": session_id,
+        "campaign_id": session.get("campaign_id") or None,
+        "rulebook_id": session.get("trpg_rulebook") or "",
+        "rule_system": session.get("trpg_rule_system") or "",
+        "plugin_version": session.get("trpg_plugin_version") or "",
+        "paused": bool(session.get("ai_paused")),
+        "plugin_error": bool(session.get("plugin_error")),
+    }
+
+
 def emit(rule_systems: frozenset, session_id: str, event_type: str, payload: dict) -> None:
     """卓にイベントを出す。配るときに見せてよいものの境界を通る。"""
     from def_kari.gm.events import game_event_bus

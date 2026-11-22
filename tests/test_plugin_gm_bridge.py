@@ -236,3 +236,22 @@ def test_llm_chat_gives_up_when_the_vram_lock_is_busy(clean_registry, fake_backe
         with pytest.raises(PluginCallError, match="vram_lock busy"):
             _api().llm_chat("_gm_busy", _MSG, role="gm")
     assert fake_backend == []
+
+
+# ── 卓の情報（手番を自分で回す卓が、どの続きものの卓か・止まっているかを引く） ──
+
+def test_table_info_only_on_the_plugins_own_tables(clean_registry):
+    s = _table(clean_registry, "_gm_t1", campaign_id="c-1")
+    _table(clean_registry, "_gm_t2", rule_system="def_original", campaign_id="c-2")
+    info = _api().table_info("_gm_t1")
+    assert info == {"session_id": "_gm_t1", "campaign_id": "c-1", "rulebook_id": "gb", "rule_system": "sample_grid",
+                    "plugin_version": "0.1.0", "paused": False, "plugin_error": False}
+    s["ai_paused"] = True
+    s["plugin_error"] = {"capability": "turn_driver"}
+    assert _api().table_info("_gm_t1")["paused"] is True and _api().table_info("_gm_t1")["plugin_error"] is True
+    info["campaign_id"] = "changed"   # 写しなので卓は変わらない
+    assert s["campaign_id"] == "c-1"
+    with pytest.raises(PluginCallError):
+        _api().table_info("_gm_t2")
+    with pytest.raises(PluginCallError):
+        _api().table_info("_gm_none")
