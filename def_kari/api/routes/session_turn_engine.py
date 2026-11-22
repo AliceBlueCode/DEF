@@ -272,6 +272,11 @@ def _ensure_ai_turns_running(session_id: str, session: dict, *, unpause: bool = 
     restart: 実行中のタスクをキャンセルして作り直す（GMの強制skip。キャンセルしても
              executorで走っている生成は止まらないので、結果は_skip_genのガードで捨てる）。
     """
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if _plugin_hooks.has_capability(session, "turn_driver"):
+        # 手番を自分で回すルールシステムの卓では、DEF の AI の手番の処理を動かさない（差し込み口 1）。
+        # 窓口はここだけなので、7つの呼び出し元のどれから来ても止まる
+        return
     if unpause:
         session["ai_paused"] = False
     task = session.get("ai_task")
@@ -1205,9 +1210,38 @@ async def ai_resume(session_id: str, _auth: dict = Depends(require_keeper)):
         raise HTTPException(404, "Session not found")
     if sess.get("lobby_active"):
         return {"status": "lobby"}
+    _handled = _turn_driver_request(session_id, sess, _auth, "resume", {})
+    if _handled is not None:
+        return _handled
     _raise_if_turn_progress_blocked(sess)
     _ensure_ai_turns_running(session_id, sess, unpause=True)
     return {"status": "ok"}
+
+
+def _turn_driver_request(session_id: str, session: dict, auth: dict, kind: str, data: dict) -> dict | None:
+    """手番の口（turn_driver）を持つ卓なら、操作を口の `handle_request` に回して結果を返す。持たない卓は None。
+
+    断られた・口が失敗したら 409。再開（`kind: "resume"`）が受け付けられたら、停止と口の失敗の印を外す
+    （その持ち主はこのモジュール）。相手は JWT の中身から作る（リクエストの role・char_id は使わない）。
+    """
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if not _plugin_hooks.has_capability(session, "turn_driver"):
+        return None
+    from def_kari.api.routes.session_visibility import audience_of
+    request = {"kind": kind, "data": data, "base_revision": data.get("base_revision")}
+    out = _plugin_hooks.call(session, "turn_driver", "handle_request", session_id, audience_of(auth), request,
+                             on_failure=_pause_for_plugin_error)
+    if not isinstance(out, dict):
+        _pause_for_plugin_error(session, {"capability": "turn_driver", "method": "handle_request",
+                                          "error": f"returned {type(out).__name__}, not a JSON object"})
+        raise HTTPException(409, "Refused by the table's rule system: plugin_error")
+    if out.get("accepted") is not True:
+        reason = out.get("reason") if isinstance(out.get("reason"), str) and out.get("reason") else "refused"
+        raise HTTPException(409, f"Refused by the table's rule system: {reason}")
+    if kind == "resume":
+        session["ai_paused"] = False
+        session.pop("plugin_error", None)
+    return {"status": "ok", "accepted": True, "revision": out.get("revision")}
 
 
 def _pause_for_plugin_error(session: dict, info: dict) -> None:
@@ -1428,6 +1462,9 @@ async def human_turn_action(session_id: str, req: HumanTurnRequest, _auth: dict 
         return {"error": "Session not found"}
     if session.get("lobby_active"):
         raise HTTPException(409, "Session has not started yet")
+    _handled = _turn_driver_request(session_id, session, _auth, "human_turn", req.model_dump())
+    if _handled is not None:
+        return _handled
     _raise_if_turn_progress_blocked(session)
 
     initiative = session["initiative"]

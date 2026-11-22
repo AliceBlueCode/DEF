@@ -92,6 +92,11 @@ def inject_keeper_message(session_id: str, req: KeeperMessageRequest, _auth: dic
     session = _sessions.get(session_id)
     if not session:
         return {"error": "Session not found"}
+    from def_kari.api.routes.session_turn_engine import _turn_driver_request
+    # 手番の口を持つ卓: ホストの指示は口へ（共有の履歴には入れない。差し込み口 4、S-358）
+    _handled = _turn_driver_request(session_id, session, _auth, "keeper", req.model_dump())
+    if _handled is not None:
+        return _handled
     content = f"[GM] {req.text}"
     session["history"].append({
         "role": "user",

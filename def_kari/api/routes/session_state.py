@@ -11,7 +11,8 @@ import asyncio
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
+from starlette.requests import HTTPConnection
 
 # ── ルーター ──────────────────────────────────────────────────────────
 # `router`/`local_router`はAPIRouterインスタンス（デコレータで内部の routes
@@ -26,8 +27,38 @@ from fastapi import APIRouter
 # 外部公開されてしまう（8.8「session.router丸ごとマウントに起因する無認証
 # エンドポイントの公開漏れ」参照）。main.pyはrouterとlocal_routerの両方を
 # マウントし、public_main.pyはrouterのみマウントする。
-router = APIRouter()
-local_router = APIRouter()
+# ── 手番の口（turn_driver）を持つ卓の関所（差し込み口 1、基本設計書 11.4） ─────────────
+# 手番を自分で回すルールシステムの卓では、セッションの状態を変える DEF の操作を**既定で断る**。
+# 通すものを、エンドポイントの関数の名前の許可リストで持つ（呼ぶ所を1つずつ並べる方式にしない。
+# 後から足された操作が素通りしないようにするため）。ルーターのすべての HTTP の操作がここを通る。
+# - そのまま通す: 取得（get_session は visibility を通る）・参加・退室・ホストによる終了・停止
+# - 手番の口の handle_request へ回す（関数の頭で `_turn_driver_request` を呼ぶ）: 再開・人間の手番の
+#   入力・ホストから GM への指示
+# - それ以外: 409
+_TURN_DRIVER_PASS = frozenset({
+    "get_session", "get_session_credits", "get_session_events",
+    "end_session_by_host", "leave_session", "ai_pause",
+})
+_TURN_DRIVER_HANDLE = frozenset({"ai_resume", "human_turn_action", "inject_keeper_message"})
+
+
+def _turn_driver_gate(conn: HTTPConnection) -> None:
+    if conn.scope.get("type") != "http":
+        return  # WS の接続はそのまま通す（配るものは visibility の口が決める）
+    session_id = conn.path_params.get("session_id")
+    session = _sessions.get(session_id) if session_id else None
+    if not session:
+        return  # 卓の無い操作（/start・/join など）と、卓が無いとき（各操作が 404 を返す）
+    endpoint = getattr(conn.scope.get("endpoint"), "__name__", "")
+    if endpoint in _TURN_DRIVER_PASS or endpoint in _TURN_DRIVER_HANDLE:
+        return
+    from def_kari.trpg import plugin_hooks
+    if plugin_hooks.has_capability(session, "turn_driver"):
+        raise HTTPException(409, "This rule system runs its own turns; this operation is not used on this table")
+
+
+router = APIRouter(dependencies=[Depends(_turn_driver_gate)])
+local_router = APIRouter(dependencies=[Depends(_turn_driver_gate)])
 
 
 # ── セッションレジストリ ──────────────────────────────────────────────
