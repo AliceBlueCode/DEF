@@ -11,7 +11,8 @@ DEF の差し込み口は、ここを通してだけプラグインの口を呼�
   サーバーと他の卓は動き続ける（B-027）。この層（`def_kari/trpg`）はセッションのキーを直接書かない
   （`tests/test_session_key_ownership.py`）。
 
-口を実際に呼ぶ差し込み口は、まだ無い（1つ目のプラグインを作るときに足す）。
+口を実際に呼ぶ差し込み口: persistence（卓の作成 `session_lobby._check_create_by_rule_system`、
+自動保存 `session_persistence._uses_def_autosave`）。ほかの口は、1つ目のプラグインを作りながら足す。
 """
 
 import copy
@@ -47,10 +48,10 @@ CLOSED_VALUES: dict[str, object] = {
     "image_prompt_source": None,
     # memory_policy: 書き込まない
     "should_save_memory": False,
-    # persistence: 卓を作らない・DEF の自動保存に載せない・戻さない
+    # persistence: 卓を作らない・DEF の自動保存に載せない・再開できるキャンペーンを示さない
     "check_create": "plugin_error",
     "uses_def_autosave": False,
-    "restore_sessions": [],
+    "list_campaigns": [],
     # ui: 部品を描かない・操作は断る
     "ui_state": {"ui_schema": 1, "components": []},
     "ui_action": {"accepted": False, "reason": "plugin_error"},
@@ -88,8 +89,8 @@ def has_capability(session: dict, capability: str) -> bool:
 def call(session: dict | None, capability: str, method: str, *args, system=None, on_failure=None, **kwargs):
     """口 `capability` の関数 `method` を呼ぶ。口が無ければ `NOT_HANDLED`。
 
-    `system` を渡せば、そのルールシステムを使う（起動のときの `restore_sessions` のように、
-    まだセッションが無いとき用）。`on_failure(session, info)` は、口が失敗したときに呼ぶ
+    `system` を渡せば、そのルールシステムを使う（卓を作るときの `check_create` や
+    `list_campaigns` のように、まだセッションが無いとき用）。`on_failure(session, info)` は、口が失敗したときに呼ぶ
     （卓を止める）。
     """
     if method not in CLOSED_VALUES:

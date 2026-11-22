@@ -168,3 +168,27 @@ def test_plugin_tables_refuse_external_calls_without_a_known_role(rule_system, r
     assert (reason is not None) is refused
     if refused:
         assert "role" in reason
+
+
+# ── 版（保存するファイルに残すため。S-209） ─────────────────────────────
+
+def test_plugin_api_tells_the_versions():
+    from def_kari import __version__
+    api = PluginApi("grid_plugin", "1.2.3", 1)
+    assert (api.plugin_version, api.plugin_api, api.def_version) == ("1.2.3", 1, __version__)
+
+
+def test_loaded_plugin_gets_its_declared_version(monkeypatch):
+    from pathlib import Path
+    from def_kari.trpg import plugins
+    seen = {}
+    monkeypatch.setattr(plugins, "PluginApi", lambda *a: seen.setdefault("args", a) and PluginApi(*a))
+    sample = Path(__file__).parent / "fixtures" / "plugins" / "sample_grid"
+    plugins._reset_for_tests()
+    try:
+        plugins.load_plugin(sample, lambda s: None, lambda i: False)
+    finally:
+        plugins._reset_for_tests()
+        import sys
+        sys.modules.pop("def_trpg_plugin_sample_grid", None)
+    assert seen["args"] == ("sample_grid", "0.1.0", 1)

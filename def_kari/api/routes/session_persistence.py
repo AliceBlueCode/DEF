@@ -217,9 +217,22 @@ def _generate_visitor_images(session_id: str, char_id: str, character_json: dict
         _log.warning("visitor image generation failed for %s: %s", char_id, e)
 
 
+def _uses_def_autosave(session: dict) -> bool:
+    """DEF の自動保存に載せるか。続きもの（キャンペーン）の卓と、persistence の口が「載せない」と決めた卓は
+    載せない。正本はルールシステムの側の保存で、そこから作り直すため（S-213、S-310、差し込み口 10）。"""
+    if session.get("campaign_id"):
+        return False
+    from def_kari.trpg import plugin_hooks as _hooks
+    if not _hooks.has_capability(session, "persistence"):
+        return True
+    return _hooks.call(session, "persistence", "uses_def_autosave", session) is True
+
+
 def _autosave(session_id: str) -> None:
     session = _sessions.get(session_id)
     if not session:
+        return
+    if not _uses_def_autosave(session):
         return
     try:
         _AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -374,6 +387,11 @@ def _restore_one_autosave_file(f: Path, wall_now: float) -> None:
             return
         restored = json.loads(f.read_text(encoding="utf-8"))
         if isinstance(restored, dict) and restored.get("id"):
+            if restored.get("campaign_id"):
+                # 続きものの卓は自動保存から戻さない（作り直した卓と2つになるため。S-310）。ファイルは残す
+                _log.warning("[autosave] session %s not restored: it belongs to campaign %s; reopen the campaign",
+                             str(restored["id"])[:8], restored.get("campaign_id"))
+                return
             # ルールブックのルールシステムが使えない（プラグインが読み込まれていない）セッションは
             # 戻さない。def_original として遊ばせない。ファイルは消さずに残すので、プラグインを
             # 入れ直せば次の起動で戻る（B-002、基本設計書 11.6）。
@@ -483,6 +501,9 @@ def load_session(req: SessionLoadRequest):
     if data is None:
         return {"error": "File not found"}
     meta = data.get("metadata", {})
+    if meta.get("campaign_id"):
+        # 続きものの卓は /load で戻さない。キャンペーンを開き直す（S-310、差し込み口 10）
+        return {"error": "This session belongs to a campaign; reopen the campaign instead of loading it"}
     # 戻してよいかとピンは、自動保存の復元と同じ確かめ方で決める（B-002・B-019）
     _pinned_rs, _pinned_ver, _why, _migrated = _table_pin(meta)
     if _why:
@@ -610,6 +631,8 @@ def save_session(session_id: str, req: SaveSessionRequest = Body(default=SaveSes
         "trpg_rulebook": session.get("trpg_rulebook", ""),
         "trpg_rule_system": session.get("trpg_rule_system", ""),
         "trpg_plugin_version": session.get("trpg_plugin_version", ""),
+        # 続きもの（キャンペーン）の卓の印。/load はこの印のある記録を戻さない（S-310）
+        "campaign_id": session.get("campaign_id", ""),
         "trpg_scenario": session.get("trpg_scenario", ""),
         "trpg_scenario_title": _load_trpg_scenario(session.get("trpg_scenario", "")).get("title", "") if session.get("trpg_scenario") else "",
         "char_game_sheets": session.get("char_game_sheets", {}),

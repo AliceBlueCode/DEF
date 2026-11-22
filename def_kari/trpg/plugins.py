@@ -68,8 +68,13 @@ class PluginApi:
     読む口は `load_data()`、書き込みの置き場は `storage`（`plugin_storage.PluginStorage`）。
     """
 
-    def __init__(self, plugin_id: str):
+    def __init__(self, plugin_id: str, plugin_version: str = "", plugin_api: int = 1):
         self.plugin_id = plugin_id
+        # 版（保存するファイルに、作ったとき・書いたときの版を残すため。要求仕様 S-209）
+        self.plugin_version = plugin_version
+        self.plugin_api = plugin_api  # プラグインが宣言した def_plugin_api
+        from def_kari import __version__ as _def_version
+        self.def_version = _def_version
         from def_kari.trpg.plugin_storage import PluginStorage
         self.storage = PluginStorage(plugin_id)
 
@@ -219,7 +224,7 @@ def load_plugin(path: Path, register, is_registered) -> LoadedPlugin | None:
         entry = getattr(module, "register", None)
         if not callable(entry):
             raise ImportError("package has no register(api)")
-        result = entry(PluginApi(plugin_id))
+        result = entry(PluginApi(plugin_id, decl["plugin_version"], decl["def_plugin_api"]))
         systems = list(result) if isinstance(result, (list, tuple)) else [result]
         for system in systems:
             problem = _validate_system(system, decl["rule_systems"])

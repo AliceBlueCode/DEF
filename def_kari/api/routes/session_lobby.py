@@ -115,6 +115,40 @@ def _cancel_idle_shutdown(session_id: str) -> None:
         sess["idle_shutdown_task"] = None
 
 
+def _check_create_by_rule_system(req: "SessionStartRequest", rule_system: str) -> None:
+    """保存と再開をルールシステムが受け持つ卓（persistence の口）の、作ってよいかの確かめ（差し込み口 F9）。
+
+    - `campaign_id` は、persistence の口を持つルールシステムの TRPG の卓でだけ使える。
+    - 同じ `campaign_id` の卓は、同時に1つだけ（S-311。今ある卓から判断し、ファイルに印は残さない）。
+    - 作ってよいかは、ルールシステムの `check_create` が決める（例: 続きものが無ければ作らない。S-003）。
+      口が失敗したら、閉じる側（作らない）に倒す。
+    """
+    from def_kari.trpg import plugin_hooks as _hooks, registry as _registry, resources as _res
+    system = _registry.get(rule_system) if (req.trpg_mode and rule_system) else None
+    has_persistence = system is not None and "persistence" in getattr(system, "capabilities", frozenset())
+    if req.campaign_id:
+        if not has_persistence:
+            raise HTTPException(400, "campaign_id can only be used with a rule system that keeps its own campaigns")
+        if not _res.is_safe_id(req.campaign_id):
+            raise HTTPException(400, "Invalid campaign_id")
+        if any(s.get("campaign_id") == req.campaign_id for s in _sessions.values()):
+            raise HTTPException(409, "This campaign is already open in another session")
+    if not has_persistence:
+        return
+    reason = _hooks.call({}, "persistence", "check_create", req.model_dump(), system=system)
+    if reason is _hooks.NOT_HANDLED:
+        return
+    if reason:
+        raise HTTPException(400, f"This table cannot be created: {reason}")
+
+
+def _rulebook_keeps_campaigns(rulebook_id: str) -> bool:
+    """そのルールブックのルールシステムが、保存と再開を受け持つ（persistence の口を持つ）か。"""
+    from def_kari.trpg import registry as _registry, resources as _res
+    system = _registry.for_rulebook(_res.load_rulebook(rulebook_id))
+    return system is not None and "persistence" in getattr(system, "capabilities", frozenset())
+
+
 class SessionStartRequest(BaseModel):
     character_ids: list[str]
     topic: str = ""
@@ -130,6 +164,9 @@ class SessionStartRequest(BaseModel):
     keeper_char_id: str = ""
     human_keeper: bool = False
     online_mode: bool = False  # オンラインセッション: キャラなしで開始し参加者が持ち込む
+    # 保存と再開をルールシステム（プラグインの persistence の口）が受け持つ卓の、続きもの（キャンペーン）の ID。
+    # 卓はそのキャンペーンのファイルから作り直す（要求仕様 S-309〜S-311、対応表の差し込み口 F9・10）
+    campaign_id: str = ""
 
 
 @router.post("/start")
@@ -219,6 +256,7 @@ def start_session(req: SessionStartRequest, request: Request):
     if req.trpg_mode and req.trpg_rulebook:
         from def_kari.trpg import registry as _trpg_registry, resources as _trpg_res
         _pin_rule_system, _pin_plugin_version = _trpg_registry.pin_for(_trpg_res.load_rulebook(req.trpg_rulebook))
+    _check_create_by_rule_system(req, _pin_rule_system)
     _skill_pool_init = 0
     if req.trpg_mode and req.trpg_rulebook:
         _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req)
@@ -253,6 +291,7 @@ def start_session(req: SessionStartRequest, request: Request):
         # 卓のルールシステムとプラグインの版を固定する（B-002。卓の途中でファイルが変わっても入れ替わらない）
         "trpg_rule_system": _pin_rule_system,
         "trpg_plugin_version": _pin_plugin_version,
+        "campaign_id": req.campaign_id,
         "trpg_scenario": req.trpg_scenario,
         "char_game_sheets": req.char_game_sheets,
         "current_scene_index": 0,
@@ -940,6 +979,15 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, request: Requ
         _refusal = _trpg_resources.online_refusal(_new_rb, _new_sc)
         if _refusal:
             raise HTTPException(403, _refusal)
+    if sess.get("campaign_id") and (
+            (req.trpg_rulebook is not None and req.trpg_rulebook != sess.get("trpg_rulebook"))
+            or (req.trpg_scenario is not None and req.trpg_scenario != sess.get("trpg_scenario"))):
+        # 続きもの（キャンペーン）の卓は、ルールブックもシナリオも変えない（S-312。キャンペーンと食い違うため）
+        raise HTTPException(409, "The rulebook and scenario of a campaign table cannot be changed")
+    if req.trpg_rulebook and req.trpg_rulebook != sess.get("trpg_rulebook") and _rulebook_keeps_campaigns(req.trpg_rulebook):
+        # 保存と再開をルールシステムが受け持つルールブックには、ロビーで後から切り替えない。卓を作るときの
+        # 確かめ（check_create）を通らない卓ができてしまうため。卓を作るときに選ぶ（差し込み口 F9）
+        raise HTTPException(409, "This rulebook must be chosen when the table is created")
     if req.topic is not None:
         sess["topic"] = req.topic
     if req.rule_set is not None:

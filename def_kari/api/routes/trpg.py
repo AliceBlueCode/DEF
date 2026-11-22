@@ -55,6 +55,28 @@ def list_rulebooks():
     }
 
 
+@router.get("/rulebooks/{rulebook_id}/campaigns")
+def list_campaigns(rulebook_id: str):
+    """そのルールブックで再開できる続きもの（キャンペーン）の一覧（persistence の口。差し込み口 10）。
+
+    再開は、卓を作るときに `campaign_id` を付けて行う（S-310）。口を持たないルールシステムは空の一覧。
+    口が失敗したら、閉じる側（何も示さない）に倒し、理由を返す。このルートは公開用のポートには無い。
+    """
+    from def_kari.trpg import plugin_hooks
+    if not resources.is_safe_id(rulebook_id):
+        return {"error": "Invalid rulebook ID"}
+    rulebook = resources.load_rulebook(rulebook_id)
+    system = registry.for_rulebook(rulebook) if rulebook else None
+    out = plugin_hooks.call(None, "persistence", "list_campaigns", rulebook_id, system=system)
+    if out is plugin_hooks.NOT_HANDLED:
+        return {"campaigns": []}
+    campaigns = []
+    for c in out if isinstance(out, list) else []:
+        if isinstance(c, dict) and resources.is_safe_id(str(c.get("id", ""))):
+            campaigns.append({"id": c["id"], "title": str(c.get("title", c["id"]))})
+    return {"campaigns": campaigns}
+
+
 @router.get("/rulebooks/{rulebook_id}")
 def get_rulebook(rulebook_id: str):
     if not resources.is_safe_id(rulebook_id):
