@@ -253,7 +253,10 @@ export function RuleUiPanel({ sessionId, token, refreshKey }: { sessionId: strin
 
   if (!ui) return null
   return (
-    <section className="rule-ui-panel" style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    // 画面の高さに収まらなければ縮み、部品の中でスクロールする（中身の高さのまま伸びると、セッションの画面の
+    // 縦の並びからはみ出して、盤面などの下の部分に届かなかった。2026-11-22 の実機確認）
+    <section className="rule-ui-panel" style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 8,
+                                                flex: '0 1 auto', minHeight: 0, overflowY: 'auto' }}>
       {ui.title && <h3 style={{ margin: 0, fontSize: '1em' }}>{ui.title}</h3>}
       {problems.length > 0 && (
         <details style={{ fontSize: '0.78em', color: 'var(--error-color, #e74c3c)' }}>
