@@ -203,3 +203,17 @@ def test_a_line_appended_after_a_broken_last_line_is_kept():
         f.write('{"seq": 2, "text": "cut in the mid')
     st.append_line("logs", "c6", record={"seq": 3})
     assert [r["seq"] for r in st.read_lines("logs", "c6")] == [1, 3]
+
+
+def test_a_character_cut_in_the_middle_does_not_hide_the_whole_file():
+    """レビュー 2026-11-22 の🟡A-1: 日本語の文字の途中で落ちると、切れたバイトが残る。ファイル全体を文字として
+    読むと UnicodeDecodeError になり、その後のすべての行が読めなくなっていた。"""
+    st = PluginStorage("grid_plugin")
+    st.append_line("logs", "c7", record={"seq": 1, "text": "霧の港"})
+    path = st._path("logs", ("c7",), ".jsonl")
+    cut = '{"seq": 2, "text": "霧'.encode("utf-8")[:-1]  # 「霧」の3バイトのうち2バイトだけ
+    with open(path, "ab") as f:
+        f.write(cut)
+    assert [r["seq"] for r in st.read_lines("logs", "c7")] == [1]
+    st.append_line("logs", "c7", record={"seq": 3, "text": "次の行"})
+    assert [r["seq"] for r in st.read_lines("logs", "c7")] == [1, 3]

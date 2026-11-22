@@ -121,18 +121,23 @@ class PluginStorage:
             os.fsync(f.fileno())
 
     def read_lines(self, kind: str, *ids: str) -> list[dict]:
-        """全部の行。最後の壊れた1行は読み飛ばす。途中の壊れた行も読み飛ばし、警告を残す。"""
+        """全部の行。最後の壊れた1行は読み飛ばす。途中の壊れた行も読み飛ばし、警告を残す。
+
+        バイトのまま改行で分けて、1行ずつ decode する。日本語の文字の途中で切れた行（追記の途中で落ちた）が
+        あると、ファイル全体を文字として読む形では UnicodeDecodeError になり、その後のすべての行が読めなくなって
+        いた（レビュー 2026-11-22 の🟡A-1）。decode できない行も、壊れた行として読み飛ばす。
+        """
         path = self._path(kind, ids, ".jsonl")
         if not path.is_file():
             return []
-        raw = path.read_text(encoding="utf-8").split("\n")
-        if raw and raw[-1] == "":
+        raw = path.read_bytes().split(b"\n")
+        if raw and raw[-1] == b"":
             raw.pop()
         out = []
         for i, line in enumerate(raw):
             try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
+                rec = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 if i != len(raw) - 1:
                     _log.warning("[plugin %s] %s: broken line %d skipped", self.plugin_id, path.name, i + 1)
                 continue
