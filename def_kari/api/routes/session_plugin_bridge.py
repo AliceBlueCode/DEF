@@ -32,6 +32,16 @@ def _own_session(rule_systems: frozenset, session_id: str) -> dict:
     return session
 
 
+def _profile_options(backend_id: str) -> dict:
+    """読み込んでいるモデルのプロファイルの `generation_params`（TGW だけ。gm_agent と同じ取り方）。"""
+    if backend_id != "textgen_webui":
+        return {}
+    from def_kari.llm.tgw_manager import get_loaded_model_name
+    from def_kari.models.registry import get_llm_profile
+    name = get_loaded_model_name() or ""
+    return dict(get_llm_profile(name).get("generation_params", {})) if name else {}
+
+
 def llm_chat(rule_systems: frozenset, session_id: str, messages: list, *, role: str,
              json_mode: bool = False, options: dict | None = None) -> str:
     """卓のバックエンドで LLM を1回呼び、返った文字列を返す。断ったとき・失敗したときは PluginCallError。"""
@@ -53,12 +63,16 @@ def llm_chat(rule_systems: frozenset, session_id: str, messages: list, *, role: 
         _backend_guard.check(session, "llm", backend_id, model, role=role)
     except _backend_guard.ExternalServiceRefused as e:
         raise PluginCallError(str(e)) from e
+    # 読み込んでいるモデルのプロファイルの生成の設定（会話の型・温度など）を土台にし、プラグインの値で上書きする。
+    # DEF の GM（gm_agent）と同じ。土台が無いと、会話の型の違うモデルが指示の区切りを読み違え、言葉が混ざる・
+    # JSON が崩れる（2026-11-22、プラグインの卓の実機確認で、プロファイルの無い呼び出しの出力が崩れた）
+    opts = {**_profile_options(backend_id), **dict(options or {})}
     from def_kari.resources.vram_lock import get_vram_lock
     lock = get_vram_lock()
     if not lock.acquire(timeout=_VRAM_LOCK_TIMEOUT_SECONDS):
         raise PluginCallError(f"vram_lock busy for over {_VRAM_LOCK_TIMEOUT_SECONDS:.0f}s")
     try:
-        text = LLM_BACKENDS[backend_id]["chat"](messages, model, json_mode=json_mode, options=dict(options or {}))
+        text = LLM_BACKENDS[backend_id]["chat"](messages, model, json_mode=json_mode, options=opts)
     except Exception as e:  # バックエンドの失敗は、プラグインが作り直しと既定の動きで扱う（S-359）
         _log.warning("[plugin llm] %s failed (%s): %s: %s", backend_id, role, type(e).__name__, e)
         raise PluginCallError(f"LLM call failed: {type(e).__name__}: {e}") from e

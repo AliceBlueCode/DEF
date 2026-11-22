@@ -255,3 +255,25 @@ def test_table_info_only_on_the_plugins_own_tables(clean_registry):
         _api().table_info("_gm_t2")
     with pytest.raises(PluginCallError):
         _api().table_info("_gm_none")
+
+
+def test_llm_chat_uses_the_loaded_model_profile_under_the_plugins_options(clean_registry, monkeypatch):
+    """DEF の GM と同じく、モデルのプロファイル（会話の型・温度）を土台にし、プラグインの値で上書きする。"""
+    from def_kari.llm import backend as llm_backend
+    from def_kari.llm import tgw_manager
+    from def_kari.models import registry as model_registry
+    calls = []
+    monkeypatch.setitem(llm_backend.LLM_BACKENDS, "textgen_webui",
+                        {"chat": lambda m, model, json_mode=False, options=None: calls.append(options) or "ok",
+                         "list_models": lambda: []})
+    monkeypatch.setattr(tgw_manager, "get_loaded_model_name", lambda: "some-model.gguf")
+    monkeypatch.setattr(model_registry, "get_llm_profile", lambda name: {
+        "generation_params": {"temperature": 0.4, "instruction_template": "Mistral"}} if name == "some-model.gguf" else {})
+    _table(clean_registry, "_gm_p1", backend="textgen_webui")
+    with patch("def_kari.llm.backend_guard.check"):
+        _api().llm_chat("_gm_p1", _MSG, role="gm", options={"num_predict": 1500, "temperature": 0.2})
+    assert calls == [{"temperature": 0.2, "instruction_template": "Mistral", "num_predict": 1500}]
+    monkeypatch.setattr(tgw_manager, "get_loaded_model_name", lambda: None)
+    with patch("def_kari.llm.backend_guard.check"):
+        _api().llm_chat("_gm_p1", _MSG, role="gm")
+    assert calls[-1] == {}
