@@ -508,6 +508,12 @@ def load_session(req: SessionLoadRequest):
     _pinned_rs, _pinned_ver, _why, _migrated = _table_pin(meta)
     if _why:
         return {"error": _why}
+    from def_kari.trpg import registry as _trpg_registry
+    _pinned_system, _ = _trpg_registry.resolve_pinned(_pinned_rs, _pinned_ver) if _pinned_rs else (None, None)
+    if _pinned_system is not None and "persistence" in getattr(_pinned_system, "capabilities", frozenset()):
+        # 保存と再開をルールシステムが受け持つ卓は、/load で戻さない（check_create を通らずに卓ができるため。
+        # S-310、レビュー 2026-11-22 の🟡4）
+        return {"error": "This rule system keeps its own saves; open the table from the rule system instead of loading it"}
     if _migrated:
         _log.info("[load] %s: pinned to rule system %r (migrated from a table saved before v5.0.0)",
                   req.filename, _pinned_rs)

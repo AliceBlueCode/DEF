@@ -115,13 +115,27 @@ def _cancel_idle_shutdown(session_id: str) -> None:
         sess["idle_shutdown_task"] = None
 
 
-def _check_create_by_rule_system(req: "SessionStartRequest", rule_system: str) -> None:
+# 開きかけのキャンペーン（確かめてから _sessions に入れるまで）。同じ campaign_id の /start が同時に
+# 来ても、2卓できないようにする（S-311。レビュー 2026-11-22 の🟡1）。ファイルには印を残さない
+_campaign_open_lock = threading.Lock()
+_opening_campaigns: set[str] = set()
+
+
+def _release_campaign(campaign_id: str) -> None:
+    if campaign_id:
+        with _campaign_open_lock:
+            _opening_campaigns.discard(campaign_id)
+
+
+def _check_create_by_rule_system(req: "SessionStartRequest", rule_system: str) -> str:
     """保存と再開をルールシステムが受け持つ卓（persistence の口）の、作ってよいかの確かめ（差し込み口 F9）。
 
     - `campaign_id` は、persistence の口を持つルールシステムの TRPG の卓でだけ使える。
-    - 同じ `campaign_id` の卓は、同時に1つだけ（S-311。今ある卓から判断し、ファイルに印は残さない）。
+    - 同じ `campaign_id` の卓は、同時に1つだけ（S-311。今ある卓と開きかけの卓から判断し、ファイルに印は
+      残さない）。通ったら、その ID を開きかけに入れて返す。呼ぶ側は、卓を `_sessions` に入れた後（または
+      失敗したとき）に必ず `_release_campaign` で外す。
     - 作ってよいかは、ルールシステムの `check_create` が決める（例: 続きものが無ければ作らない。S-003）。
-      口が失敗したら、閉じる側（作らない）に倒す。
+      作ってよいのは `None` と空文字だけ。口が失敗した・それ以外の値を返したら、閉じる側（作らない）に倒す。
     """
     from def_kari.trpg import plugin_hooks as _hooks, registry as _registry, resources as _res
     system = _registry.get(rule_system) if (req.trpg_mode and rule_system) else None
@@ -131,15 +145,21 @@ def _check_create_by_rule_system(req: "SessionStartRequest", rule_system: str) -
             raise HTTPException(400, "campaign_id can only be used with a rule system that keeps its own campaigns")
         if not _res.is_safe_id(req.campaign_id):
             raise HTTPException(400, "Invalid campaign_id")
-        if any(s.get("campaign_id") == req.campaign_id for s in _sessions.values()):
-            raise HTTPException(409, "This campaign is already open in another session")
     if not has_persistence:
-        return
+        return ""
     reason = _hooks.call({}, "persistence", "check_create", req.model_dump(), system=system)
-    if reason is _hooks.NOT_HANDLED:
-        return
-    if reason:
+    if reason is not None and reason != "":
+        if not isinstance(reason, str):
+            reason = "plugin_error"  # 約束（str | None）から外れた値（レビュー 2026-11-22 の🟡3）
         raise HTTPException(400, f"This table cannot be created: {reason}")
+    if not req.campaign_id:
+        return ""
+    with _campaign_open_lock:
+        if req.campaign_id in _opening_campaigns or any(
+                s.get("campaign_id") == req.campaign_id for s in _sessions.values()):
+            raise HTTPException(409, "This campaign is already open in another session")
+        _opening_campaigns.add(req.campaign_id)
+    return req.campaign_id
 
 
 def _rulebook_keeps_campaigns(rulebook_id: str) -> bool:
@@ -227,8 +247,6 @@ def start_session(req: SessionStartRequest, request: Request):
     initiative = [] if req.online_mode else random.sample(player_ids, len(player_ids))
     name_map = {cid: all_name_map[cid] for cid in player_ids}
 
-    if len(_sessions) >= _MAX_SESSIONS:
-        _evict_oldest_session()
     _rule_data = _load_session_rules(public_only=_public_req).get(req.rule_set, {})
     rules = _rule_data.get("rules", [])
     scene = _rule_data.get("scene", "")
@@ -256,73 +274,78 @@ def start_session(req: SessionStartRequest, request: Request):
     if req.trpg_mode and req.trpg_rulebook:
         from def_kari.trpg import registry as _trpg_registry, resources as _trpg_res
         _pin_rule_system, _pin_plugin_version = _trpg_registry.pin_for(_trpg_res.load_rulebook(req.trpg_rulebook))
-    _check_create_by_rule_system(req, _pin_rule_system)
     _skill_pool_init = 0
     if req.trpg_mode and req.trpg_rulebook:
         _rb = _load_trpg_rulebook(req.trpg_rulebook, public_only=_public_req)
         _skill_pool_init = int(_rb.get("skill_point_pool", 0))
-
-    _sessions[session_id] = {
-        "id": session_id,
-        "initiative": initiative,
-        "name_map": name_map,
-        "char_colors": char_colors,
-        "topic": req.topic,
-        "backend": req.backend,
-        "char_backends": char_backends,
-        "rule_set": req.rule_set,
-        "rules": rules,
-        "style": rule_style,
-        "max_chars": rule_max_chars,
-        "max_rounds": rule_max_rounds,
-        "reinforced_rules": rule_reinforced_rules,
-        "scene": scene,
-        "round": 1,
-        "_round_seq": 0,
-        "turn": 0,
-        "action_count": 0,
-        "actions_per_turn": apt,
-        "action_directive_set": directive_set_id,
-        "history": [],
-        "counters": {},
-        "designated_next": None,
-        "trpg_mode": req.trpg_mode,
-        "trpg_rulebook": req.trpg_rulebook,
-        # 卓のルールシステムとプラグインの版を固定する（B-002。卓の途中でファイルが変わっても入れ替わらない）
-        "trpg_rule_system": _pin_rule_system,
-        "trpg_plugin_version": _pin_plugin_version,
-        "campaign_id": req.campaign_id,
-        "trpg_scenario": req.trpg_scenario,
-        "char_game_sheets": req.char_game_sheets,
-        "current_scene_index": 0,
-        "scene_round_start": 0,
-        "player_knowledge": {cid: [] for cid in player_ids},
-        "npc_state": _build_initial_npc_state(req.trpg_scenario, public_only=_public_req),
-        "skill_pool": {cid: _skill_pool_init for cid in player_ids},
-        "skill_values": {cid: {} for cid in player_ids},
-        "keeper_char_id": keeper_char_id,
-        "keeper_char_name": all_name_map.get(keeper_char_id, "") if keeper_char_id else "",
-        "human_keeper": req.human_keeper,
-        # ── Phase 2: マルチプレイフィールド ──
-        "players": {},              # token → char_id（参加者マップ）
-        "host_token": "",           # ホストのJWT（発行後に上書き）
-        "ws_connections": {},       # token → WebSocket
-        "ai_task": None,            # asyncio.Task | None
-        "idle_shutdown_task": None, # asyncio.Task | None
-        "invite_codes": {},         # invite_code → {"rating": str, "used": bool}
-        # ── Phase 2/3: マルチプレイ運用データ ──
-        "ws_rate": {},          # token → deque（WS rate limit。セッション終了で自動消滅）
-        # ── Phase 3: 複数人間プレイヤー対応 ──
-        "human_char_ids": [
-            cid for cid in player_ids
-            if (get_character(cid, profiles) or {}).get("player_type") == "human"
-        ],
-        "online_mode": req.online_mode,
-        "lobby_active": req.online_mode,  # Trueの間はターン進行をブロック
-        "host_keeper_mode": bool(req.online_mode),  # オンラインはデフォルトでキーパー専任（ロビーPATCHで変更可）
-        "max_players": 4 if req.online_mode else 0,  # オンライン: UIデフォルトと同じ4。ロビー設定・開始時lobby_configで上書き
-        "invited_gm_token": "", # 招待GMのtoken（1人まで）
-    }
+    # 断られる /start で、ほかの卓を追い出さない（追い出しは、確かめがすべて済んでから。レビュー 2026-11-22 の🟡2）
+    _opening = _check_create_by_rule_system(req, _pin_rule_system)
+    try:
+        if len(_sessions) >= _MAX_SESSIONS:
+            _evict_oldest_session()
+        _sessions[session_id] = {
+            "id": session_id,
+            "initiative": initiative,
+            "name_map": name_map,
+            "char_colors": char_colors,
+            "topic": req.topic,
+            "backend": req.backend,
+            "char_backends": char_backends,
+            "rule_set": req.rule_set,
+            "rules": rules,
+            "style": rule_style,
+            "max_chars": rule_max_chars,
+            "max_rounds": rule_max_rounds,
+            "reinforced_rules": rule_reinforced_rules,
+            "scene": scene,
+            "round": 1,
+            "_round_seq": 0,
+            "turn": 0,
+            "action_count": 0,
+            "actions_per_turn": apt,
+            "action_directive_set": directive_set_id,
+            "history": [],
+            "counters": {},
+            "designated_next": None,
+            "trpg_mode": req.trpg_mode,
+            "trpg_rulebook": req.trpg_rulebook,
+            # 卓のルールシステムとプラグインの版を固定する（B-002。卓の途中でファイルが変わっても入れ替わらない）
+            "trpg_rule_system": _pin_rule_system,
+            "trpg_plugin_version": _pin_plugin_version,
+            "campaign_id": req.campaign_id,
+            "trpg_scenario": req.trpg_scenario,
+            "char_game_sheets": req.char_game_sheets,
+            "current_scene_index": 0,
+            "scene_round_start": 0,
+            "player_knowledge": {cid: [] for cid in player_ids},
+            "npc_state": _build_initial_npc_state(req.trpg_scenario, public_only=_public_req),
+            "skill_pool": {cid: _skill_pool_init for cid in player_ids},
+            "skill_values": {cid: {} for cid in player_ids},
+            "keeper_char_id": keeper_char_id,
+            "keeper_char_name": all_name_map.get(keeper_char_id, "") if keeper_char_id else "",
+            "human_keeper": req.human_keeper,
+            # ── Phase 2: マルチプレイフィールド ──
+            "players": {},              # token → char_id（参加者マップ）
+            "host_token": "",           # ホストのJWT（発行後に上書き）
+            "ws_connections": {},       # token → WebSocket
+            "ai_task": None,            # asyncio.Task | None
+            "idle_shutdown_task": None, # asyncio.Task | None
+            "invite_codes": {},         # invite_code → {"rating": str, "used": bool}
+            # ── Phase 2/3: マルチプレイ運用データ ──
+            "ws_rate": {},          # token → deque（WS rate limit。セッション終了で自動消滅）
+            # ── Phase 3: 複数人間プレイヤー対応 ──
+            "human_char_ids": [
+                cid for cid in player_ids
+                if (get_character(cid, profiles) or {}).get("player_type") == "human"
+            ],
+            "online_mode": req.online_mode,
+            "lobby_active": req.online_mode,  # Trueの間はターン進行をブロック
+            "host_keeper_mode": bool(req.online_mode),  # オンラインはデフォルトでキーパー専任（ロビーPATCHで変更可）
+            "max_players": 4 if req.online_mode else 0,  # オンライン: UIデフォルトと同じ4。ロビー設定・開始時lobby_configで上書き
+            "invited_gm_token": "", # 招待GMのtoken（1人まで）
+        }
+    finally:
+        _release_campaign(_opening)
 
     # ホストトークンを発行して sessions に書き込む
     host_token = issue_player_jwt(session_id, "host")
@@ -979,11 +1002,14 @@ def set_lobby_settings(session_id: str, req: LobbySettingsRequest, request: Requ
         _refusal = _trpg_resources.online_refusal(_new_rb, _new_sc)
         if _refusal:
             raise HTTPException(403, _refusal)
-    if sess.get("campaign_id") and (
+    from def_kari.trpg import plugin_hooks as _plugin_hooks
+    if (sess.get("campaign_id") or _plugin_hooks.has_capability(sess, "persistence")) and (
             (req.trpg_rulebook is not None and req.trpg_rulebook != sess.get("trpg_rulebook"))
             or (req.trpg_scenario is not None and req.trpg_scenario != sess.get("trpg_scenario"))):
-        # 続きもの（キャンペーン）の卓は、ルールブックもシナリオも変えない（S-312。キャンペーンと食い違うため）
-        raise HTTPException(409, "The rulebook and scenario of a campaign table cannot be changed")
+        # 続きもの（キャンペーン）の卓と、保存と再開をルールシステムが受け持つ卓は、ルールブックもシナリオも
+        # 変えない（S-312。キャンペーンと食い違う・作るときの check_create を通らない設定になるため。
+        # レビュー 2026-11-22 の🟡4: campaign_id の無い卓のシナリオの変更も塞いだ）
+        raise HTTPException(409, "The rulebook and scenario of this table cannot be changed")
     if req.trpg_rulebook and req.trpg_rulebook != sess.get("trpg_rulebook") and _rulebook_keeps_campaigns(req.trpg_rulebook):
         # 保存と再開をルールシステムが受け持つルールブックには、ロビーで後から切り替えない。卓を作るときの
         # 確かめ（check_create）を通らない卓ができてしまうため。卓を作るときに選ぶ（差し込み口 F9）

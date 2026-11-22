@@ -41,16 +41,47 @@ def _on_failure(session: dict, info: dict) -> None:
     _pause_for_plugin_error(session, info)
 
 
+_CLOSED_SESSION_VIEW = {"plugin_error": True}
+
+
+def _refuse(session: dict, method: str, why: str) -> None:
+    """口が約束を破った（形が違う・トークンを混ぜた）。閉じる側に倒し、卓を止める（B-027）。"""
+    import logging
+    logging.getLogger("def.trpg").error("[visibility] %s of the table's rule system refused: %s", method, why)
+    _on_failure(session, {"capability": "visibility", "method": method, "error": why})
+
+
+def _has_session_token(session: dict, view: dict) -> bool:
+    """口が作ったものに、この卓の認証トークンが混ざっていないか（守り1。WS・GET・/events の共通）。"""
+    from def_kari.api.routes.session_ws import _contains_token, _session_tokens
+    return _contains_token(view, _session_tokens(session))
+
+
 def session_view(session: dict, audience: dict) -> dict:
+    """この相手に返す状態。口が失敗した・dict でない・トークンを混ぜたときは、最小の知らせだけ。"""
     out = plugin_hooks.call(session, "visibility", "session_view", session, dict(audience), on_failure=_on_failure)
-    return out if isinstance(out, dict) else {"plugin_error": True}
+    if out == _CLOSED_SESSION_VIEW:
+        return dict(_CLOSED_SESSION_VIEW)
+    if not isinstance(out, dict):
+        _refuse(session, "session_view", f"returned {type(out).__name__}, not a JSON object")
+        return dict(_CLOSED_SESSION_VIEW)
+    if _has_session_token(session, out):
+        _refuse(session, "session_view", "the view contained a session token")
+        return dict(_CLOSED_SESSION_VIEW)
+    return out
 
 
 def event_view(session: dict, event: dict, audience: dict) -> dict | None:
-    """この相手に配るイベント。配らないなら None。形の正しくない返り値も配らない。"""
+    """この相手に配るイベント。配らないなら None。形の正しくない返り値・トークンを混ぜたものも配らない。"""
     # 相手ごとに写しを渡す（口が書き換えても、ほかの相手と、ログに残る元のイベントに混ざらない）
     out = plugin_hooks.call(session, "visibility", "event_view", session, copy.deepcopy(event), dict(audience),
                             on_failure=_on_failure)
+    if out is None:
+        return None
     if not isinstance(out, dict) or not isinstance(out.get("type"), str):
+        _refuse(session, "event_view", "returned something that is not an event ({type: str, ...})")
+        return None
+    if _has_session_token(session, out):
+        _refuse(session, "event_view", "the event contained a session token")
         return None
     return out

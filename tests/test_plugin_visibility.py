@@ -30,6 +30,12 @@ class S:
     def dice_notation(self, rb): return "1d20"
     def build_rule_context(self, rb, sc, lang): return ""
     def session_view(self, session, audience):
+        if session.get("_grid_break_view"):
+            raise RuntimeError("broken plugin")
+        if session.get("_grid_view_list"):
+            return ["not", "a", "dict"]
+        if session.get("_grid_leak_host_token"):
+            return {"host": session["host_token"]}
         out = {"id": session["id"], "round": session.get("round", 1), "seen_as": audience["role"]}
         if audience["role"] == "host":
             out["secret"] = session.get("_grid_secret")
@@ -37,6 +43,10 @@ class S:
     def event_view(self, session, event, audience):
         if session.get("_grid_break"):
             raise RuntimeError("broken plugin")
+        if session.get("_grid_bad_event") == "text":
+            return "an event"
+        if session.get("_grid_bad_event") == "no_type":
+            return {"payload": {}}
         payload = event.get("payload") or {}
         if payload.get("host_only") and audience["role"] != "host":
             return None
@@ -232,3 +242,68 @@ def test_event_log_goes_through_the_boundary(table):
     host = get_session_events(table["id"], {"role": "host"})["events"]
     assert [e["type"] for e in gm][-1:] == ["NARRATION"] and all(e["type"] != "ENEMY_MOVED" for e in gm)
     assert [e["type"] for e in host][-2:] == ["ENEMY_MOVED", "NARRATION"]
+
+
+# ── レビュー 2026-11-22 の🔴1・🟡5 ─────────────────────────────────
+
+def test_session_view_with_a_session_token_is_refused_and_pauses(table):
+    """🔴1: session_view にもトークンの守りを当てる（WS の SESSION_VIEW と GET の両方がここを通る）。"""
+    table["host_token"] = HOST
+    table["_grid_leak_host_token"] = True
+    assert vis.session_view(table, {"role": "observer", "char_id": ""}) == {"plugin_error": True}
+    assert table["ai_paused"] is True and "token" in table["plugin_error"]["error"]
+
+
+@pytest.mark.parametrize("flag", ["_grid_break_view", "_grid_view_list"])
+def test_get_session_falls_closed_when_the_view_fails(table, flag):
+    from def_kari.api.routes.session_gameplay import get_session
+    table[flag] = True
+    assert get_session(table["id"], {"role": "observer"})["session"] == {"plugin_error": True}
+    assert table["ai_paused"] is True
+
+
+@pytest.mark.parametrize("bad", ["text", "no_type"])
+def test_events_that_are_not_events_are_not_sent(table, bad):
+    sockets = _connect_all(table)
+    table["_grid_bad_event"] = bad
+    _broadcast(table, {"type": "NARRATION", "payload": {"text": "t"}})
+    assert all(s.sent == [] for s in sockets.values())
+    assert table["ai_paused"] is True
+
+
+def test_unresolvable_pinned_system_falls_closed_everywhere(table):
+    from def_kari.api.routes.session_gameplay import get_session, get_session_events
+    from def_kari.gm.events import game_event_bus
+    table["trpg_plugin_version"] = "9.9.9"  # 版が変わった
+    sockets = _connect_all(table)
+    _broadcast(table, {"type": "NARRATION", "payload": {"text": "t"}})
+    assert all(s.sent == [] for s in sockets.values())
+    assert get_session(table["id"], {"role": "host"})["session"] == {"plugin_error": True}
+    game_event_bus.emit(table["id"], "NARRATION", {"text": "y"})
+    assert get_session_events(table["id"], {"role": "host"})["events"] == []
+
+
+def test_gm_only_events_stay_with_keepers_even_through_the_boundary(table):
+    sockets = _connect_all(table)
+    _broadcast(table, {"type": "FLAG_UPDATED", "payload": {"gm_only": True, "text": "secret flag"}})
+    assert len(sockets[HOST].sent) == 1
+    assert sockets[PLAYER].sent == [] and sockets[OBSERVER].sent == []
+
+
+def test_ws_endpoint_sends_the_initial_state_through_the_boundary(table):
+    """🟡5 の1: 本物の ws_endpoint の配線（_send_through_boundary と SESSION_VIEW）。"""
+    from fastapi.testclient import TestClient
+    from def_kari.api.main import app
+    from def_kari.api.routes.session_auth import issue_player_jwt
+    token = issue_player_jwt(table["id"], "observer")
+    table["players"][token] = ""
+    table["lobby_active"] = True
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/session/{table['id']}/ws") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            first, second = ws.receive_json(), ws.receive_json()
+    # 参加者の一覧は口が作り直したもの（口の event_view は payload を text だけにする）
+    assert first == {"type": "PARTICIPANTS_SNAPSHOT", "payload": {"text": ""}}
+    assert second["type"] == "SESSION_VIEW"
+    assert second["payload"]["session"] == {"id": "_vis_table", "round": 2, "seen_as": "observer"}
+    ws_mod._ws_audiences.pop(token, None)

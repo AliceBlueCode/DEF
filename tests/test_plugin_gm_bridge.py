@@ -217,3 +217,22 @@ def test_a_failing_bundle_stops_instead_of_falling_back(clean_registry, monkeypa
         build_for_gm({"rule_system": "sample_grid"}, None, sess, "ja")
     with pytest.raises(registry.RuleSystemError):
         build_for_player("char_a", {}, {"rule_system": "sample_grid"}, None, sess, "ja")
+
+
+def test_llm_chat_gives_up_when_the_vram_lock_is_busy(clean_registry, fake_backend, monkeypatch):
+    """🟡5 の6: 錠が取れなければ呼ばずに断る。"""
+    from def_kari.api.routes import session_plugin_bridge as bridge
+
+    class _Busy:
+        def acquire(self, timeout=None):
+            return False
+
+        def release(self):
+            raise AssertionError("must not release a lock it did not get")
+    monkeypatch.setattr("def_kari.resources.vram_lock.get_vram_lock", lambda: _Busy())
+    monkeypatch.setattr(bridge, "_VRAM_LOCK_TIMEOUT_SECONDS", 0.01)
+    _table(clean_registry, "_gm_busy")
+    with patch("def_kari.llm.backend_guard.check"):
+        with pytest.raises(PluginCallError, match="vram_lock busy"):
+            _api().llm_chat("_gm_busy", _MSG, role="gm")
+    assert fake_backend == []

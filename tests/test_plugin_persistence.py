@@ -64,6 +64,12 @@ class S:
             return ""
         if req.get("campaign_id") == "boom":
             raise RuntimeError("broken plugin")
+        if req.get("campaign_id") == "falsy":
+            return False
+        if req.get("campaign_id") == "zero":
+            return 0
+        if not req.get("campaign_id") and req.get("trpg_scenario") == "free":
+            return None  # キャンペーン無しで作れる場合（口の約束としてはありうる）
         return "choose a campaign"
     def uses_def_autosave(self, session): return False
     def list_campaigns(self, rulebook_id):
@@ -223,3 +229,88 @@ def test_campaign_listing_comes_from_the_rule_system(books):
             "campaigns": [{"id": "c1", "title": "First"}, {"id": "c2", "title": "c2"}]}
         assert client.get("/api/trpg/rulebooks/plain/campaigns").json() == {"campaigns": []}
         assert client.get("/api/trpg/rulebooks/no_such/campaigns").json() == {"campaigns": []}
+
+
+# ── レビュー 2026-11-22 の🟡1〜🟡4 ─────────────────────────────────
+
+@pytest.mark.parametrize("cid", ["falsy", "zero"])
+def test_check_create_values_outside_the_contract_refuse(books, cid):
+    """🟡3: 作ってよいのは None と空文字だけ。False や 0 は作らない側。"""
+    with TestClient(app) as client:
+        r = _start(client, books, "gb", cid)
+        assert r.status_code == 400 and "plugin_error" in r.text
+
+
+def test_two_starts_at_once_open_one_table(books):
+    """🟡1: 確かめと入れるの間に check_create が挟まっても、同じキャンペーンの卓は1つ。"""
+    import threading
+    system = registry.get("sample_grid")
+    original = system.check_create
+    both_inside = threading.Barrier(2, timeout=5)
+
+    def slow_check(req):
+        try:
+            both_inside.wait()  # 2本とも口の中にいる状態を作る
+        except threading.BrokenBarrierError:
+            pass
+        return original(req)
+    system.check_create = slow_check
+    codes = []
+    try:
+        with TestClient(app) as client:
+            def run():
+                codes.append(_start(client, books, "gb", "c1").status_code)
+            threads = [threading.Thread(target=run) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+    finally:
+        del system.check_create
+    assert sorted(codes) == [200, 409]
+    assert sum(1 for s in _sessions.values() if s.get("campaign_id") == "c1") == 1
+    from def_kari.api.routes import session_lobby
+    assert session_lobby._opening_campaigns == set()
+
+
+def test_a_refused_start_does_not_evict_another_table(books, monkeypatch):
+    """🟡2: 卓の数が上限のときに断られる /start は、ほかの卓を追い出さない。"""
+    from def_kari.api.routes import session_lobby
+    evicted = []
+    monkeypatch.setattr(session_lobby, "_MAX_SESSIONS", 0)
+    monkeypatch.setattr(session_lobby, "_evict_oldest_session", lambda: evicted.append(1))
+    with TestClient(app) as client:
+        assert _start(client, books, "gb", "c9").status_code == 400
+        assert _start(client, books, "gb", "../x").status_code == 400
+        assert evicted == []
+        assert _start(client, books, "gb", "c1").status_code == 200
+        assert evicted == [1]
+    assert session_lobby._opening_campaigns == set()
+
+
+def test_lobby_cannot_change_the_scenario_of_a_persistence_table_without_a_campaign(books):
+    """🟡4: campaign_id の無い persistence の卓でも、シナリオを変えて check_create を避けられない。"""
+    with TestClient(app) as client:
+        r = client.post("/api/session/start", json={
+            "character_ids": [], "trpg_mode": True, "trpg_rulebook": "gb", "trpg_scenario": "free",
+            "online_mode": True})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        books.append(body["session_id"])
+        assert _patch(client, {"trpg_scenario": "other"}, body["session_id"], body["host_token"]).status_code == 409
+        assert _sessions[body["session_id"]]["trpg_scenario"] == "free"
+
+
+def test_load_refuses_tables_whose_rule_system_keeps_its_saves(books, monkeypatch, tmp_path):
+    """🟡4: campaign_id の印が無くても、persistence の卓の手動の保存は /load で戻さない。"""
+    monkeypatch.setattr(sp, "_SESSION_HISTORY_DIRS", [tmp_path])
+    (tmp_path / "p.json").write_text(json.dumps({
+        "metadata": {"trpg_mode": True, "trpg_rulebook": "gb", "trpg_rule_system": "sample_grid",
+                     "trpg_plugin_version": "0.1.0"}, "history": []}), encoding="utf-8")
+    out = sp.load_session(sp.SessionLoadRequest(filename="p.json"))
+    assert "keeps its own saves" in out.get("error", "")
+    (tmp_path / "plain.json").write_text(json.dumps({
+        "metadata": {"trpg_mode": True, "trpg_rulebook": "plain"}, "history": []}), encoding="utf-8")
+    out = sp.load_session(sp.SessionLoadRequest(filename="plain.json"))
+    assert "session_id" in out, out  # 口の無い卓は今までどおり
+    _sessions.pop(out["session_id"], None)
