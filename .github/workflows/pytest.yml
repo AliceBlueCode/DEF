@@ -14,6 +14,12 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run pytest
-        run: pytest def_kari tests -q
+        # `pytest` のスクリプトをそのまま coverage で動かす（`python -m pytest` にすると sys.path が変わり、
+        # 手元と CI で import の結果が食い違うことがある）。設定は .coveragerc
+        run: coverage run "$(command -v pytest)" def_kari tests -q
+      - name: Coverage report
+        # 率の表を出すだけ。下回ったら落とす線は、まだ決めていない
+        if: always()
+        run: coverage report

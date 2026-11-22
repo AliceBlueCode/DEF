@@ -53,7 +53,9 @@ class PluginStorage:
             raise StorageError(f"invalid id: {ids!r}")
         root = self._root().resolve()
         path = (root / kind / (".".join(ids) + suffix)).resolve()
-        if not path.is_relative_to(root):  # 念のため（ID の許可リストで、ここに来ることは無い）
+        # ID は許可リストで確かめてあるが、置き場の中のフォルダが外へのリンク（ジャンクション）なら、resolve した
+        # パスは外を指す（tests/test_plugin_storage_failures.py）
+        if not path.is_relative_to(root):
             raise StorageError(f"path outside the storage: {path}")
         return path
 

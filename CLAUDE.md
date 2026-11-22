@@ -9,6 +9,15 @@ DEF(仮)の開発でAIエージェント（Claude Code 等）が守る作業方�
   ```bash
   venv/Scripts/python -m pytest def_kari tests -q
   ```
+- カバレッジ（CI も同じ形で測り、率の表を出す。設定は `.coveragerc`、道具は `requirements-dev.txt`）:
+  ```bash
+  venv/Scripts/python -m pip install -r requirements-dev.txt
+  venv/Scripts/python -m coverage run -m pytest def_kari tests -q
+  venv/Scripts/python -m coverage report
+  ```
+  - 率より、通っていない行の中身を見る。2026-11-23 に、プラグインの置き場の試し直しや、画面のデータの悪い要素を除く所が一度も動いていないと分かった。
+  - 通っていない行は、テストを足すか、要らないなら消す。`# pragma: no cover` で隠さない。
+  - LLM・TTS・T2I のアダプターは外部を呼ぶので低い。全体の率を追わない。
 - E2E（Playwright）はバックエンドとフロントエンドを起動してから `frontend/` で `npm run e2e:<名前>`。前提条件は [frontend/e2e/README.md](frontend/e2e/README.md)。
 - テストは実LLMを呼ばない（`tests/conftest.py` が遮断している）。実LLMで動作を見るときは、外部APIより手元のローカルバックエンド（TGW・VOICEVOX 等）を優先する。
 
