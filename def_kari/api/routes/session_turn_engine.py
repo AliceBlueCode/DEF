@@ -1229,8 +1229,20 @@ def _turn_driver_request(session_id: str, session: dict, auth: dict, kind: str, 
         return None
     from def_kari.api.routes.session_visibility import audience_of
     request = {"kind": kind, "data": data, "base_revision": data.get("base_revision")}
+    # 再開は、停止の印を先に外してから口に伝える（口が裏の列を起こし、列が卓を見たときに止まっていないように）。
+    # 断られた・口が失敗したら、元の印に戻す（口の失敗のときは、下の _pause_for_plugin_error が止め直す）
+    saved = None
+    if kind == "resume":
+        saved = (session.get("ai_paused"), session.get("plugin_error"))
+        session["ai_paused"] = False
+        session.pop("plugin_error", None)
     out = _plugin_hooks.call(session, "turn_driver", "handle_request", session_id, audience_of(auth), request,
                              on_failure=_pause_for_plugin_error)
+    if saved is not None and not (isinstance(out, dict) and out.get("accepted") is True) \
+            and "plugin_error" not in session:
+        session["ai_paused"] = saved[0]
+        if saved[1] is not None:
+            session["plugin_error"] = saved[1]
     if not isinstance(out, dict):
         _pause_for_plugin_error(session, {"capability": "turn_driver", "method": "handle_request",
                                           "error": f"returned {type(out).__name__}, not a JSON object"})

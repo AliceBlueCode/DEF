@@ -38,8 +38,14 @@ class S:
     def uses_def_autosave(self, s): return False
     def list_campaigns(self, rb): return []
     def allows_vote(self, s, a, k): return False
+    seen = []
+    refuse_resume = False
     def handle_request(self, session_id, audience, request):
         S.calls.append((session_id, audience, request))
+        from def_kari.api.routes.session_state import _sessions as _s
+        S.seen.append((_s[session_id].get("ai_paused"), bool(_s[session_id].get("plugin_error"))))
+        if request["kind"] == "resume" and S.refuse_resume:
+            return {"accepted": False, "reason": "not now"}
         if request["data"].get("text") == "boom":
             raise RuntimeError("broken plugin")
         if request["data"].get("text") == "no":
@@ -69,6 +75,8 @@ def table(monkeypatch, tmp_path):
     system = registry.get("sample_grid")
     assert system is not None
     system.calls.clear()
+    system.seen.clear()
+    type(system).refuse_resume = False
     host = issue_player_jwt(SID, "host")
     player = issue_player_jwt(SID, "player", "char_a")
     _sessions[SID] = {
@@ -139,6 +147,21 @@ def test_resume_goes_to_the_rule_system_and_clears_the_pause(table):
     assert (sid, audience, request["kind"]) == (SID, {"role": "host", "char_id": ""}, "resume")
     assert _sessions[SID]["ai_paused"] is False and "plugin_error" not in _sessions[SID]
     assert _sessions[SID].get("ai_task") is None  # DEF の AI の手番の処理は動かない
+
+
+def test_resume_clears_the_pause_before_the_rule_system_hears_it(table):
+    """手番を自分で回すプラグインは、再開を受けたら裏の列を起こす。列が先に卓を見ても止まっていないこと。"""
+    with TestClient(app) as client:
+        client.post(f"/api/session/{SID}/ai_resume", headers={"Authorization": f"Bearer {table['host']}"})
+    assert table["system"].seen[-1] == (False, False)
+
+
+def test_a_refused_resume_keeps_the_pause(table):
+    type(table["system"]).refuse_resume = True
+    with TestClient(app) as client:
+        r = client.post(f"/api/session/{SID}/ai_resume", headers={"Authorization": f"Bearer {table['host']}"})
+    assert r.status_code == 409 and "not now" in r.text
+    assert _sessions[SID]["ai_paused"] is True and _sessions[SID]["plugin_error"] == {"method": "x"}
 
 
 def test_human_turn_and_keeper_go_to_the_rule_system(table):
