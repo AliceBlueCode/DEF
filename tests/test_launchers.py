@@ -43,6 +43,7 @@ def test_launchers_check_commands_log_steps_and_bound_the_health_wait(name):
     assert "for %%C in (curl timeout netstat findstr npm)" in text
     assert "def_launcher.log" in text and ":log" in text
     assert "curl -sf -m 5 http://127.0.0.1:8511/api/health" in text
-    # 使うラベルがすべてある
+    # 使うラベルがすべてある（read_text は改行を \n にそろえるので、行で見る）
+    lines = text.splitlines()
     for label in ("wait_backend", "start_frontend", "log"):
-        assert f"\n:{label}\r\n" in text or f"\r\n:{label}\r\n" in text, label
+        assert f":{label}" in lines, label
