@@ -1,0 +1,4 @@
+# Windows batch files must keep CRLF: with LF line endings cmd cannot find
+# labels ("goto" fails) and the launchers stop half way (2026-11-22).
+*.bat text eol=crlf
+*.cmd text eol=crlf
