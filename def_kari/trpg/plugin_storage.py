@@ -108,6 +108,13 @@ class PluginStorage:
         path = self._path(kind, ids, ".jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False) + "\n"
+        # 追記の途中で落ちて、最後の行が改行で終わっていなければ、先に改行を足す。足さないと、新しい行が
+        # 壊れた行とつながり、新しい行まで「壊れた最後の行」として読み飛ばされる（S-371）
+        if path.is_file() and path.stat().st_size > 0:
+            with open(path, "rb") as f:
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    line = "\n" + line
         with open(path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line)
             f.flush()

@@ -192,3 +192,14 @@ def test_loaded_plugin_gets_its_declared_version(monkeypatch):
         import sys
         sys.modules.pop("def_trpg_plugin_sample_grid", None)
     assert seen["args"] == ("sample_grid", "0.1.0", 1, ["sample_grid"])
+
+
+def test_a_line_appended_after_a_broken_last_line_is_kept():
+    """追記の途中で落ちた後の次の行が、壊れた行とつながって失われない（S-371）。"""
+    st = PluginStorage("grid_plugin")
+    st.append_line("logs", "c6", record={"seq": 1})
+    path = st._path("logs", ("c6",), ".jsonl")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write('{"seq": 2, "text": "cut in the mid')
+    st.append_line("logs", "c6", record={"seq": 3})
+    assert [r["seq"] for r in st.read_lines("logs", "c6")] == [1, 3]
