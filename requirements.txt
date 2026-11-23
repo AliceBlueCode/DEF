@@ -42,4 +42,4 @@ pytest>=9.2.0
 pytest-asyncio>=1.5.0
 # For FastAPI TestClient. starlette's test client prefers httpx2 (pydantic's
 # maintained successor of httpx) and deprecates plain httpx.
-httpx2>=2.16.0
+httpx2>=2.16.2
