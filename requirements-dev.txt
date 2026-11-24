@@ -1,2 +1,2 @@
 # 開発だけで使う道具（動かすのには要らない）。venv に入れる: pip install -r requirements-dev.txt
-coverage==7.13.1
+coverage==7.17.4
